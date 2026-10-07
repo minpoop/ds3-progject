@@ -3,6 +3,7 @@
 use ashen_common::{config::HookConfig, logging::Logger, redirect::Redirector};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicPtr, AtomicU64};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 pub struct State {
@@ -12,6 +13,9 @@ pub struct State {
 }
 
 static STATE: OnceLock<State> = OnceLock::new();
+
+/// Where FATAL.txt goes: set as soon as the config names the log folder, before any validation can fail.
+pub static FATAL_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 /// This DLL's module handle, set in DllMain.
 pub static MODULE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());

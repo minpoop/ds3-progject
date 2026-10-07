@@ -31,10 +31,8 @@ fn dll_path() -> Option<PathBuf> {
 
 /// Where the explanation goes when the game is closed: next to the log if we got that far, else next to the DLL.
 fn fatal_file() -> PathBuf {
-    if let Some(st) = state::get() {
-        if let Some(dir) = Path::new(&st.cfg.log_file).parent() {
-            return dir.join("FATAL.txt");
-        }
+    if let Some(p) = state::FATAL_PATH.get() {
+        return p.clone();
     }
     dll_path().and_then(|p| p.parent().map(|d| d.join("FATAL.txt"))).unwrap_or_else(|| PathBuf::from("FATAL.txt"))
 }
@@ -66,6 +64,9 @@ unsafe fn run() -> Result<(), String> {
     let dir = dll.parent().ok_or("the hook DLL has no folder")?.to_path_buf();
     let cfg_path = dir.join("config").join("ashenmarine.json");
     let cfg = HookConfig::load(&cfg_path).map_err(|e| format!("cannot read the config {}: {e}", cfg_path.display()))?;
+    if let Some(dir) = Path::new(&cfg.log_file).parent() {
+        let _ = state::FATAL_PATH.set(dir.join("FATAL.txt"));
+    }
     if cfg.real_save_dir.trim().is_empty() || cfg.sandbox_save_dir.trim().is_empty() {
         return Err("the config does not name the real and private save folders".into());
     }
