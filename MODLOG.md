@@ -42,7 +42,10 @@ Anything not written here is lost at the next context compaction. Newest entries
 | Hook `features` (read-only probe): strict FMG text-table finder in own memory (no false hits in random data), version gate, diagnostics, two-beep audio path, mixer | Wine unit tests (5) + native tests (40 in common incl. fmg + mixer); launcher scenarios L/K (probe thread starts, copes with an unknown game, sandbox unaffected) |
 | **On the owner's real PC (kit 0.2, 2026-10-07):** DS3 1.15.2.0 English starts through ModEngine2 with our hook; 30 hooks, both in-process self-tests passed; ~240 save-file operations redirected to the private copy; the game's login host and `api.github.com` lookups refused; real save byte-identical afterwards (VERIFIED); per-frame game task registered and ran (~58 frames/s) | `AshenMarine-logs.zip` of kit 0.2 |
 | SM2 readers on the real install (114 client paks, 80 GB, 475k names, 0 duplicates, 11 s): texture descriptors + BC7/BC5 decode (owner confirmed the previews look like textures), `.cls` text, 30 Wwise banks, 34 sound zips | kit 0.2 probe report |
-| **Not verified yet:** anything the probe does inside a loaded DS3 world (player, inventory, weapon table, text tables), the audio path inside DS3 (no beep was heard: the probe had stopped itself, see below), Wwise Vorbis decoding | kit 0.3 |
+| **On the owner's real PC (kit 0.3, 2026-10-07):** both beeps heard (title screen and in the world), so our own waveOut mixer plays next to DS3's audio; the per-frame task, `PlayerIns`, `GameDataMan`, `MapItemMan`, the inventory (read, and a change detected: Estus use) and the equipment-slot array all work in a real world; 98 parameter tables are registered | `AshenMarine-logs.zip` of kit 0.3 |
+| Wwise Vorbis (SM2's sound format) -> PCM: `crates/sm2/src/wwvorbis.rs` (ww2ogg algorithm, aoTuV 603 codebooks, lewton) | 24 real clips from the owner's PC: setup header and every audio packet **bit-identical** to the reference ww2ogg, PCM within +-1 LSB of ffmpeg's decode of the reference Ogg, sample counts exact (`crates/sm2/tests/wem_samples.rs`, gated on `ASHEN_SM2_WEM_DIR`) |
+| Trigger logic (swing = attack button + sudden stamina drop, combo steps, shots = ammunition count falling, F7 loop) end to end into the mixer messages | unit tests with made-up frames (`ashen_common::triggers`, `hook::features::sfx` under Wine) |
+| **Not verified yet:** that the triggers fire at the right moments in a real fight (stamina scale, button bindings), that `give_item_directly` + in-memory renaming work, how item names are stored, the weapon table dump (needs the `name_offset` fix), and Space Marine 2 event -> sound selection on real banks | kit 0.4 |
 
 ## Findings / gotchas
 
@@ -106,6 +109,29 @@ Anything not written here is lost at the next context compaction. Newest entries
   (4 MiB samples). Weapon text data: `ssl/weapons/**/*.cls` (default_other.pak). Weapon sound bank: `sounds/desktop/wpn.bnk` (881 KB).
 - **The report was cut at 470 lines by my own cap**, losing the whole DS3 section and the last file-type samples. Fixed with scan part 2 (DS3 first, capped sections).
 
+## Kit 0.3 results (owner's PC, 2026-10-07) - what they showed
+
+- Owner heard **both beeps** (title screen and in the world). The probe now survives the early title-screen state (per-step resilience works).
+- The character is a fresh Knight: inventory = Fists x4 (weapon row 110000), **Longsword (2010000)**, **Knight Shield (21040000)**, 4 armour pieces, Estus Flask (goods
+  151), Ashen Estus... (goods ids 94/103/117/119/151/191/1000). Stats: vigor 12 ... luck 7 (level ~8). Equipment slot array: [128..133, -1 x6, 145,135,136,137, -1 ...].
+- 98 parameter tables registered; only 39 were "readable" because **my own check rejected `name_offset > 0x1000`** (the table's name sits behind all rows, so big tables - weapons
+  among them - were refused). Fixed in kit 0.4. `ParamRowInfo` has a third word (`_unk10`) that is very likely the row-name offset; kit 0.4 reads it.
+- `probe-ds3-samples.csv` was lost (flushed every 100 rows, game closed earlier). Kit 0.4 flushes every 3 s.
+- Text: "Straight Sword", "Estus Flask" (x1, later x4 incl. "Ashen Estus Flask"), "Longsword" each occur **once** as separate UTF-16 strings, each preceded by an 8-byte block header
+  `[u32 hash?][00][u16 counter][u8 flags 0x80/0x88/0x90]` (counters of neighbouring blocks differ by one: consecutive heap allocations), then the characters, then NUL; **no
+  `.fmg`-shaped table exists in memory** (0 of 6 scans). "Straight Sword" is not an item name in DS3 (weapon category label); item names are "Longsword", "Shortsword" (2000000), "Light Crossbow"
+  (14040000), "Standard Bolt" (404000), "Knight Shield", "Fists" (Paramdex, MIT-style name lists; the game's own table is checked by the kit 0.4 probe). Plan: find the pointer(s) to these
+  strings (kit 0.4 text diagnosis: neighbourhood + pointer scan) and, as a first experiment, overwrite name strings in place (same length, space padded).
+- The first launcher run lasted ~2 s before the second one: Steam was probably not running, so the game restarted itself through Steam (without our protection). The launcher now says so.
+
+## Space Marine 2 sound events found (kit 0.3 report)
+
+- `wpn.bnk` v150: 7186 sounds, 838 events; media in `wpn.zip` (3642 `.wem`). Names recovered by hashing words: chainsword (`chswd`) events - `wpn_melee_chswd_light_1hit..4hit` (12-16 sounds each),
+  `slash_1hit..5hit` (+`_mirror`), `idle_start` / `idle_loop`, `charge_loop_start/stop`, `charge_step_01/02`, `dodge_attack_01`, `parry`, `riposte`, `finish_war_*`; `wpn_melee_chswd_3d_*` are the
+  3D-positioned (other players) versions. Bolt pistol: `wpn_firearm_shoot_2d_bolt_pistol[_heavy|_deathwatch|_suppressed|_burst|_empty_shoot]` (~280 sounds = layers x random variants x tails),
+  `wpn_firearm_shoot_3d_*`, `wpn_firearm_foley_bolt_pistol_zoom_in/out`.
+- Containers are random/switch/layer: kit 0.4 `prepare` resolves one playback ("take") per event with a heuristic walker and writes a tree of what it followed to `prepare-report.txt`.
+
 ## Research findings (public sources; no SM2/DS3 files involved)
 
 | Topic | Finding | License / use |
@@ -122,15 +148,13 @@ and an archive reader to modify an existing weapon file). The in-game side (gran
 
 ## Open questions (waiting on the owner's PC)
 
-1. Kit 0.3 / DS3 in a loaded world: params table dump, inventory, equipment slots, stamina samples while swinging/rolling/sprinting/drinking/shooting, item-name
-   text tables (found? parsed? relocated pointers?), the beeps (title screen and in world).
-2. Kit 0.3 / SM2: the weapon stat classes in full, all chainsword and bolt-pistol sound events with their media, and (opt-in) a few real `.wem` clips to test the
-   Wwise Vorbis converter here.
-3. Which weapon rows to repurpose in DS3 (decided from the weapon CSV) and how to name them.
+1. Kit 0.4: do the prepared sounds sound like a chainsword / bolt pistol (owner listens to the .wav files and in game)? Which container choices are wrong (see the trees in the prepare report)?
+2. Kit 0.4: stamina scale and button bindings (sfx-trace.csv), whether rolls stay silent, whether swings/shots fire at the right moments.
+3. Kit 0.4: weapon table with row names (probe-ds3-weapons.csv), goods names, the text-storage diagnosis (pointer neighbourhood), result of the F8 experiment (grant + in-memory rename).
+4. Which weapon rows to repurpose permanently (currently Shortsword -> Chainsword, Light Crossbow -> Bolt Pistol, Standard Bolt -> Bolt Rounds) and how to name them for good.
 
 ## Next
 
-- Owner runs kit 0.2 (dist/AshenMarine-dev-0.2.0.zip) and sends AshenMarine-logs.zip. Then: fill `sm2_sources` / `sounds` / `weapons` sheet cells from
-  the report, decide the weapon-row and naming approach from the DS3 probe, finish the real conversion (assets/ + ready.json) in the setup tool.
-- M3: grant + edit the two weapons, SM2 sounds through the mixer, polled triggers. M4: Melty listing, release, one-click check, real screenshot,
-  publish only with the owner's OK.
+- Kit 0.4 -> owner -> logs. Then: fix triggers from the trace, make names/grants automatic (no hotkey), equip-aware idle loop, equip/unequip sounds, hit sounds; weapon models (Saber 1SER) remain a separate later upgrade.
+- M2 finish: `ashenmarine-setup prepare` as the Melty `setup` step (marker `assets/ready.json`), verify on the owner's PC, preflight milestone 2 clean (it is).
+- M4: Melty listing, release, one-click check, real screenshot, publish only with the owner's OK.
