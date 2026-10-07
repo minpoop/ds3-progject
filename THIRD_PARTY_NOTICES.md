@@ -63,6 +63,16 @@ of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND 
 ModEngine2 is distributed under the MIT license (see `LICENSE-MIT` in the ModEngine2 repository, shipped with
 private test kits as `modengine2/LICENSE-MIT.txt`).
 
+## Format references (knowledge only, no code copied unless stated)
+
+- Space Marine 2 texture format: [vash2pid/texmipper](https://github.com/vash2pid/texmipper) (MIT).
+- Space Marine 2 model/serialization format: [Wildenhaus/LibSaber](https://github.com/Wildenhaus/LibSaber) and
+  [Wildenhaus/IndexV2](https://github.com/Wildenhaus/IndexV2) (no license file: used only to understand the format; our parser is written independently),
+  and the ResHax community thread on SM2 `.tpl` models.
+- Saber's official Space Marine 2 modding documentation (spacemarine2-modding.prismray.io).
+- Wwise sound banks: [vswarte/rewwise](https://github.com/vswarte/rewwise) (MIT OR Apache-2.0), vgmstream (ISC).
+- Dark Souls III in-process structures: [vswarte/fromsoftware-rs](https://github.com/vswarte/fromsoftware-rs) `darksouls3` crate (MIT).
+
 ## Not included
 
 No Dark Souls III or Space Marine 2 file is included in this project or in any release. Dark Souls III is
