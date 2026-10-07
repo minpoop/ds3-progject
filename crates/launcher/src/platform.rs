@@ -9,7 +9,6 @@ mod imp {
     use windows_sys::Win32::System::Com::CoTaskMemFree;
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
     use windows_sys::Win32::Foundation::GetLastError;
-    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
     use windows_sys::Win32::System::Threading::CreateMutexW;
     use windows_sys::Win32::UI::Shell::{FOLDERID_RoamingAppData, SHGetKnownFolderPath};
     use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK};
@@ -33,25 +32,6 @@ mod imp {
             let s = String::from_utf16_lossy(core::slice::from_raw_parts(p, n));
             CoTaskMemFree(p as *const c_void);
             Some(PathBuf::from(s))
-        }
-    }
-
-    /// Steam's install folder from the registry.
-    pub fn steam_root() -> Option<PathBuf> {
-        unsafe {
-            let mut buf = [0u16; 1024];
-            let mut size = (buf.len() * 2) as u32;
-            let rc = RegGetValueW(HKEY_CURRENT_USER, wide("Software\\Valve\\Steam").as_ptr(), wide("SteamPath").as_ptr(), RRF_RT_REG_SZ, core::ptr::null_mut(), buf.as_mut_ptr() as *mut c_void, &mut size);
-            if rc != 0 {
-                return None;
-            }
-            let n = (size as usize / 2).saturating_sub(1).min(buf.len());
-            let s = String::from_utf16_lossy(&buf[..n]);
-            if s.is_empty() {
-                None
-            } else {
-                Some(PathBuf::from(s.replace('/', "\\")))
-            }
         }
     }
 
@@ -103,9 +83,6 @@ mod imp {
     use std::path::PathBuf;
 
     pub fn known_appdata() -> Option<PathBuf> {
-        None
-    }
-    pub fn steam_root() -> Option<PathBuf> {
         None
     }
     pub fn process_running(_exe: &str) -> bool {

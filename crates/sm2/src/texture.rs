@@ -515,3 +515,178 @@ unknownField: [1, 2, 3]
         assert_eq!(img.shrink_to(1000).width, 100);
     }
 }
+
+/// A texture found in the paks: its descriptor, which mip level the bytes are, and the raw bytes of that mip.
+#[derive(Debug, Clone)]
+pub struct LoadedTexture {
+    pub desc: TexDesc,
+    pub level: u32,
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<u8>,
+    /// the `.pct_mip` the bytes came from
+    pub file: String,
+}
+
+impl LoadedTexture {
+    pub fn decode(&self) -> Result<Image> {
+        decode(self.desc.format, self.width, self.height, &self.data)
+    }
+}
+
+/// Find the data file a descriptor names: as written, then below `pct/`, then by file name anywhere in the paks.
+fn find_mip_file(paks: &crate::pak::PakSet, name: &str) -> Option<String> {
+    let norm = name.replace('\\', "/");
+    for cand in [norm.clone(), format!("pct/{norm}")] {
+        if paks.contains(&cand) {
+            return Some(cand);
+        }
+    }
+    let tail = format!("/{}", norm.rsplit('/').next().unwrap_or(&norm).to_ascii_lowercase());
+    paks.find(|k| k.ends_with(&tail)).into_iter().next()
+}
+
+/// Read the largest mip that is present for the texture described by `resource` (an entry name such as
+/// `pct/foo_d_0.pct.resource`). The data may be one file per mip or one file holding every mip: both are tried and
+/// the byte size decides.
+pub fn load_top(paks: &mut crate::pak::PakSet, resource: &str) -> Result<LoadedTexture> {
+    let text = paks.read_text(resource, 1 << 20)?;
+    let desc = TexDesc::parse(&text).map_err(|e| anyhow!("{resource}: {e}"))?;
+    if desc.mip_maps.is_empty() {
+        bail!("{resource}: descriptor lists no mip files");
+    }
+    let levels = desc.n_mip_map.max(desc.mip_levels.len() as u32).max(desc.mip_maps.len() as u32).max(1);
+    // keep the position of every listed file (file i is mip i), even when this install does not ship some of them
+    let mut files: Vec<Option<(String, Vec<u8>)>> = Vec::new();
+    for m in &desc.mip_maps {
+        files.push(match find_mip_file(paks, m) {
+            Some(f) => {
+                let bytes = paks.read(&f, 1 << 30)?;
+                Some((f, bytes))
+            }
+            None => None,
+        });
+    }
+    if files.iter().all(|f| f.is_none()) {
+        bail!("{resource}: none of its mip files ({}) is in any pak", desc.mip_maps.join(", "));
+    }
+    for level in 0..levels {
+        let (w, h) = desc.mip_dims(level);
+        let Some(want) = mip_byte_size(desc.format, w, h) else {
+            bail!("{resource}: unsupported texture format {}", format_name(desc.format));
+        };
+        // 1. one file per mip
+        if let Some(Some((name, bytes))) = files.get(level as usize) {
+            if bytes.len() as u64 == want {
+                return Ok(LoadedTexture { desc, level, width: w, height: h, data: bytes.clone(), file: name.clone() });
+            }
+        }
+        // 2. one file with every mip, located by the descriptor's offsets
+        if let Some(ml) = desc.mip_levels.get(level as usize) {
+            if ml.size == want {
+                for (name, bytes) in files.iter().flatten() {
+                    let (o, n) = (ml.offset as usize, ml.size as usize);
+                    if o.checked_add(n).is_some_and(|e| e <= bytes.len()) && bytes.len() as u64 > want {
+                        return Ok(LoadedTexture { desc: desc.clone(), level, width: w, height: h, data: bytes[o..o + n].to_vec(), file: name.clone() });
+                    }
+                }
+            }
+        }
+    }
+    let sizes: Vec<String> = files.iter().flatten().map(|(n, b)| format!("{n}={}", b.len())).collect();
+    bail!(
+        "{resource}: no mip file matches the size {}x{} {} needs ({} bytes); files: {}",
+        desc.sx,
+        desc.sy,
+        format_name(desc.format),
+        mip_byte_size(desc.format, desc.sx, desc.sy).unwrap_or(0),
+        sizes.join(", ")
+    )
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+    use crate::pak::PakSet;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+
+    fn pak(path: &std::path::Path, entries: &[(&str, Vec<u8>)]) {
+        let mut z = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        for (n, d) in entries {
+            z.start_file(*n, SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)).unwrap();
+            z.write_all(d).unwrap();
+        }
+        z.finish().unwrap();
+    }
+
+    fn desc(files: &[&str], levels: &[(u64, u64)], sx: u32) -> String {
+        let mut s = format!("header:\n  format: 12\n  nMipMap: {}\n  sx: {sx}\n  sy: {sx}\n  mipLevel:\n", levels.len());
+        for (o, n) in levels {
+            s += &format!("  - offset: {o}\n    size: {n}\n");
+        }
+        s += "mipMaps:\n";
+        for f in files {
+            s += &format!("- {f}\n");
+        }
+        s
+    }
+
+    #[test]
+    fn loads_one_file_per_mip() {
+        let dir = tempfile::tempdir().unwrap();
+        let red = vec![0x00u8, 0xF8, 0x1F, 0x00, 0, 0, 0, 0];
+        pak(&dir.path().join("resources.pak"), &[("pct/t_d_0.pct.resource", desc(&["t_d_0.pct_mip", "t_d_1.pct_mip"], &[(0, 8), (8, 8)], 8).into_bytes())]);
+        // 8x8 BC1 is 32 bytes (top mip), 4x4 is 8 bytes
+        let top: Vec<u8> = red.iter().cycle().take(32).copied().collect();
+        pak(&dir.path().join("default.pak"), &[("pct/t_d_0.pct_mip", top), ("pct/t_d_1.pct_mip", red.clone())]);
+        let mut set = PakSet::open_dir(dir.path()).unwrap();
+        let t = load_top(&mut set, "pct/t_d_0.pct.resource").unwrap();
+        assert_eq!((t.level, t.width, t.height, t.data.len()), (0, 8, 8, 32));
+        let img = t.decode().unwrap();
+        assert_eq!(&img.rgba[..4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn loads_one_file_holding_every_mip_by_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let red = [0x00u8, 0xF8, 0x1F, 0x00, 0, 0, 0, 0];
+        let blue = [0x00u8, 0xF8, 0x1F, 0x00, 0x55, 0x55, 0x55, 0x55];
+        let mut all: Vec<u8> = Vec::new();
+        for _ in 0..4 {
+            all.extend(blue); // 8x8 = four blocks of blue
+        }
+        all.extend(red); // then the 4x4 mip
+        pak(&dir.path().join("resources.pak"), &[("pct/t.pct.resource", desc(&["t.pct_mip"], &[(0, 32), (32, 8)], 8).into_bytes())]);
+        pak(&dir.path().join("default.pak"), &[("pct/t.pct_mip", all)]);
+        let mut set = PakSet::open_dir(dir.path()).unwrap();
+        let t = load_top(&mut set, "pct/t.pct.resource").unwrap();
+        assert_eq!((t.level, t.width), (0, 8));
+        assert_eq!(&t.decode().unwrap().rgba[..4], &[0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn skips_mips_that_are_not_shipped_and_finds_files_outside_pct() {
+        let dir = tempfile::tempdir().unwrap();
+        // the descriptor says 8x8 but the only file is the 4x4 mip (the big ones are not in this install)
+        let red = vec![0x00u8, 0xF8, 0x1F, 0x00, 0, 0, 0, 0];
+        pak(&dir.path().join("resources.pak"), &[("pct/t.pct.resource", desc(&["t_1.pct_mip", "t_2.pct_mip"], &[(0, 32), (0, 8)], 8).into_bytes())]);
+        pak(&dir.path().join("default.pak"), &[("somewhere/else/t_2.pct_mip", red.clone())]);
+        let mut set = PakSet::open_dir(dir.path()).unwrap();
+        let t = load_top(&mut set, "pct/t.pct.resource").unwrap();
+        assert_eq!((t.level, t.width, t.height), (1, 4, 4));
+        assert_eq!(t.file, "somewhere/else/t_2.pct_mip");
+        assert_eq!(&t.decode().unwrap().rgba[..4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn explains_when_nothing_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        pak(&dir.path().join("resources.pak"), &[("pct/t.pct.resource", desc(&["t.pct_mip"], &[(0, 32)], 8).into_bytes())]);
+        pak(&dir.path().join("default.pak"), &[("pct/t.pct_mip", vec![0u8; 5])]);
+        let mut set = PakSet::open_dir(dir.path()).unwrap();
+        let err = load_top(&mut set, "pct/t.pct.resource").unwrap_err().to_string();
+        assert!(err.contains("no mip file matches") && err.contains("t.pct_mip=5"), "{err}");
+        assert!(load_top(&mut set, "pct/none.pct.resource").is_err());
+    }
+}

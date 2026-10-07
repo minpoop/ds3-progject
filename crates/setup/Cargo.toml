@@ -1,0 +1,25 @@
+[package]
+name = "ashen-setup"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Ashen Marine setup step: reads the player's own Space Marine 2 install (read-only) and prepares the converted assets and a probe report"
+
+[lib]
+name = "ashen_setup"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ashenmarine-setup"
+path = "src/main.rs"
+
+[dependencies]
+ashen-common = { path = "../common" }
+ashen-sm2 = { path = "../sm2" }
+anyhow.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+ashen-sm2 = { path = "../sm2", features = ["testing"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
+tempfile = "3"

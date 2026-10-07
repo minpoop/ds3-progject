@@ -5,6 +5,10 @@ edition.workspace = true
 publish.workspace = true
 description = "Ashen Marine: READ-ONLY reader for the player's own Space Marine 2 install (paks, textures, Wwise sound banks). Nothing here writes to or ships any game file."
 
+[features]
+# synthetic bank/wem builders for tests in other crates
+testing = []
+
 [dependencies]
 anyhow.workspace = true
 zip = { version = "8", default-features = false, features = ["deflate"] }

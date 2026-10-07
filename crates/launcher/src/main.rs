@@ -94,13 +94,7 @@ fn find_ds3(o: &Opts, exe_dir: &Path) -> Option<PathBuf> {
             return Some(PathBuf::from(line));
         }
     }
-    let mut roots: Vec<PathBuf> = platform::steam_root().into_iter().collect();
-    for var in ["ProgramFiles(x86)", "ProgramFiles"] {
-        if let Some(pf) = std::env::var_os(var) {
-            roots.push(PathBuf::from(pf).join("Steam"));
-        }
-    }
-    for root in roots {
+    for root in steam::candidate_roots(steam::registry_root()) {
         if let Some((p, _)) = steam::find_game(&steam::libraries(&root), DS3_APP_ID) {
             return Some(p);
         }

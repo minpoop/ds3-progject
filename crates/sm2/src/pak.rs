@@ -51,6 +51,9 @@ impl<R: Read + Seek> Seek for Section<R> {
     }
 }
 
+/// A stored zip opened in place inside a pak (the sound paks hold their wem files this way).
+pub type NestedZip = ZipArchive<Section<File>>;
+
 /// What is known about one entry without reading its data.
 #[derive(Debug, Clone)]
 pub struct EntryInfo {
@@ -86,9 +89,7 @@ impl PakSet {
 
     /// Open every `*.pak` below `dir` (recursively), in sorted path order.
     pub fn open_dir(dir: &Path) -> Result<PakSet> {
-        let mut files = Vec::new();
-        collect_paks(dir, &mut files).with_context(|| format!("listing {}", dir.display()))?;
-        files.sort();
+        let files = list_paks(dir).with_context(|| format!("listing {}", dir.display()))?;
         Self::open_files(&files)
     }
 
@@ -174,7 +175,7 @@ impl PakSet {
     }
 
     /// Open a stored (uncompressed) zip that lives inside a pak, without extracting it.
-    pub fn open_nested(&mut self, name: &str) -> Result<ZipArchive<Section<File>>> {
+    pub fn open_nested(&mut self, name: &str) -> Result<NestedZip> {
         let &(p, i) = self.index.get(&key(name)).ok_or_else(|| anyhow!("{name}: not in any pak"))?;
         let pak = &mut self.paks[p];
         // data_start is only known once the local header has been read
@@ -197,6 +198,14 @@ impl PakSet {
         let section = Section::new(file, start, len);
         ZipArchive::new(section).with_context(|| format!("{name} is not a zip"))
     }
+}
+
+/// Every `*.pak` below `dir`, sorted (recursive).
+pub fn list_paks(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    collect_paks(dir, &mut files)?;
+    files.sort();
+    Ok(files)
 }
 
 fn collect_paks(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {

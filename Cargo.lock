@@ -22,6 +22,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "windows-sys",
 ]
 
 [[package]]
@@ -47,6 +48,18 @@ dependencies = [
  "anyhow",
  "ashen-common",
  "windows-sys",
+]
+
+[[package]]
+name = "ashen-setup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ashen-common",
+ "ashen-sm2",
+ "serde_json",
+ "tempfile",
+ "zip",
 ]
 
 [[package]]

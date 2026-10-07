@@ -74,6 +74,67 @@ pub fn find_game(libs: &[PathBuf], app_id: u32) -> Option<(PathBuf, Option<Strin
     None
 }
 
+/// Steam's install folder from the registry (Windows only; `None` elsewhere or if Steam is not installed).
+#[cfg(windows)]
+pub fn registry_root() -> Option<PathBuf> {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(Some(0)).collect()
+    }
+    unsafe {
+        let mut buf = [0u16; 1024];
+        let mut size = (buf.len() * 2) as u32;
+        let rc = RegGetValueW(
+            HKEY_CURRENT_USER,
+            wide("Software\\Valve\\Steam").as_ptr(),
+            wide("SteamPath").as_ptr(),
+            RRF_RT_REG_SZ,
+            core::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut core::ffi::c_void,
+            &mut size,
+        );
+        if rc != 0 {
+            return None;
+        }
+        let n = (size as usize / 2).saturating_sub(1).min(buf.len());
+        let s = String::from_utf16_lossy(&buf[..n]);
+        if s.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(s.replace('/', "\\")))
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn registry_root() -> Option<PathBuf> {
+    None
+}
+
+/// Where Steam may live: the registry answer first, then the usual Program Files folders.
+pub fn candidate_roots(registry: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = registry.into_iter().collect();
+    for var in ["ProgramFiles(x86)", "ProgramFiles"] {
+        if let Some(pf) = std::env::var_os(var) {
+            let p = PathBuf::from(pf).join("Steam");
+            if !roots.contains(&p) {
+                roots.push(p);
+            }
+        }
+    }
+    roots
+}
+
+/// Find an installed Steam game by app id across every Steam library. Returns its folder and Steam's build id.
+pub fn locate(app_id: u32) -> Option<(PathBuf, Option<String>)> {
+    for root in candidate_roots(registry_root()) {
+        if let Some(found) = find_game(&libraries(&root), app_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

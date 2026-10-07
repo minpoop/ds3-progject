@@ -317,8 +317,8 @@ impl Bank {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod testbank {
+#[cfg(any(test, feature = "testing"))]
+pub mod testbank {
     //! Builds small synthetic banks so the parser can be tested without any game file.
     pub struct Builder {
         pub version: u32,

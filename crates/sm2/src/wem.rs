@@ -146,8 +146,8 @@ pub fn wav_bytes(pcm: &Pcm) -> Vec<u8> {
     out
 }
 
-#[cfg(test)]
-pub(crate) fn test_wem(tag: u16, channels: u16, rate: u32, bits: u16, extra: &[u8], data: &[u8]) -> Vec<u8> {
+#[cfg(any(test, feature = "testing"))]
+pub fn test_wem(tag: u16, channels: u16, rate: u32, bits: u16, extra: &[u8], data: &[u8]) -> Vec<u8> {
     let mut fmt = Vec::new();
     fmt.extend(tag.to_le_bytes());
     fmt.extend(channels.to_le_bytes());

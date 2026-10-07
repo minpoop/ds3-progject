@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/common", "crates/hook", "crates/launcher", "crates/harness", "crates/sm2"]
+members = ["crates/common", "crates/hook", "crates/launcher", "crates/harness", "crates/sm2", "crates/setup"]
 resolver = "2"
 
 [workspace.package]
@@ -14,13 +14,10 @@ sha2 = "0.10"
 anyhow = "1"
 windows-sys = "0.61"
 
-# The hook DLL runs inside someone else's process: a panic must never unwind across the FFI boundary.
+# The hook DLL runs inside someone else's process. Panics unwind so that optional features can catch them at their
+# own thread entry points (every `extern "system"` boundary aborts on unwind, which is the old behaviour).
 [profile.release]
 opt-level = "s"
 lto = true
 codegen-units = 1
-panic = "abort"
 strip = true
-
-[profile.dev]
-panic = "abort"
