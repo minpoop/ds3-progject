@@ -1,9 +1,10 @@
 @echo off
 rem Starts Dark Souls III as the Ashen Marine OFFLINE COPY. Your real save is backed up first and checked afterwards.
+rem --probe: this private test kit also writes a read-only report about the running game (nothing is changed).
 cd /d "%~dp0"
 if not exist "ashenmarine\ashenmarine-launcher.exe" (
   echo Cannot find ashenmarine\ashenmarine-launcher.exe - did you unzip the whole folder?
   pause
   exit /b 1
 )
-start "" "ashenmarine\ashenmarine-launcher.exe"
+start "" "ashenmarine\ashenmarine-launcher.exe" --probe

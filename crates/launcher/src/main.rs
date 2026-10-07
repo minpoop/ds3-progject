@@ -9,7 +9,7 @@
 
 mod platform;
 
-use ashen_common::config::{me2_toml, HookConfig};
+use ashen_common::config::{me2_toml, Features, HookConfig};
 use ashen_common::generated::files as f;
 use ashen_common::logging::{file_tag, Logger};
 use ashen_common::paths::Roots;
@@ -20,12 +20,13 @@ use std::process::{Command, ExitCode};
 use std::time::{Duration, Instant};
 
 const DS3_EXE_NAME: &str = "DarkSoulsIII.exe";
-const USAGE: &str = "ashenmarine-launcher [--game <Dark Souls III folder>] [--me2 <ModEngine2 folder>] [--data <folder>] [--appdata <folder>] [--silent]\n\
+const USAGE: &str = "ashenmarine-launcher [--game <Dark Souls III folder>] [--me2 <ModEngine2 folder>] [--data <folder>] [--appdata <folder>] [--silent] [--probe]\n\
   --game     Dark Souls III install folder (default: found through Steam)\n\
   --me2      ModEngine2 folder (default: ..\\modengine2 next to this program)\n\
   --data     where the mashup keeps its save copy, backups and logs (default: next to this program)\n\
   --appdata  override %APPDATA% (testing)\n\
-  --silent   no message boxes (testing)";
+  --silent   no message boxes (testing)\n\
+  --probe    private test kits: also write a read-only report about the running game (probe-ds3.txt)";
 
 #[derive(Default)]
 struct Opts {
@@ -34,6 +35,7 @@ struct Opts {
     data: Option<PathBuf>,
     appdata: Option<PathBuf>,
     silent: bool,
+    probe: bool,
 }
 
 fn parse_args() -> Result<Opts, String> {
@@ -47,6 +49,7 @@ fn parse_args() -> Result<Opts, String> {
             "--data" => o.data = Some(value("--data")?.into()),
             "--appdata" => o.appdata = Some(value("--appdata")?.into()),
             "--silent" => o.silent = true,
+            "--probe" => o.probe = true,
             "--help" | "-h" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
@@ -191,6 +194,7 @@ fn run(o: &Opts, exe_dir: &Path) -> Result<ExitCode, (String, Option<Logger>)> {
         window_suffix: WINDOW_SUFFIX.to_string(),
         silent: o.silent,
         block_network: true,
+        features: Features { probe: o.probe },
     };
     hook_cfg.save(&hook_cfg_path).map_err(|e| fail(format!("Cannot write {}: {e}", hook_cfg_path.display())))?;
     std::fs::write(&me2_cfg_path, me2_toml(&hook_dll, &mod_dir)).map_err(|e| fail(format!("Cannot write {}: {e}", me2_cfg_path.display())))?;

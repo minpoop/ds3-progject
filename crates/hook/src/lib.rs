@@ -9,6 +9,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 mod custom;
+mod features;
 mod generated;
 mod guard;
 mod init;

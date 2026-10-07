@@ -2,15 +2,48 @@
   "sheet": "systems",
   "doc": "Every game system the mashup touches. Rows with a null mechanism are not designed yet (they depend on what the real SM2 files turn out to contain).",
   "columns": {
-    "id": {"type": "id"},
-    "name": {"type": "string"},
-    "game": {"type": "ref", "sheet": "games"},
-    "what": {"type": "string"},
-    "mechanism": {"type": "string"},
-    "owner": {"type": "ref", "sheet": "artifacts", "doc": "the artifact that implements it"},
-    "risk": {"type": "enum", "values": ["low", "medium", "high"]},
-    "oracle": {"type": "enum", "values": ["harness", "pc_log", "pc_visual", "reading"], "doc": "what proves it works"},
-    "milestone": {"type": "int"}
+    "id": {
+      "type": "id"
+    },
+    "name": {
+      "type": "string"
+    },
+    "game": {
+      "type": "ref",
+      "sheet": "games"
+    },
+    "what": {
+      "type": "string"
+    },
+    "mechanism": {
+      "type": "string"
+    },
+    "owner": {
+      "type": "ref",
+      "sheet": "artifacts",
+      "doc": "the artifact that implements it"
+    },
+    "risk": {
+      "type": "enum",
+      "values": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "oracle": {
+      "type": "enum",
+      "values": [
+        "harness",
+        "pc_log",
+        "pc_visual",
+        "reading"
+      ],
+      "doc": "what proves it works"
+    },
+    "milestone": {
+      "type": "int"
+    }
   },
   "rows": [
     {
@@ -166,6 +199,28 @@
       "risk": "high",
       "oracle": "pc_visual",
       "milestone": 3
+    },
+    {
+      "id": "ds3_probe",
+      "name": "Read-only look at the running game (test kits)",
+      "game": "ds3",
+      "what": "A private test kit reports facts about the player's own game (build, weapon table, inventory, stamina, text tables) so the weapons feature can be built on real data instead of guesses.",
+      "mechanism": "hook DLL thread: reads the exe's version resource and stops if the build is not one the darksouls3 crate knows; reads parameter tables, inventory and stats through the crate's typed structures from a per-frame game task; scans its own process memory with ReadProcessMemory for FMG text tables. Writes probe-ds3.* next to hook.log. Never writes game memory, never calls a game function.",
+      "owner": "hook_dll",
+      "risk": "medium",
+      "oracle": "pc_log",
+      "milestone": 2
+    },
+    {
+      "id": "sm2_probe",
+      "name": "Report on Space Marine 2's weapon content",
+      "game": "sm2",
+      "what": "The setup tool describes what the player's own SM2 install holds for a chainsword and a bolt pistol (files, textures, data, sounds), with preview pictures.",
+      "mechanism": "ashenmarine-setup probe: opens every client .pak read-only, lists weapon templates, decodes weapon textures to PNG previews, prints weapon .cls text, parses Wwise banks, recovers event names by hashing words from game text, reads wem headers; writes only to its own output folder",
+      "owner": "setup_exe",
+      "risk": "low",
+      "oracle": "harness",
+      "milestone": 2
     }
   ]
 }

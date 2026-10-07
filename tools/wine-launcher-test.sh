@@ -7,6 +7,7 @@
 #   F  protection silently fails (game never loads the hook): the launcher detects the change and restores it
 #   G  the hook closes the game (private save vanished): the launcher reports why; real save untouched
 #   I  Dark Souls III already running: the launcher refuses to start
+#   L  --probe: the hook's read-only game probe starts, copes with a game it does not know, and scans for text tables
 set -u
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
@@ -14,6 +15,7 @@ OUT="${ASHEN_TEST_ROOT:-$ROOT/target/wine-test}/launcher"
 BIN="$ROOT/target/x86_64-pc-windows-gnu/release"
 WINE="${WINE:-/usr/lib/wine/wine64}"
 FAILS=0
+LAUNCHER_ARGS=""
 winpath() { printf 'Z:%s' "${1//\//\\}"; }
 ok()   { echo "  PASS $1"; }
 bad()  { echo "  FAIL $1"; FAILS=$((FAILS + 1)); }
@@ -40,7 +42,7 @@ launch() { # <world> [env assignments...]  -> runs the launcher, stores rc
   ( cd "$w" && env "$@" \
       ASHEN_FAKE_REAL="$(winpath "$w/appdata/DarkSoulsIII")" ASHEN_FAKE_LOG="$(winpath "$w/ashen/logs/hook.log")" ASHEN_FAKE_RESULT="$(winpath "$w/result.txt")" \
       WINEDEBUG=-all timeout 150 xvfb-run -a "$WINE" "$w/ashen/ashenmarine-launcher.exe" \
-        --game "$(winpath "$w/game")" --me2 "$(winpath "$w/me2")" --appdata "$(winpath "$w/appdata")" --silent > "$w/launcher.out" 2>&1; echo $? > "$w/launcher.rc" )
+        --game "$(winpath "$w/game")" --me2 "$(winpath "$w/me2")" --appdata "$(winpath "$w/appdata")" --silent $LAUNCHER_ARGS > "$w/launcher.out" 2>&1; echo $? > "$w/launcher.rc" )
 }
 
 echo; echo "== E: happy path =="
@@ -106,6 +108,19 @@ wait
 check "J the first launcher finished normally" '[ "$(cat "$W/first.rc")" = "0" ]'
 check "J real save untouched" '[ "$(treehash "$W/appdata")" = "$REAL0" ]'
 
+echo; echo "== L: --probe (read-only game probe) in a game it does not know =="
+make_world L; REAL0="$(treehash "$W/appdata")"
+LAUNCHER_ARGS="--probe" launch "$W" ASHEN_FAKE_HOLD_SECS=34
+sed 's/^/    /' "$W/ashen/logs/probe-ds3.txt" 2>/dev/null | cut -c1-200 | head -14
+check "L launcher exit code 0" '[ "$(cat "$W/launcher.rc")" = "0" ]'
+check "L the probe started and said it is read-only" 'grep -q "DS3 probe v.* starting (read-only" "$W/ashen/logs/probe-ds3.txt"'
+check "L it noticed it cannot read this game version and did not touch game memory structures" 'grep -q "cannot read the game version" "$W/ashen/logs/probe-ds3.txt" && grep -q "in-game probe skipped" "$W/ashen/logs/probe-ds3.txt"'
+check "L the text-table scan ran and finished" 'grep -q "text-table scan 1" "$W/ashen/logs/probe-ds3.txt" && grep -q "found .* text tables" "$W/ashen/logs/probe-ds3.txt"'
+check "L the sandbox still worked (VERIFIED, real save untouched)" 'grep -q "VERIFIED" "$W/ashen/logs/launcher.log" && [ "$(treehash "$W/appdata")" = "$REAL0" ]'
+check "L the hook config said probe=true" 'grep -q "\"probe\": true" "$W/ashen/config/ashenmarine.json"'
+make_world L2; LAUNCHER_ARGS="" launch "$W" ASHEN_FAKE_HOLD_SECS=0
+check "L2 without --probe no probe file is created" '[ ! -e "$W/ashen/logs/probe-ds3.txt" ]'
+
 echo; echo "== K: the packaged kit layout with the REAL (trimmed) ModEngine2 =="
 KITSRC="$(ls -d "$ROOT"/dist/AshenMarine-dev-* 2>/dev/null | grep -v '\.zip$' | head -1)"
 if [ -z "$KITSRC" ]; then
@@ -116,7 +131,7 @@ else
   # The kit is tested exactly as shipped, and must contain the very binaries the other scenarios just used.
   check "K the kit ships the binaries that were tested" '[ "$(sha256sum < "$W/kit/ashenmarine/ashenmarine_hook.dll")" = "$(sha256sum < "$BIN/ashenmarine_hook.dll")" ] && [ "$(sha256sum < "$W/kit/ashenmarine/ashenmarine-launcher.exe")" = "$(sha256sum < "$BIN/ashenmarine-launcher.exe")" ]'
   ( cd "$W" && ASHEN_FAKE_BEHAVIOR=sleep ASHEN_FAKE_REAL="$(winpath "$W/appdata/DarkSoulsIII")" WINEDEBUG=-all timeout 150 xvfb-run -a "$WINE" "$W/kit/ashenmarine/ashenmarine-launcher.exe" \
-      --game "$(winpath "$W/game")" --appdata "$(winpath "$W/appdata")" --silent > "$W/launcher.out" 2>&1; echo $? > "$W/launcher.rc" )
+      --game "$(winpath "$W/game")" --appdata "$(winpath "$W/appdata")" --silent --probe > "$W/launcher.out" 2>&1; echo $? > "$W/launcher.rc" )
   sed 's/^/    /' "$W/kit/ashenmarine/logs/launcher.log" | tail -14; echo "    -- hook.log:"; sed 's/^/    /' "$W/kit/ashenmarine/logs/hook.log" | cut -c1-220 | head -12
   check "K launcher exit code 0" '[ "$(cat "$W/launcher.rc")" = "0" ]'
   check "K the kit's ModEngine2 was found by default (no --me2 given)" 'grep -q "ModEngine2:" "$W/kit/ashenmarine/logs/launcher.log"'
@@ -125,6 +140,7 @@ else
   check "K ModEngine2's own log shows it loaded the external DLL" 'grep -rq "Loaded external DLL" "$W/kit/modengine2/modengine2/logs/"'
   check "K real save byte-identical" '[ "$(treehash "$W/appdata")" = "$REAL0" ]'
   check "K launcher log says VERIFIED" 'grep -q "VERIFIED" "$W/kit/ashenmarine/logs/launcher.log"'
+  check "K the probe thread started inside the real-ModEngine2-loaded hook" 'grep -q "DS3 probe v" "$W/kit/ashenmarine/logs/probe-ds3.txt"'
 fi
 
 echo; if [ "$FAILS" -eq 0 ]; then echo "ALL LAUNCHER TESTS PASSED"; else echo "$FAILS CHECK(S) FAILED"; fi

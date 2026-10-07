@@ -2,13 +2,34 @@
   "sheet": "files",
   "doc": "Every file or folder the mashup reads or writes. 'guarded' means it must never be modified by the mashup; tests assert it.",
   "columns": {
-    "id": {"type": "id"},
-    "path": {"type": "string", "doc": "root token + path; see design/README.md"},
-    "purpose": {"type": "string"},
-    "access": {"type": "enum", "values": ["read", "write", "readwrite"]},
-    "system": {"type": "ref", "sheet": "systems"},
-    "guarded": {"type": "bool"},
-    "milestone": {"type": "int"}
+    "id": {
+      "type": "id"
+    },
+    "path": {
+      "type": "string",
+      "doc": "root token + path; see design/README.md"
+    },
+    "purpose": {
+      "type": "string"
+    },
+    "access": {
+      "type": "enum",
+      "values": [
+        "read",
+        "write",
+        "readwrite"
+      ]
+    },
+    "system": {
+      "type": "ref",
+      "sheet": "systems"
+    },
+    "guarded": {
+      "type": "bool"
+    },
+    "milestone": {
+      "type": "int"
+    }
   },
   "rows": [
     {
@@ -134,6 +155,33 @@
       "purpose": "SM2 content converted on the player's PC; private, never uploaded or committed",
       "access": "write",
       "system": "asset_convert",
+      "guarded": false,
+      "milestone": 2
+    },
+    {
+      "id": "probe_ds3_files",
+      "path": "{data}/logs/probe-ds3.txt",
+      "purpose": "What the read-only game probe found (also probe-ds3-weapons.csv, -inventory.csv, -samples.csv, -text-*.csv next to it)",
+      "access": "write",
+      "system": "ds3_probe",
+      "guarded": false,
+      "milestone": 2
+    },
+    {
+      "id": "sm2_probe_out",
+      "path": "{data}/probe-sm2",
+      "purpose": "The setup tool's probe report and texture preview pictures (private; made from the player's own install)",
+      "access": "write",
+      "system": "sm2_probe",
+      "guarded": false,
+      "milestone": 2
+    },
+    {
+      "id": "sm2_folder_hint",
+      "path": "{data}/sm2-folder.txt",
+      "purpose": "Optional: the player's Space Marine 2 folder on its first line, when it is not in a normal Steam library",
+      "access": "read",
+      "system": "sm2_discovery",
       "guarded": false,
       "milestone": 2
     }

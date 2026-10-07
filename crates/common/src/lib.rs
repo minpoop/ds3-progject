@@ -2,6 +2,7 @@
 //! Everything here is plain Rust that runs and is tested on any OS.
 
 pub mod config;
+pub mod fmg;
 pub mod generated;
 pub mod logging;
 pub mod netguard;

@@ -367,6 +367,10 @@ fn fake_ds3() -> ExitCode {
         WSACleanup();
     }
     let _ = fs::write(&result_path, result);
+    // Optionally stay alive a while longer (the in-game probe's first scan runs 25 s after it starts).
+    if let Some(secs) = std::env::var("ASHEN_FAKE_HOLD_SECS").ok().and_then(|v| v.parse::<u32>().ok()) {
+        unsafe { Sleep(secs * 1000) };
+    }
     ExitCode::SUCCESS
 }
 

@@ -152,6 +152,8 @@ unsafe fn run() -> Result<(), String> {
     } else {
         windows_sys::Win32::Foundation::CloseHandle(h);
     }
+    // Optional features start only now that the sandbox is proven; they can never close the game.
+    crate::features::start();
     Ok(())
 }
 

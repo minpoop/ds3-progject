@@ -40,9 +40,17 @@ fn main() -> ExitCode {
             }
         }
     }
-    opts.out = out.unwrap_or_else(|| {
-        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("probe-out"))).unwrap_or_else(|| PathBuf::from("probe-out"))
-    });
+    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| PathBuf::from("."));
+    opts.out = out.unwrap_or_else(|| exe_dir.join("probe-out"));
+    if opts.sm2.is_none() {
+        // optional hint for a game that is not in a normal Steam library: first line of sm2-folder.txt next to the exe
+        if let Ok(text) = std::fs::read_to_string(exe_dir.join("sm2-folder.txt")) {
+            let line = text.lines().next().unwrap_or("").trim().trim_matches('"').to_string();
+            if !line.is_empty() {
+                opts.sm2 = Some(PathBuf::from(line));
+            }
+        }
+    }
     if probe::run(&opts) {
         ExitCode::SUCCESS
     } else {

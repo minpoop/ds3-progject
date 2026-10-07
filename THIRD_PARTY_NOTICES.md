@@ -12,6 +12,10 @@ with the notices below.
 | `minhook` Rust crate | Rust bindings for MinHook | MIT | https://crates.io/crates/minhook |
 | `windows-sys`, `windows-link` | Windows API bindings | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | `serde`, `serde_json`, `sha2`, `anyhow`, `tracing`, `log`, `cc` and their small dependencies | configuration, hashing, logging, build | MIT OR Apache-2.0 (tracing: MIT) | https://crates.io |
+| `darksouls3`, `fromsoftware-shared` (fromsoftware-rs) | typed Dark Souls III structures, parameter tables and game-function addresses (read-only probe in test kits) | MIT OR Apache-2.0 | https://github.com/vswarte/fromsoftware-rs |
+| `pelite`, `memchr`, `bitfield`, `vtable-rs`, `windows` | PE/version-resource reading, memory search, support code of the crates above | MIT OR Apache-2.0 (memchr: MIT OR Unlicense) | https://crates.io |
+| `zip`, `png`, `serde_yaml_ng` | reading Space Marine 2's archives, writing preview pictures, reading texture descriptors | MIT OR Apache-2.0 (zip: MIT) | https://crates.io |
+| `bcdec_rs` | decoding block-compressed (BC1-BC7) textures to preview pictures; a Rust port of bcdec | MIT OR Unlicense (see its repository) | https://github.com/iOrange/bcdec |
 
 ## MinHook
 

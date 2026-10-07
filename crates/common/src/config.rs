@@ -5,6 +5,16 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+/// Optional in-game features. All off unless the launcher switches them on; an old config without this block
+/// means "none".
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+pub struct Features {
+    /// A strictly read-only look at the running game (version, weapon table, inventory, text) written to
+    /// `probe-ds3.txt` and `probe-ds3-weapons.csv` next to the hook log. Used by private test kits only.
+    #[serde(default)]
+    pub probe: bool,
+}
+
 /// What the hook DLL needs to know. Written by the launcher before every launch (sheet: files.hook_config).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct HookConfig {
@@ -20,6 +30,8 @@ pub struct HookConfig {
     pub silent: bool,
     /// Always true in a release. Tests switch it off for a control run that proves the guard does something.
     pub block_network: bool,
+    #[serde(default)]
+    pub features: Features,
 }
 
 impl HookConfig {
@@ -86,9 +98,19 @@ mod tests {
             window_suffix: " - x".into(),
             silent: true,
             block_network: true,
+            features: Features { probe: true },
         };
         let p = dir.path().join("sub/ashenmarine.json");
         c.save(&p).unwrap();
         assert_eq!(HookConfig::load(&p).unwrap(), c);
+    }
+
+    #[test]
+    fn an_old_config_without_features_means_none() {
+        let old = r#"{"version":"0.1.0","real_save_dir":"a","sandbox_save_dir":"b","log_file":"c","window_suffix":"","silent":false,"block_network":true}"#;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.json");
+        std::fs::write(&p, old).unwrap();
+        assert_eq!(HookConfig::load(&p).unwrap().features, Features::default());
     }
 }

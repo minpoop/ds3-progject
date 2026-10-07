@@ -1,51 +1,60 @@
-ASHEN MARINE - private test kit (milestone 1: the safe sandbox)
+ASHEN MARINE - private test kit 2 (look around, change nothing)
 ================================================================
 
 What this is
-  A first test of the SAFETY part of the mashup, before any Space Marine content is added. It starts Dark Souls III
-  as an OFFLINE COPY of your game save and proves your real save and online account are never touched.
-  Nothing from Space Marine 2 is in it yet. You should just see Dark Souls III running normally, with
-  " - Ashen Marine (offline copy)" added to the window title.
+  Two read-only tests that tell me what your own games contain, so the Space Marine weapons can be built on real
+  facts instead of guesses. Nothing here changes Dark Souls III, Space Marine 2 or your saves, and nothing is
+  uploaded: you send me the logs yourself at the end.
 
-What it does, in order (all logged)
-  1. Refuses to start if Dark Souls III is already running.
-  2. Backs up your REAL save (a permanent first-ever backup + the 3 newest session backups) and fingerprints it.
-  3. Makes its own private COPY of your save (first run only; your character is carried over).
-  4. Starts Dark Souls III through ModEngine2 with a small helper (ashenmarine_hook.dll) that
-       - sends every save-file access to the private copy,
-       - refuses every network connection except to this PC itself (so the game stays offline),
-       - proves both of those work inside the game BEFORE the game can touch anything, and closes the game if not.
-  5. When the game closes, checks your real save is byte-identical to before, and puts it back from the backup if not.
+  Test 1 - Probe-SM2.bat      reads your Space Marine 2 files (about 3-10 minutes) and writes a report.
+  Test 2 - Play-AshenMarine.bat  starts Dark Souls III as an OFFLINE COPY of your save (your real save is backed up
+                              first and checked afterwards) with a read-only probe running inside the game.
+  Then   - Send-Logs.bat      collects the text logs into one zip on your Desktop.
 
-How to test (about 5 minutes)
-  1. Make sure Steam is running and Dark Souls III is NOT running. Unzip this whole folder anywhere (e.g. Desktop).
-  2. Double-click  Play-AshenMarine.bat
-  3. Dark Souls III starts. The title bar should read "DARK SOULS III - Ashen Marine (offline copy)" (a screenshot of
-     it helps). Load your character, walk around for a minute, then quit from the in-game menu as usual.
+How to do it (about 15 minutes)
+  1. Unzip this whole folder anywhere (e.g. Desktop). Steam must be running; Dark Souls III must NOT be running.
+  2. Double-click  Probe-SM2.bat  and wait for "Done". When it finishes, open
+        ashenmarine\probe-sm2\textures\index.html
+     in your browser: it shows pictures of Space Marine 2 weapon textures that the tool decoded from YOUR game.
+     Tell me whether they look like real weapon textures (or garbled / black / empty). They stay on your PC.
+  3. Double-click  Play-AshenMarine.bat . Dark Souls III starts; the title bar reads
+     "DARK SOULS III - Ashen Marine (offline copy)". Load your character and
+        - walk around for a minute,
+        - swing your weapon a few times and roll once or twice,
+        - use any consumable (an Estus sip is fine) and, if you have one, shoot a bow or crossbow once,
+        - open the inventory menu once, then quit to the desktop from the in-game menu as usual.
      (If it asks about connecting online, that is expected: it is blocked on purpose.)
-  4. Double-click  Send-Logs.bat  - it puts AshenMarine-logs.zip on your Desktop. Attach it to the chat and tell me:
-       - did the game start, and did it look and feel normal (load times, menus, anything odd)?
-       - could you see your character, and was your progress as expected?
+     Please do this once with your normal character - the probe records what the game reports while you play.
+  4. Double-click  Send-Logs.bat . It puts  AshenMarine-logs.zip  on your Desktop. Attach it to the chat and tell me:
+       - did Dark Souls III start and feel normal (load times, menus, anything odd)?
+       - did the pictures in step 2 look right?
+
+What it records (you can read every file yourself)
+  ashenmarine\probe-sm2\probe-report.txt   what is inside your Space Marine 2 weapon files (names, sizes, a few text lines)
+  ashenmarine\logs\probe-ds3.txt           game build, and what the game reports about weapons, inventory, stamina
+  ashenmarine\logs\probe-ds3-*.csv         the weapon table, your inventory item ids, stamina samples, item-name tables
+  ashenmarine\logs\hook.log, launcher.log  what the safety helper did
+  Your Windows user name and Steam id are masked in the copies Send-Logs makes. Your character's NAME is not logged.
 
 If something goes wrong
   - A message box appears: read it, tell me what it says, send the logs.
+  - Dark Souls III crashes during the test: that is useful information - run Send-Logs.bat anyway and tell me
+    roughly when it happened. Your real save was not changed (it is backed up and checked each time).
   - Windows Defender / antivirus complains: do NOT turn protection off. Tell me the exact message; the files are
     unsigned test builds. SHA-256 hashes are in the chat so you can check they are the ones I sent.
-  - To remove everything: close the game and delete this folder. Your real save was never changed, and the
-    backups are in  ashenmarine\backups  if you ever want them.
+  - To remove everything: close the game and delete this folder. Backups of your real save are in ashenmarine\backups.
 
 Where things are
-  ashenmarine\save       the private copy of your save (what the mashup plays)
+  ashenmarine\save       the private copy of your save (what the test plays)
   ashenmarine\backups    backups of your REAL save (original = first ever, session-* = newest three)
-  ashenmarine\logs       launcher.log and hook.log (what happened, in plain text)
+  ashenmarine\logs       launcher.log, hook.log and the probe files
   modengine2\            ModEngine2 2.1.0 (MIT license) - the loader Melty will install for you in the real release
 
 Good to know
-  - The private copy is a snapshot of your character taken the first time you press Play. If you later want a fresh
-    copy of your current real character, close the game and delete the  ashenmarine\save  folder.
   - If it cannot find Dark Souls III by itself, put the game's folder (the one that contains Game\DarkSoulsIII.exe)
     on the first line of a new text file  ashenmarine\game-folder.txt  and press Play again.
-
-Safety notes
-  - This kit never goes online, never touches Space Marine 2, and never modifies Dark Souls III's own files.
+  - If it cannot find Space Marine 2, put its folder on the first line of  ashenmarine\sm2-folder.txt .
+  - The private save copy is a snapshot of your character taken the first time you press Play. To start a fresh
+    copy of your current real character later, close the game and delete the  ashenmarine\save  folder.
+  - This kit never goes online, never launches Space Marine 2, and never modifies any game file.
   - It is an offline sandbox. Do not use it to play online.
