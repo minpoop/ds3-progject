@@ -40,7 +40,9 @@ Anything not written here is lost at the next context compaction. Newest entries
 | SM2 readers (`crates/sm2`): zip paks incl. a stored zip inside a pak, both texture mip layouts, BC1-BC7 decode to PNG/DDS, Wwise bank chunks + event->action->container->sound chains, wem headers, PCM->WAV | 26 unit tests on synthetic data (no game file) |
 | `ashenmarine-setup probe`: finds SM2, reports weapon files / textures / .cls / sounds, writes previews; **install stays byte-identical** | integration test on a synthetic install + `tools/wine-setup-test.sh` (the shipped .exe under Wine) |
 | Hook `features` (read-only probe): strict FMG text-table finder in own memory (no false hits in random data), version gate, diagnostics, two-beep audio path, mixer | Wine unit tests (5) + native tests (40 in common incl. fmg + mixer); launcher scenarios L/K (probe thread starts, copes with an unknown game, sandbox unaffected) |
-| **Not verified yet:** anything inside the real Dark Souls III process (hooks, the probe, audio) and the real SM2 formats | needs the owner's PC test (kit 0.2) |
+| **On the owner's real PC (kit 0.2, 2026-10-07):** DS3 1.15.2.0 English starts through ModEngine2 with our hook; 30 hooks, both in-process self-tests passed; ~240 save-file operations redirected to the private copy; the game's login host and `api.github.com` lookups refused; real save byte-identical afterwards (VERIFIED); per-frame game task registered and ran (~58 frames/s) | `AshenMarine-logs.zip` of kit 0.2 |
+| SM2 readers on the real install (114 client paks, 80 GB, 475k names, 0 duplicates, 11 s): texture descriptors + BC7/BC5 decode (owner confirmed the previews look like textures), `.cls` text, 30 Wwise banks, 34 sound zips | kit 0.2 probe report |
+| **Not verified yet:** anything the probe does inside a loaded DS3 world (player, inventory, weapon table, text tables), the audio path inside DS3 (no beep was heard: the probe had stopped itself, see below), Wwise Vorbis decoding | kit 0.3 |
 
 ## Findings / gotchas
 
@@ -62,6 +64,30 @@ Anything not written here is lost at the next context compaction. Newest entries
   It does **not** give: animation/TAE state, message (FMG) lookup, sound events, input.
 - DS3 PC has Arxan (guardIT) code restoration: do not patch game code; our inline hooks are only on system DLL APIs, the crate's task API
   runs on the game's own thread instead.
+## Kit 0.2 results (owner's PC) - what they showed
+
+- DS3: `I:\SteamLibrary\steamapps\common\DARK SOULS III\Game\DarkSoulsIII.exe`, product version **1.15.2.0**, language 0x09 -> supported by the
+  `darksouls3` crate. Real save: `%APPDATA%\DarkSoulsIII\<steamid64 as 16 hex digits>\DS30000.sl2` (+ GraphicsConfig.xml).
+- The game asks for `fdp-steam-ope-login.fromsoftware-game.net` (its login server, retried ~6 times) and ModEngine2 for `api.github.com`: both refused, game
+  carries on offline. ModEngine2 prints "not a modengine extension" for our DLL (harmless) and ScyllaHide injects fine.
+- **Probe bug (fixed in kit 0.3):** `CSRegulationManager` is non-null before its parameter vector is filled; `get_param` indexes `params[26]` and
+  panicked ("len is 0 but the index is 26"). My first version let one failed step switch the whole probe off, so no world data and no beep. Now: every step is
+  tried on its own, retried, given up only after 5 failures; every pointer hop is checked with ReadProcessMemory first; the beep also plays at the title screen.
+- Text: at the title screen "Straight Sword" occurred exactly once in memory (4.9 GB scanned), as an isolated hashed-string object, not in an FMG table, so item
+  names are probably loaded later (or stored differently). Kit 0.3 rescans in the world, tolerates relocated (absolute) string pointers and logs near-misses.
+- SM2 (build 25098992): paks are `client_pc/root/paks/client/**` (114 files, the earlier 184 included server paks). Weapon templates are folders named
+  `tpl/<name>.tpl/` holding `.tpl .lods_base .cdt .tpl_data .geom_dbg .tpl_markup` (+ `.tpl.resource`, `.tpl_markup.resource` in resources.pak): chainsword 8 files
+  (tpl 453 KB, tpl_data 1 MB), bolt pistol 7 (tpl 126 KB, tpl_data 684 KB); 14 chainsword and 34 bolt-pistol variants.
+- SM2 textures: `pct/<name>.pct.resource` is YAML `res_desc_pct` (format 51 = BC7 mostly, `_nm` = DXN/BC5, `_spec` = BC7), one data file per mip named
+  `<name>_1.pct_mip` ... `_N` where `_1` is the TOP mip; 1024x1024 BC7 top mip = 1 MiB. My loader needs no change.
+- SM2 data: `.cls` is Saber's `key = { ... }` text with `__type = "..."`. Weapon stats are not yet seen (kit 0.2 only printed unrelated sfx classes); candidates:
+  `ssl/weapons/melee/weapon_actors/wpn_melee_chainsword.cls`, `ssl/weapons/common/firearm/firearm_versions/hgun_bolt_pistol/*_authority.cls`,
+  `ssl/characters/player/marine/pc_marine_pve_authority.cls`. `sounds/stats/editor.*.events.csv` lists real event names (`scene,bank,event,count,...,seconds`,
+  e.g. `wpn_firearm_shoot_2d_bolt_pistol_heavy`).
+- SM2 sound: 30 banks, Wwise **version 150**; `wpn.bnk` has only BKHD+HIRC (no DIDX/DATA): 7186 sounds, 838 events, all media lives in `sounds/desktop/wpn.zip`
+  (3642 `<mediaid>.wem`, stored zip). The 22 media my census could follow are **Wwise Vorbis (0xFFFF)**: `fmt ` chunk 66 bytes with the `vorb` block inside
+  (sample count at +8 of the extra bytes, setup packet offset ~888, first audio packet ~1091 -> a ~200 byte setup packet = codebooks referenced by id from
+  an external library), plus a 16-byte `hash` chunk. So decoding needs a ww2ogg-style rebuild + the packed codebook library (BSD) + a Vorbis decoder.
 - Triggers for the weapon sounds will be polled (a stamina drop = a swing, a falling ammo count = a shot); item names will need the text tables
   (FMG) found in memory, or a loose msg override. The probe in kit 0.2 collects exactly that evidence.
 - Panics now unwind (workspace profile): optional features catch them at their own thread entry points and log; every `extern "system"`
@@ -96,11 +122,11 @@ and an archive reader to modify an existing weapon file). The in-game side (gran
 
 ## Open questions (waiting on the owner's PC)
 
-1. Kit 0.2 step 1 (`Probe-SM2.bat`): do my readers cope with the real SM2 files? Texture descriptor/mip layout, `.cls` grammar, Wwise bank version
-   and HIRC chains, event names, wem codec (Vorbis / Opus / PCM?). Scan part 2 (PowerShell, independent of my parsers) is the fallback.
-2. Kit 0.2 step 2 (`Play-AshenMarine.bat`): does Dark Souls III run normally with the hooks? Which build is it (1.15.2.0 English?)? Does the
-   per-frame probe run, does the FMG finder see the item-name tables, do stamina/ammo samples show swings and shots, are the two beeps heard?
-3. Where exactly does DS3 keep its save on the owner's PC (`%APPDATA%\DarkSoulsIII\<steamid>\DS30000.sl2` expected).
+1. Kit 0.3 / DS3 in a loaded world: params table dump, inventory, equipment slots, stamina samples while swinging/rolling/sprinting/drinking/shooting, item-name
+   text tables (found? parsed? relocated pointers?), the beeps (title screen and in world).
+2. Kit 0.3 / SM2: the weapon stat classes in full, all chainsword and bolt-pistol sound events with their media, and (opt-in) a few real `.wem` clips to test the
+   Wwise Vorbis converter here.
+3. Which weapon rows to repurpose in DS3 (decided from the weapon CSV) and how to name them.
 
 ## Next
 

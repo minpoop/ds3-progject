@@ -56,6 +56,12 @@ pub fn header_file_size(h: &[u8]) -> Option<usize> {
 
 /// Parse a whole FMG. `None` if it does not hold together (so memory that merely looks like one is rejected).
 pub fn parse(b: &[u8]) -> Option<Fmg> {
+    parse_at(b, 0)
+}
+
+/// Like [`parse`] for a table that sits in memory at address `base`: a game may have turned the string offsets into
+/// absolute pointers when it loaded the file, so an offset that points inside `base..base+size` is accepted too.
+pub fn parse_at(b: &[u8], base: u64) -> Option<Fmg> {
     let size = header_file_size(b)?;
     if b.len() < size {
         return None;
@@ -81,13 +87,17 @@ pub fn parse(b: &[u8]) -> Option<Fmg> {
         for k in 0..n {
             let idx = first_index + k;
             seen_index[idx] = true;
-            let off = u64le(b, table + idx * 8)? as usize;
-            if off == 0 {
+            let raw = u64le(b, table + idx * 8)?;
+            if raw == 0 {
                 continue;
             }
-            if off >= size {
+            let off = if (raw as usize) < size {
+                raw as usize
+            } else if base != 0 && raw >= base && raw < base + size as u64 {
+                (raw - base) as usize
+            } else {
                 return None;
-            }
+            };
             // NUL-terminated UTF-16
             let mut units = Vec::new();
             let mut p = off;
@@ -191,6 +201,22 @@ mod tests {
             }
         }
         assert_eq!(hits, 0);
+    }
+
+    #[test]
+    fn accepts_string_pointers_that_the_game_made_absolute() {
+        let a = [Some("Dagger"), Some("Parrying Dagger")];
+        let mut bytes = build(&[(1_000_000, &a)]);
+        let base: u64 = 0x1_6000_0000;
+        let table = u64::from_le_bytes(bytes[0x18..0x20].try_into().unwrap()) as usize;
+        for i in 0..2 {
+            let off = u64::from_le_bytes(bytes[table + i * 8..table + i * 8 + 8].try_into().unwrap());
+            bytes[table + i * 8..table + i * 8 + 8].copy_from_slice(&(base + off).to_le_bytes());
+        }
+        assert!(parse(&bytes).is_none(), "without knowing where it sits, absolute pointers look like garbage");
+        let f = parse_at(&bytes, base).unwrap();
+        assert_eq!(f.entries, vec![(1_000_000, "Dagger".to_string()), (1_000_001, "Parrying Dagger".to_string())]);
+        assert!(parse_at(&bytes, base + 0x100000).is_none(), "pointers outside the table are still rejected");
     }
 
     #[test]

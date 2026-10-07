@@ -31,10 +31,10 @@ echo; echo "== A: probe under Wine against the synthetic install =="
 sed 's/^/    /' "$OUT/run.out" | head -60
 check "A exit code 0" '[ "$(cat "$OUT/run.rc")" = "0" ]'
 check "A the install is byte-identical afterwards" '[ "$(treehash "$OUT/Space Marine 2")" = "$BEFORE" ]'
-check "A report names the weapon bank and both events" 'grep -q "weapon bank sounds/desktop/wpn.bnk" "$OUT/out/probe-report.txt" && grep -q "play_chainsword_swing" "$OUT/out/probe-report.txt" && grep -q "play_bolt_pistol_fire" "$OUT/out/probe-report.txt"'
+check "A report names the weapon bank and both events" 'grep -q "weapon bank sounds/desktop/wpn.bnk" "$OUT/out/probe-report.txt" && grep -q "wpn_melee_chainsword_swing" "$OUT/out/probe-report.txt" && grep -q "wpn_firearm_shoot_2d_bolt_pistol" "$OUT/out/probe-report.txt"'
 check "A report has no failed or crashed step" '! grep -q "STEP FAILED\|STEP CRASHED" "$OUT/out/probe-report.txt"'
-check "A texture preview PNG was written and is a PNG" '[ "$(head -c 8 "$OUT/out/textures/wpn_chainsword_01_d_0.png" | od -An -c | tr -d " \n")" = "211PNG\r\n032\n" ] || head -c 4 "$OUT/out/textures/wpn_chainsword_01_d_0.png" | grep -q PNG'
-check "A two sample sounds decoded to .wav" '[ "$(ls "$OUT"/out/sounds/*.wav 2>/dev/null | wc -l)" = "2" ]'
+check "A texture preview PNG was written and is a PNG" 'head -c 4 "$OUT/out/textures/wpn_chainsword_01.png" | grep -q PNG'
+check "A the sound clips of the weapon events were kept" '[ "$(ls "$OUT"/out/samples/*.wem 2>/dev/null | wc -l)" = "2" ]'
 
 echo; echo "== B: no Space Marine 2 -> clear message, exit code 2 =="
 mkdir -p "$OUT/empty"

@@ -22,30 +22,40 @@ fn probe_reads_a_synthetic_install_and_leaves_it_untouched() {
     }
     for needle in [
         "opened 4 archives",
-        "chainsword: 2 template files in 1 template folders",
-        "files of  tpl/wpn_chainsword_01",
+        "chainsword: 4 template files in 1 template folders",
+        "files of  tpl/wpn_chainsword_01.tpl",
         "wpn_chainsword_01.lods_base  300 B",
-        "descriptor text of pct/wpn_chainsword_01_d_0.pct.resource",
-        "OXT1(BC1) 8x8",
+        "text of wpn_chainsword_01.tpl_markup",
+        "descriptor text of pct/wpn_chainsword_01.pct.resource",
+        "__type: res_desc_pct",
+        "OXT1(BC1) 8x8 (mip 0 of 2)",
         "average colour rgba(255,0,0,255)",
         "average colour rgba(0,0,255,255)",
-        "mention ssl/weapons/chainsword/chainsword_01.cls",
+        "mention ssl/weapons/melee/weapon_actors/wpn_melee_chainsword.cls",
+        "full text of ssl/weapons/melee/weapon_actors/wpn_melee_chainsword.cls",
+        "damage   =   42.5",
+        "magazine   =   14",
         "weapon bank sounds/desktop/wpn.bnk: Wwise bank version 150",
-        "guessed weapon event names that exist: 2",
-        "play_chainsword_swing",
+        "guessed weapon event names that exist: 0",
+        "sound events about the chainsword: 1",
+        "wpn_melee_chainsword_swing",
+        "sound events about the bolt pistol: 1",
+        "sound events about pistols and firearms in general: 1",
+        "wpn_firearm_shoot_2d_bolt_pistol",
         "1 zip files inside the paks",
-        "weapon bank streamed sounds found in the zips: 1 of 1",
+        "weapon bank: 3 distinct media ids are referenced; 3 of them are in the zips",
+        "codec Wwise Vorbis (0xFFFF): 2 files",
         "codec PCM (0x0001): 1 files",
-        "event play_chainsword_swing: media 777 decoded",
-        "event play_bolt_pistol_fire: media 888 decoded",
+        "kept 2 small sound clips",
     ] {
         assert!(report.contains(needle), "report is missing {needle:?}:\n{report}");
     }
     assert!(!report.contains("STEP FAILED") && !report.contains("STEP CRASHED"), "{report}");
-    assert!(out.join("textures/wpn_chainsword_01_d_0.png").is_file());
+    assert!(out.join("textures/wpn_chainsword_01.png").is_file());
     assert!(out.join("textures/index.html").is_file());
-    let wavs: Vec<_> = fs::read_dir(out.join("sounds")).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "wav")).collect();
-    assert_eq!(wavs.len(), 2);
+    let samples: Vec<String> = fs::read_dir(out.join("samples")).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    assert!(samples.iter().any(|n| n.starts_with("wpn_melee_chainsword_swing__") && n.ends_with(".wem")), "{samples:?}");
+    assert!(samples.iter().any(|n| n == "index.txt"), "{samples:?}");
 }
 
 #[test]

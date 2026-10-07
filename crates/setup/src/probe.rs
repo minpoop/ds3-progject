@@ -132,10 +132,25 @@ fn step_weapons(rep: &mut Report, paks: &mut PakSet) -> Result<()> {
         let names = paks.find(|k| k.starts_with("tpl/") && k.contains(kw));
         let Some(folder) = names.iter().map(|n| template_folder(n)).min_by_key(|f| (f.len(), f.clone())) else { continue };
         rep.say(format!("  files of  tpl/{folder}:"));
-        for n in names.iter().filter(|n| template_folder(n) == folder) {
+        let own: Vec<&String> = names.iter().filter(|n| template_folder(n) == folder).collect();
+        for n in &own {
             match paks.info(n) {
                 Ok(i) => rep.say(format!("      {}  {}  ({})", n.rsplit('/').next().unwrap_or(n), human(i.size), i.pak.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())),
                 Err(e) => rep.detail(format!("      {n}: {e:#}")),
+            }
+        }
+        // the small files are descriptors: show them; the big ones are binary: show how they start (for later model work)
+        for n in &own {
+            let short = n.rsplit('/').next().unwrap_or(n);
+            let Ok(bytes) = paks.read(n, 8 << 20) else { continue };
+            let printable = bytes.iter().take(512).filter(|b| b.is_ascii_graphic() || b.is_ascii_whitespace()).count();
+            if bytes.len() <= 4096 && printable * 10 >= bytes.len().min(512) * 9 {
+                rep.detail(format!("    text of {short}:"));
+                for l in String::from_utf8_lossy(&bytes).lines().take(80) {
+                    rep.detail(format!("      | {l}"));
+                }
+            } else {
+                rep.detail(format!("    first 64 bytes of {short}: {:02x?}", &bytes[..bytes.len().min(64)]));
             }
         }
     }
@@ -240,9 +255,9 @@ fn step_classes(rep: &mut Report, paks: &mut PakSet) -> Result<()> {
         for n in hits.iter().take(2) {
             match paks.read_text(n, 4 << 20) {
                 Ok(t) => {
-                    rep.say(format!("  first lines of {n}:"));
+                    rep.detail(format!("  first lines of {n}:"));
                     for l in t.lines().take(90) {
-                        rep.say(format!("      | {l}"));
+                        rep.detail(format!("      | {l}"));
                     }
                 }
                 Err(e) => rep.say(format!("  cannot read {n}: {e:#}")),
@@ -264,14 +279,57 @@ fn step_classes(rep: &mut Report, paks: &mut PakSet) -> Result<()> {
             let ll = l.to_ascii_lowercase();
             if ll.contains("chainsword") || ll.contains("bolt_pistol") {
                 mentions += 1;
-                if shown < 45 {
+                if shown < 400 {
                     shown += 1;
-                    rep.say(format!("  mention {n}:{}: {}", i + 1, l.trim()));
+                    rep.detail(format!("  mention {n}:{}: {}", i + 1, l.trim()));
                 }
             }
         }
     }
     rep.say(format!("  {mentions} lines in {files_with} .cls files mention a chainsword or a bolt pistol"));
+
+    // the weapon classes in full (report file only): the melee weapon actor and the bolt pistol versions
+    for kw in ["chainsword", "bolt_pistol"] {
+        let names: Vec<&String> = all_cls.iter().filter(|n| n.to_ascii_lowercase().contains(kw)).collect();
+        rep.detail(format!("  all {} .cls names containing '{kw}':", names.len()));
+        for n in names.iter().take(120) {
+            rep.detail(format!("      {n}"));
+        }
+    }
+    let mut full: Vec<String> = all_cls.iter().filter(|n| n.ends_with("/wpn_melee_chainsword.cls")).cloned().collect();
+    let mut bp: Vec<String> = all_cls.iter().filter(|n| n.contains("hgun_bolt_pistol")).cloned().collect();
+    bp.sort_by_key(|n| (n.len(), n.clone()));
+    full.extend(bp.into_iter().take(6));
+    let weapon_dir: Vec<String> = all_cls.iter().filter(|n| n.starts_with("ssl/weapons/melee/weapon_actors/")).take(40).cloned().collect();
+    rep.detail(format!("  neighbours of the chainsword actor ({}):", weapon_dir.len()));
+    for n in &weapon_dir {
+        rep.detail(format!("      {n}"));
+    }
+    for n in &full {
+        match paks.read_text(n, 8 << 20) {
+            Ok(t) => {
+                let total = t.lines().count();
+                rep.say(format!("  full text of {n} ({total} lines) is in the report file"));
+                rep.detail(format!("  ===== {n} ({total} lines, first 450 shown) ====="));
+                for l in t.lines().take(450) {
+                    rep.detail(format!("      | {l}"));
+                }
+            }
+            Err(e) => rep.say(format!("  cannot read {n}: {e:#}")),
+        }
+    }
+    // which weapons the player marine carries
+    for n in ["ssl/characters/player/marine/pc_marine_pve_authority.cls"] {
+        if let Ok(t) = paks.read_text(n, 16 << 20) {
+            let lines: Vec<&str> = t.lines().collect();
+            if let Some(at) = lines.iter().position(|l| l.contains("hgun_bolt_pistol")) {
+                rep.detail(format!("  ===== {n}, lines around the first bolt pistol mention (line {}) =====", at + 1));
+                for (i, l) in lines.iter().enumerate().skip(at.saturating_sub(40)).take(110) {
+                    rep.detail(format!("      {:>5}| {l}", i + 1));
+                }
+            }
+        }
+    }
 
     // other text-like files that name the weapons (a quick census so nothing important is missed)
     for ext in ["asset", "csv", "txt", "xml", "json", "sfx", "lua", "ini"] {
@@ -304,6 +362,21 @@ fn step_classes(rep: &mut Report, paks: &mut PakSet) -> Result<()> {
 /// Identifier-like words of a text (letters, digits, underscore), 5..=80 characters.
 fn words(text: &str) -> impl Iterator<Item = &str> {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| (5..=80).contains(&w.len()) && w.bytes().any(|b| b.is_ascii_alphabetic()))
+}
+
+/// The first `n` bytes of an entry of a nested zip (empty if it cannot be read).
+fn read_head(z: &mut NestedZip, entry: usize, n: usize) -> Vec<u8> {
+    let mut head = vec![0u8; n];
+    let Ok(mut f) = z.by_index(entry) else { return Vec::new() };
+    let mut got = 0;
+    while got < n {
+        match f.read(&mut head[got..]) {
+            Ok(0) | Err(_) => break,
+            Ok(k) => got += k,
+        }
+    }
+    head.truncate(got);
+    head
 }
 
 fn candidate_event_names() -> Vec<String> {
@@ -399,7 +472,7 @@ fn step_sounds(rep: &mut Report, paks: &mut PakSet, out: &Path) -> Result<()> {
             text_hits.entry(w.to_ascii_lowercase()).or_insert(h);
         }
     };
-    for n in paks.find(|k| k.ends_with(".cls") || k.ends_with(".asset") || k.ends_with(".txt") || k.ends_with(".sfx")).iter().take(20000) {
+    for n in paks.find(|k| k.ends_with(".cls") || k.ends_with(".asset") || k.ends_with(".txt") || k.ends_with(".sfx") || k.ends_with(".csv")).iter().take(30000) {
         if let Ok(t) = paks.read_text(n, 2 << 20) {
             for w in words(&t) {
                 from_text += 1;
@@ -415,12 +488,6 @@ fn step_sounds(rep: &mut Report, paks: &mut PakSet, out: &Path) -> Result<()> {
         }
     }
     rep.say(format!("  event names recovered from words in game text and file names: {} (from {from_text} words)", text_hits.len()));
-    let weaponish: Vec<(&String, &u32)> = text_hits.iter().filter(|(n, _)| ["chainsword", "chain_sword", "bolt", "pistol", "wpn", "melee"].iter().any(|k| n.contains(k))).collect();
-    for (n, h) in weaponish.iter().take(70) {
-        let in_banks: Vec<&str> = events[h].iter().map(|&i| banks[i].0.rsplit('/').next().unwrap_or("")).collect();
-        rep.say(format!("      {n}  ({h:#010x}) in {}", in_banks.join(",")));
-    }
-
     // --- streamed audio files live in zips inside the sound paks
     let zips = paks.find(|k| k.ends_with(".zip"));
     rep.say(format!("  {} zip files inside the paks", zips.len()));
@@ -457,99 +524,117 @@ fn step_sounds(rep: &mut Report, paks: &mut PakSet, out: &Path) -> Result<()> {
     rep.say(format!("  file types inside those zips: {:?}", ext_count));
     rep.say(format!("  {} entries are named by a number (wem media ids)", by_id.len()));
 
-    // --- the weapon bank's streamed sounds: are they there, and in which codec?
+    // --- the weapon bank's sounds: where is their media, and in which codec?
     let mut codec_hist: BTreeMap<String, usize> = BTreeMap::new();
     let mut found = 0usize;
-    let mut wanted = 0usize;
     let mut detail_lines = 0usize;
+    let mut checked = 0usize;
     if let Some(i) = wpn {
         let b = &banks[i].1;
-        let mut ids: Vec<u32> = b.objects.iter().filter(|o| o.kind == bnk::kind::SOUND).filter_map(|o| b.sound(o)).filter(|s| s.stream_type != 0).map(|s| s.media_id).collect();
+        let mut ids: Vec<u32> = b.objects.iter().filter(|o| o.kind == bnk::kind::SOUND).filter_map(|o| b.sound(o)).map(|s| s.media_id).collect();
         ids.sort_unstable();
         ids.dedup();
-        wanted = ids.len();
+        let wanted = ids.len();
+        let mut per_zip: BTreeMap<String, usize> = BTreeMap::new();
         for id in ids {
             let Some(&(zi, ei)) = by_id.get(&(id as u64)) else { continue };
             found += 1;
-            let mut head = vec![0u8; 8192];
-            let n = {
-                let mut f = match nested[zi].1.by_index(ei) {
-                    Ok(f) => f,
-                    Err(_) => continue,
-                };
-                let mut got = 0;
-                while got < head.len() {
-                    match f.read(&mut head[got..]) {
-                        Ok(0) | Err(_) => break,
-                        Ok(k) => got += k,
-                    }
-                }
-                got
-            };
-            head.truncate(n);
+            *per_zip.entry(nested[zi].0.rsplit('/').next().unwrap_or("").to_string()).or_default() += 1;
+            if checked >= 400 {
+                continue; // the codec census looks at the first 400 only
+            }
+            checked += 1;
+            let head = read_head(&mut nested[zi].1, ei, 8192);
             match WemInfo::parse(&head) {
                 Ok(w) => {
                     *codec_hist.entry(format!("{} (0x{:04X})", wem::codec_name(w.format_tag), w.format_tag)).or_default() += 1;
-                    if detail_lines < 8 {
+                    if detail_lines < 6 {
                         detail_lines += 1;
                         let ch: Vec<String> = w.chunks.iter().map(|(t, l)| format!("{t}:{l}")).collect();
-                        rep.say(format!("      wem {id}: {} ch {} Hz, ~{:.2}s, chunks {}", w.channels, w.sample_rate, w.approx_seconds(), ch.join(" ")));
-                        rep.detail(format!("        fmt extra bytes: {:02x?}", &w.fmt_extra[..w.fmt_extra.len().min(48)]));
+                        rep.say(format!("      wem {id}: {} ch {} Hz, chunks {}", w.channels, w.sample_rate, ch.join(" ")));
+                        rep.detail(format!("        fmt extra bytes: {:02x?}", &w.fmt_extra[..w.fmt_extra.len().min(64)]));
                     }
                 }
                 Err(e) => {
                     *codec_hist.entry(format!("unreadable header ({e})")).or_default() += 1;
-                    if detail_lines < 8 {
+                    if detail_lines < 6 {
                         detail_lines += 1;
                         rep.say(format!("      media {id}: first bytes {:02x?}", &head[..head.len().min(32)]));
                     }
                 }
             }
         }
+        rep.say(format!("  weapon bank: {wanted} distinct media ids are referenced; {found} of them are in the zips ({per_zip:?})"));
     }
-    rep.say(format!("  weapon bank streamed sounds found in the zips: {found} of {wanted}"));
     for (c, n) in &codec_hist {
-        rep.say(format!("      codec {c}: {n} files"));
+        rep.say(format!("      codec {c}: {n} files (of the first {checked} found)"));
     }
 
-    // --- one concrete try: decode what the first named weapon event plays
-    let dir = out.join("sounds");
-    std::fs::create_dir_all(&dir)?;
-    let mut written = 0;
-    let mut done_events: HashSet<u32> = HashSet::new();
-    'outer: for (name, h) in named.iter().chain(weaponish.iter().map(|(n, h)| (*n, *h))) {
-        if !done_events.insert(*h) {
-            continue;
-        }
-        for &bi in events.get(h).into_iter().flatten() {
+    // --- events by theme: which sounds a chainsword and a bolt pistol use, and which clips to keep for conversion tests
+    let themes: [(&str, &[&str]); 4] = [
+        ("the chainsword", &["chainsword", "chain_sword", "chainsaw"]),
+        ("the bolt pistol", &["bolt_pistol", "boltpistol"]),
+        ("pistols and firearms in general", &["pistol", "wpn_firearm_shoot"]),
+        ("melee weapons in general", &["wpn_melee", "melee_hit", "melee_swing"]),
+    ];
+    let mut chosen: Vec<(String, u32, u64, usize, usize)> = Vec::new(); // event, media, size, zip, entry
+    for (ti, (title, keys)) in themes.iter().enumerate() {
+        let names: Vec<(&String, &u32)> = text_hits.iter().filter(|(n, _)| keys.iter().any(|k| n.contains(k))).collect();
+        rep.say(format!("  sound events about {title}: {}", names.len()));
+        let mut with_media: Vec<(String, u32, u64, usize, usize)> = Vec::new();
+        for (i, (n, h)) in names.iter().enumerate() {
+            let bi = events[*h][0];
             let b = &banks[bi].1;
-            for s in b.event_sounds(*h).into_iter().take(2) {
-                let bytes: Option<Vec<u8>> = if s.stream_type == 0 {
-                    b.embedded_media(s.media_id).map(|x| x.to_vec())
-                } else {
-                    by_id.get(&(s.media_id as u64)).and_then(|&(zi, ei)| {
-                        let mut v = Vec::new();
-                        nested[zi].1.by_index(ei).ok()?.read_to_end(&mut v).ok()?;
-                        Some(v)
-                    })
-                };
-                let Some(bytes) = bytes else { continue };
-                let file = format!("{}_{}", safe_name(name), s.media_id);
-                let _ = std::fs::write(dir.join(format!("{file}.wem")), &bytes);
-                match wem::decode(&bytes) {
-                    Ok(pcm) => {
-                        let _ = std::fs::write(dir.join(format!("{file}.wav")), wem::wav_bytes(&pcm));
-                        rep.say(format!("  event {name}: media {} decoded to {file}.wav ({:.2}s)", s.media_id, pcm.seconds()));
-                    }
-                    Err(e) => rep.say(format!("  event {name}: media {} saved as {file}.wem ({e:#})", s.media_id)),
+            let sounds = b.event_sounds(**h);
+            let mut media: Vec<u32> = sounds.iter().map(|s| s.media_id).collect();
+            media.sort_unstable();
+            media.dedup();
+            let mut present: Vec<(u32, u64, usize, usize)> = Vec::new();
+            for m in &media {
+                if let Some(&(zi, ei)) = by_id.get(&(*m as u64)) {
+                    let size = nested[zi].1.by_index_raw(ei).map(|e| e.size()).unwrap_or(0);
+                    present.push((*m, size, zi, ei));
                 }
-                written += 1;
-                if written >= 6 {
-                    break 'outer;
+            }
+            let line = format!("      {n}  ({h:#010x}) in {}: {} sounds, {} media files, {} found in the zips", banks[bi].0.rsplit('/').next().unwrap_or(""), sounds.len(), media.len(), present.len());
+            if i < 40 {
+                rep.say(line);
+            } else if i < 400 {
+                rep.detail(line);
+            }
+            if let Some(&(m, size, zi, ei)) = present.iter().min_by_key(|p| p.1) {
+                if size > 0 && size < 120_000 {
+                    with_media.push(((*n).clone(), m, size, zi, ei));
                 }
             }
         }
+        // keep clips for the converter test: spread over the list, chainsword and bolt pistol first
+        let take = if ti < 2 { 8 } else { 2 };
+        let stride = (with_media.len() / take).max(1);
+        for (k, item) in with_media.into_iter().enumerate() {
+            let already = chosen.iter().any(|c| c.0 == item.0 && c.1 == item.1);
+            if k % stride == 0 && !already && chosen.len() < 24 && chosen.iter().map(|c| c.2).sum::<u64>() < 900_000 {
+                chosen.push(item);
+            }
+        }
     }
-    rep.say(format!("  saved {written} sample sounds to {}", dir.display()));
+    let dir = out.join("samples");
+    std::fs::create_dir_all(&dir)?;
+    let mut index = String::new();
+    let mut saved = 0;
+    for (event, media, size, zi, ei) in &chosen {
+        let mut bytes = Vec::new();
+        if nested[*zi].1.by_index(*ei).ok().and_then(|mut f| f.read_to_end(&mut bytes).ok()).is_none() {
+            continue;
+        }
+        let file = format!("{}__{}.wem", safe_name(event), media);
+        if std::fs::write(dir.join(&file), &bytes).is_ok() {
+            saved += 1;
+            let info = WemInfo::parse(&bytes).map(|w| format!("{} ch {} Hz {}", w.channels, w.sample_rate, wem::codec_name(w.format_tag))).unwrap_or_else(|e| e.to_string());
+            index += &format!("{file}\t{size} bytes\t{info}\n");
+        }
+    }
+    std::fs::write(dir.join("index.txt"), index)?;
+    rep.say(format!("  kept {saved} small sound clips of these events in {} (only sent to me if you choose to)", dir.display()));
     Ok(())
 }
