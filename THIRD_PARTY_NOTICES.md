@@ -17,6 +17,7 @@ with the notices below.
 | `zip`, `png`, `serde_yaml_ng` | reading Space Marine 2's archives, writing preview pictures, reading texture descriptors | MIT OR Apache-2.0 (zip: MIT) | https://crates.io |
 | `bcdec_rs` | decoding block-compressed (BC1-BC7) textures to preview pictures; a Rust port of bcdec | MIT OR Unlicense (see its repository) | https://github.com/iOrange/bcdec |
 | `lewton` | decoding the Vorbis audio of Space Marine 2 sound files on the player's PC | MIT OR Apache-2.0 | https://github.com/RustAudio/lewton |
+| rewwise (format description only; no code copied) | the layout of Wwise sound-bank objects read by crates/sm2/src/hirc.rs | MIT OR Apache-2.0 | https://github.com/vswarte/rewwise |
 | ww2ogg (algorithm ported to Rust) and its `packed_codebooks_aoTuV_603.bin` codebook library | rebuilding Wwise's stripped Vorbis streams into standard Vorbis (crates/sm2/src/wwvorbis.rs, crates/sm2/data) | BSD-3-Clause (Xiph.org Foundation; Adam Gashlin); codebooks derived from aoTuV/libvorbis (BSD-3-Clause) | https://github.com/hcs64/ww2ogg |
 
 ## MinHook

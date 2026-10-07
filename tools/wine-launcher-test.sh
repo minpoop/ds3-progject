@@ -156,6 +156,15 @@ else
   rm -rf "$W/kit" "$W/ashen" "$W/me2"; cp -r "$KITSRC" "$W/kit"
   # The kit is tested exactly as shipped, and must contain the very binaries the other scenarios just used.
   check "K the kit ships the binaries that were tested" '[ "$(sha256sum < "$W/kit/ashenmarine/ashenmarine_hook.dll")" = "$(sha256sum < "$BIN/ashenmarine_hook.dll")" ] && [ "$(sha256sum < "$W/kit/ashenmarine/ashenmarine-launcher.exe")" = "$(sha256sum < "$BIN/ashenmarine-launcher.exe")" ]'
+  # The whole path a player takes, with the shipped files: prepare (reads a synthetic Space Marine 2) ...
+  cargo build -p ashen-setup --example make_fake_sm2 2>&1 | grep -E "^(warning|error)" -A5
+  "$ROOT/target/debug/examples/make_fake_sm2" "$W/Space Marine 2" > /dev/null || echo "  (cannot build the fake Space Marine 2)"
+  SM2_BEFORE="$(treehash "$W/Space Marine 2")"
+  ( cd "$W" && WINEDEBUG=-all timeout 120 xvfb-run -a "$WINE" "$W/kit/ashenmarine/ashenmarine-setup.exe" prepare --sm2 "$(winpath "$W/Space Marine 2")" > "$W/prepare.out" 2>&1; echo $? > "$W/prepare.rc" )
+  sed 's/^/    /' "$W/prepare.out" | tail -12
+  check "K prepare (shipped exe) succeeded" '[ "$(cat "$W/prepare.rc")" = "0" ] && [ -f "$W/kit/ashenmarine/assets/ready.json" ] && [ -f "$W/kit/ashenmarine/assets/sounds/index.json" ]'
+  check "K prepare left the synthetic Space Marine 2 untouched" '[ "$(treehash "$W/Space Marine 2")" = "$SM2_BEFORE" ]'
+  # ... then play with the sounds switched on
   ( cd "$W" && ASHEN_FAKE_BEHAVIOR=sleep ASHEN_FAKE_REAL="$(winpath "$W/appdata/DarkSoulsIII")" WINEDEBUG=-all timeout 150 xvfb-run -a "$WINE" "$W/kit/ashenmarine/ashenmarine-launcher.exe" \
       --game "$(winpath "$W/game")" --appdata "$(winpath "$W/appdata")" --silent --probe --sounds > "$W/launcher.out" 2>&1; echo $? > "$W/launcher.rc" )
   sed 's/^/    /' "$W/kit/ashenmarine/logs/launcher.log" | tail -14; echo "    -- hook.log:"; sed 's/^/    /' "$W/kit/ashenmarine/logs/hook.log" | cut -c1-220 | head -12
@@ -167,6 +176,8 @@ else
   check "K real save byte-identical" '[ "$(treehash "$W/appdata")" = "$REAL0" ]'
   check "K launcher log says VERIFIED" 'grep -q "VERIFIED" "$W/kit/ashenmarine/logs/launcher.log"'
   check "K the probe thread started inside the real-ModEngine2-loaded hook" 'grep -q "DS3 probe v" "$W/kit/ashenmarine/logs/probe-ds3.txt"'
+  check "K the sound feature read what prepare made (index.json contract)" 'grep -q "loaded [1-9][0-9]* sound slots" "$W/kit/ashenmarine/logs/sfx.txt"'
+  check "K the logs the player sends contain no game audio" '! find "$W/kit/ashenmarine/logs" -name "*.wav" | grep -q .'
 fi
 
 echo; if [ "$FAILS" -eq 0 ]; then echo "ALL LAUNCHER TESTS PASSED"; else echo "$FAILS CHECK(S) FAILED"; fi

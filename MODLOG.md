@@ -130,7 +130,11 @@ Anything not written here is lost at the next context compaction. Newest entries
   `slash_1hit..5hit` (+`_mirror`), `idle_start` / `idle_loop`, `charge_loop_start/stop`, `charge_step_01/02`, `dodge_attack_01`, `parry`, `riposte`, `finish_war_*`; `wpn_melee_chswd_3d_*` are the
   3D-positioned (other players) versions. Bolt pistol: `wpn_firearm_shoot_2d_bolt_pistol[_heavy|_deathwatch|_suppressed|_burst|_empty_shoot]` (~280 sounds = layers x random variants x tails),
   `wpn_firearm_shoot_3d_*`, `wpn_firearm_foley_bolt_pistol_zoom_in/out`.
-- Containers are random/switch/layer: kit 0.4 `prepare` resolves one playback ("take") per event with a heuristic walker and writes a tree of what it followed to `prepare-report.txt`.
+- Containers are random/switch/layer. Kit 0.4 `prepare` reads the bank **exactly** where it can (`crates/sm2/src/hirc.rs`, layout after rewwise: node base params, volume/pitch/delay properties inherited down the tree,
+  random playlists with weights, switch containers via their default switch, layer containers = all children; a parsed object must use its bytes exactly) and counts how many objects it understood in the
+  report ("reading the bank exactly: N of M ... read exactly"); if fewer than ~98 % are understood it falls back to the approximate walker (`Bank::resolve_take`: random/switch = one child, layer/mixer = all, equal
+  levels). Each play of an event is rendered 1..3 times (seeded, reproducible), mixed, and all sounds are brought up together so the loudest is at 90 % of full scale. Everything about real banks is
+  **unverified until the owner's report comes back**: v150 layout of the node parameters, Play action = 0x0403, whether chainsword/bolt-pistol events live in `wpn.bnk` (the report lists missing ones and where they are).
 
 ## Research findings (public sources; no SM2/DS3 files involved)
 
@@ -156,5 +160,5 @@ and an archive reader to modify an existing weapon file). The in-game side (gran
 ## Next
 
 - Kit 0.4 -> owner -> logs. Then: fix triggers from the trace, make names/grants automatic (no hotkey), equip-aware idle loop, equip/unequip sounds, hit sounds; weapon models (Saber 1SER) remain a separate later upgrade.
-- M2 finish: `ashenmarine-setup prepare` as the Melty `setup` step (marker `assets/ready.json`), verify on the owner's PC, preflight milestone 2 clean (it is).
+- M2 finish: `ashenmarine-setup prepare` (built, tested natively and under Wine on synthetic installs) as the Melty `setup` step (marker `assets/ready.json`), verify on the owner's PC, preflight milestone 2 clean (it is).
 - M4: Melty listing, release, one-click check, real screenshot, publish only with the owner's OK.

@@ -161,7 +161,7 @@
       "name": "Convert SM2 content for DS3",
       "game": "sm2",
       "what": "SM2 sounds, textures, models and numbers become something Dark Souls III can use, in the mashup's private folder.",
-      "mechanism": "ashenmarine-setup prepare (read-only on the SM2 install): opens the client paks, reads sounds/desktop/wpn.bnk and wpn.zip, walks each slot's Wwise event (play action -> random/switch/layer containers -> sounds), decodes the Wwise Vorbis media (ww2ogg algorithm, aoTuV 603 codebooks, lewton), mixes layers into a few takes per slot and writes {data}/assets/sounds/*.wav, index.json and ready.json; a report with the container trees goes to {data}/prepare-sm2",
+      "mechanism": "ashenmarine-setup prepare (read-only on the SM2 install): opens the client paks, reads sounds/desktop/wpn.bnk and wpn.zip, reads the bank objects exactly (hirc: sounds, random/switch/layer containers, volumes, delays; falls back to an approximate walk when the bank is not understood), plays each slot's Wwise event a few times in memory (seeded, reproducible), decodes the Wwise Vorbis media (ww2ogg algorithm, aoTuV 603 codebooks, lewton), mixes the layers into takes, brings all sounds up together to near full scale and writes {data}/assets/sounds/*.wav, index.json and ready.json; a report with the container trees goes to {data}/prepare-sm2",
       "owner": "setup_exe",
       "risk": "high",
       "oracle": "pc_log",
