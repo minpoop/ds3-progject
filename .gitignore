@@ -1,0 +1,18 @@
+# build output and packages
+target/
+dist/
+*.zip
+*.7z
+
+# local data, logs, secrets
+*.log
+.env
+*.curlrc
+*.sl2
+*.bak
+
+# converted game content must never be committed
+assets-out/
+converted/
+sm2-extract/
+ds3-extract/
