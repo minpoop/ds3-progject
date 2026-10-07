@@ -8,6 +8,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindow
 
 pub const VK_LBUTTON: i32 = 0x01;
 pub const VK_RBUTTON: i32 = 0x02;
+pub const VK_F5: i32 = 0x74;
+pub const VK_F6: i32 = 0x75;
 pub const VK_F7: i32 = 0x76;
 pub const VK_F8: i32 = 0x77;
 

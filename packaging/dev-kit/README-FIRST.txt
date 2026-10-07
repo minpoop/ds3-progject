@@ -30,6 +30,8 @@ How to do it (about 20 minutes)
           Then one strong attack (controller: RT, mouse: right button) - a different sound.
           Then roll twice: rolls should be SILENT.
        b. Press  F7  - a chainsword engine starts idling. Press F7 again to stop it.
+          (F5 makes all the mashup's sounds a little quieter, F6 a little louder - press them until the volume
+          feels right next to the game's own sound, and tell me how many presses it took.)
        c. Stand still (not in a menu) and press  F8  ONCE. This puts three test items in your inventory (in the
           offline copy only): a sword, a crossbow and 60 bolts, and renames them in memory to "Chainsword",
           "Bolt Pistol" and "Bolt Rounds". Open the inventory (Weapons / Ammunition) and look: what are they called?

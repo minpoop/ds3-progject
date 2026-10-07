@@ -101,7 +101,7 @@ pub fn thread_body(cfg: HookConfig) {
     let volumes: HashMap<String, f32> = soundset::sheet_slots().into_iter().map(|s| (s.id, s.volume)).collect();
     let input = input::Input::new();
     log.log(&format!(
-        "input: gamepad support {}, mouse {}; trace goes to sfx-trace.csv; hotkeys: F7 chainsword idle loop{}",
+        "input: gamepad support {}, mouse {}; trace goes to sfx-trace.csv; hotkeys: F5/F6 quieter/louder, F7 chainsword idle loop{}",
         if input.has_gamepad_support() { "available" } else { "missing" },
         "read while the game window is in front",
         if cfg.features.experiments { ", F8 test weapons + names" } else { "" }
@@ -143,8 +143,12 @@ struct Sfx {
     off: bool,
     swing: SwingDetector,
     ammo: AmmoTracker,
+    f5: Edge,
+    f6: Edge,
     f7: Edge,
     f8: Edge,
+    /// master volume, changed with F5 (quieter) and F6 (louder) in steps of 3 dB
+    master_db: f32,
     idle_on: bool,
     experiments: bool,
     experiment_done: bool,
@@ -169,8 +173,11 @@ impl Sfx {
             off: false,
             swing: SwingDetector::new(),
             ammo: AmmoTracker::new(),
+            f5: Edge::default(),
+            f6: Edge::default(),
             f7: Edge::default(),
             f8: Edge::default(),
+            master_db: 0.0,
             idle_on: false,
             experiments,
             experiment_done: false,
@@ -205,7 +212,12 @@ impl Sfx {
 
         // hotkeys count only while the game window is in front
         let focus = input::game_has_focus();
+        let f5 = self.f5.rising(focus && input::key_down(input::VK_F5));
+        let f6 = self.f6.rising(focus && input::key_down(input::VK_F6));
         let f7 = self.f7.rising(focus && input::key_down(input::VK_F7));
+        if f5 || f6 {
+            self.change_volume(if f6 { 3.0 } else { -3.0 });
+        }
         let f8 = self.f8.rising(focus && self.experiments && input::key_down(input::VK_F8));
         if f7 {
             self.toggle_idle();
@@ -270,11 +282,30 @@ impl Sfx {
         self.trace.row(now_ms, v.stamina, v.hp, &v.buttons, event);
     }
 
+    /// F5 / F6: the mashup's sounds quieter / louder (3 dB per press, between -30 dB and +9 dB).
+    fn change_volume(&mut self, step_db: f32) {
+        self.master_db = (self.master_db + step_db).clamp(-30.0, 9.0);
+        self.log.log(&format!("master volume {:+.0} dB", self.master_db));
+        if self.idle_on {
+            // the loop is already playing at the old level: restart it at the new one
+            self.audio.stop(KEY_IDLE);
+            let random = self.rng.next();
+            if let Some(clip) = self.sounds.pick("chainsword_idle", random) {
+                let gain = self.gain_of("chainsword_idle", 0.5);
+                self.audio.play_loop(KEY_IDLE, clip, gain);
+            }
+        }
+    }
+
+    fn gain_of(&self, slot: &str, default: f32) -> f32 {
+        self.volumes.get(slot).copied().unwrap_or(default) * 10f32.powf(self.master_db / 20.0)
+    }
+
     fn play(&mut self, slot: &str) {
         let random = self.rng.next();
         match self.sounds.pick(slot, random) {
             Some(clip) => {
-                let gain = self.volumes.get(slot).copied().unwrap_or(0.8);
+                let gain = self.gain_of(slot, 0.8);
                 self.audio.play(clip, gain);
                 self.plays += 1;
                 if self.plays <= 25 {
@@ -296,7 +327,7 @@ impl Sfx {
             let random = self.rng.next();
             match self.sounds.pick("chainsword_idle", random) {
                 Some(clip) => {
-                    let gain = self.volumes.get("chainsword_idle").copied().unwrap_or(0.5);
+                    let gain = self.gain_of("chainsword_idle", 0.5);
                     self.audio.play_loop(KEY_IDLE, clip, gain);
                     self.log.log("F7: chainsword idle loop ON");
                 }
@@ -560,6 +591,28 @@ mod tests {
         s.toggle_idle();
         assert_eq!(played(&rx), vec!["play:chainsword_idle_start", "loop:chainsword_idle", "stop:"]);
         assert!(s.trace.text.contains(",swing") && s.trace.text.contains(",shot"));
+    }
+
+    #[test]
+    fn the_master_volume_changes_in_steps_and_is_limited() {
+        let (mut s, rx, _dir) = test_sfx("volume");
+        let base = s.gain_of("chainsword_swing_1", 0.8);
+        s.change_volume(-3.0);
+        let quieter = s.gain_of("chainsword_swing_1", 0.8);
+        assert!((quieter / base - 10f32.powf(-3.0 / 20.0)).abs() < 1e-4, "{base} {quieter}");
+        for _ in 0..30 {
+            s.change_volume(3.0);
+        }
+        assert_eq!(s.master_db, 9.0);
+        for _ in 0..30 {
+            s.change_volume(-3.0);
+        }
+        assert_eq!(s.master_db, -30.0);
+        // a running idle loop is restarted at the new level
+        s.master_db = 0.0;
+        s.idle_on = true;
+        s.change_volume(-3.0);
+        assert_eq!(played(&rx), vec!["stop:", "loop:chainsword_idle"]);
     }
 
     #[test]
