@@ -22,7 +22,7 @@ treehash() { (cd "$1" 2>/dev/null && find . -type f -print0 | sort -z | xargs -0
 
 echo "== build =="
 python3 tools/gen.py --check || exit 1
-cargo build --release --target x86_64-pc-windows-gnu -p ashen-launcher -p ashen-hook -p ashen-harness 2>&1 | grep -E "^(warning|error)" -A5
+cargo build --release --target x86_64-pc-windows-gnu --workspace 2>&1 | grep -E "^(warning|error)" -A5
 for f in ashenmarine-launcher.exe ashenmarine_hook.dll ashen-harness.exe; do [ -f "$BIN/$f" ] || { echo "missing $f"; exit 1; }; done
 
 make_world() { # <name>
@@ -113,7 +113,8 @@ if [ -z "$KITSRC" ]; then
 else
   make_world K; REAL0="$(treehash "$W/appdata")"
   rm -rf "$W/kit" "$W/ashen" "$W/me2"; cp -r "$KITSRC" "$W/kit"
-  cp "$BIN/ashenmarine-launcher.exe" "$BIN/ashenmarine_hook.dll" "$W/kit/ashenmarine/"      # latest code, kit's ModEngine2 files
+  # The kit is tested exactly as shipped, and must contain the very binaries the other scenarios just used.
+  check "K the kit ships the binaries that were tested" '[ "$(sha256sum < "$W/kit/ashenmarine/ashenmarine_hook.dll")" = "$(sha256sum < "$BIN/ashenmarine_hook.dll")" ] && [ "$(sha256sum < "$W/kit/ashenmarine/ashenmarine-launcher.exe")" = "$(sha256sum < "$BIN/ashenmarine-launcher.exe")" ]'
   ( cd "$W" && ASHEN_FAKE_BEHAVIOR=sleep ASHEN_FAKE_REAL="$(winpath "$W/appdata/DarkSoulsIII")" WINEDEBUG=-all timeout 150 xvfb-run -a "$WINE" "$W/kit/ashenmarine/ashenmarine-launcher.exe" \
       --game "$(winpath "$W/game")" --appdata "$(winpath "$W/appdata")" --silent > "$W/launcher.out" 2>&1; echo $? > "$W/launcher.rc" )
   sed 's/^/    /' "$W/kit/ashenmarine/logs/launcher.log" | tail -14; echo "    -- hook.log:"; sed 's/^/    /' "$W/kit/ashenmarine/logs/hook.log" | cut -c1-220 | head -12

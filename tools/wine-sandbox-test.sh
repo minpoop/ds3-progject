@@ -25,7 +25,7 @@ treehash() { (cd "$1" 2>/dev/null && find . -type f -print0 | sort -z | xargs -0
 
 echo "== build =="
 python3 tools/gen.py --check || exit 1
-cargo build --release --target x86_64-pc-windows-gnu -p ashen-hook -p ashen-harness 2>&1 | grep -E "^(warning|error)" -A5
+cargo build --release --target x86_64-pc-windows-gnu --workspace 2>&1 | grep -E "^(warning|error)" -A5
 [ -f "$BIN/ashenmarine_hook.dll" ] && [ -f "$BIN/ashen-harness.exe" ] || { echo "build failed"; exit 1; }
 
 # make_world <name> <block_network true|false>  -> sets W (world dir)

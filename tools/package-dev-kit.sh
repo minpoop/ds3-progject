@@ -15,7 +15,7 @@ OUT="dist/$NAME"
 
 python3 tools/preflight.py --milestone 1 >/dev/null || { echo "preflight is not clean: fix the sheets first"; exit 1; }
 python3 tools/gen.py --check
-cargo build --release --target x86_64-pc-windows-gnu -p ashen-launcher -p ashen-hook
+cargo build --release --target x86_64-pc-windows-gnu --workspace   # same command as the tests: the tested binaries ARE the shipped ones
 for f in ashenmarine-launcher.exe ashenmarine_hook.dll; do [ -f "$BIN/$f" ] || { echo "missing $BIN/$f"; exit 1; }; done
 
 rm -rf "$OUT" "dist/$NAME.zip"
