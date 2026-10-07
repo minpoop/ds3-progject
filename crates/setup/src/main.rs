@@ -1,7 +1,9 @@
 //! ashenmarine-setup: reads the player's own Space Marine 2 install (read-only).
 //!
-//!   ashenmarine-setup probe   [--sm2 "<folder>"] [--out "<folder>"]
-//!   ashenmarine-setup prepare [--sm2 "<folder>"] [--out "<assets folder>"]
+//! ```text
+//! ashenmarine-setup probe   [--sm2 "<folder>"] [--out "<folder>"]
+//! ashenmarine-setup prepare [--sm2 "<folder>"] [--out "<assets folder>"]
+//! ```
 //!
 //! `probe` is the default when no command is given (so a double-click works). Exit codes: 0 done, 2 nothing could be
 //! done (the message says why), 64 the command line was not understood.
