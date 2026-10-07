@@ -1,0 +1,24 @@
+{
+  "sheet": "sm2_sources",
+  "doc": "What the setup step reads from the player's Space Marine 2 install, one row per kind of asset per weapon. Most cells stay empty until the real file scan says what exists and in which format.",
+  "columns": {
+    "id": {"type": "id"},
+    "weapon_name": {"type": "string", "doc": "SM2's own name for the weapon"},
+    "asset_kind": {"type": "enum", "values": ["model", "texture", "sound", "stats"]},
+    "pak_pattern": {"type": "string", "doc": "which pak entries hold it (name pattern)"},
+    "format": {"type": "string", "doc": "container/codec as seen in the scan"},
+    "converter": {"type": "string", "doc": "how it becomes something DS3 can use"},
+    "output": {"type": "string", "doc": "where the converted result goes, under {data}/assets"},
+    "milestone": {"type": "int"}
+  },
+  "rows": [
+    {"id": "chainsword_model", "weapon_name": "chainsword", "asset_kind": "model", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
+    {"id": "chainsword_texture", "weapon_name": "chainsword", "asset_kind": "texture", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
+    {"id": "chainsword_sounds", "weapon_name": "chainsword", "asset_kind": "sound", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
+    {"id": "chainsword_stats", "weapon_name": "chainsword", "asset_kind": "stats", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
+    {"id": "boltpistol_model", "weapon_name": "bolt pistol", "asset_kind": "model", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
+    {"id": "boltpistol_texture", "weapon_name": "bolt pistol", "asset_kind": "texture", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
+    {"id": "boltpistol_sounds", "weapon_name": "bolt pistol", "asset_kind": "sound", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
+    {"id": "boltpistol_stats", "weapon_name": "bolt pistol", "asset_kind": "stats", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2}
+  ]
+}

@@ -1,0 +1,141 @@
+{
+  "sheet": "files",
+  "doc": "Every file or folder the mashup reads or writes. 'guarded' means it must never be modified by the mashup; tests assert it.",
+  "columns": {
+    "id": {"type": "id"},
+    "path": {"type": "string", "doc": "root token + path; see design/README.md"},
+    "purpose": {"type": "string"},
+    "access": {"type": "enum", "values": ["read", "write", "readwrite"]},
+    "system": {"type": "ref", "sheet": "systems"},
+    "guarded": {"type": "bool"},
+    "milestone": {"type": "int"}
+  },
+  "rows": [
+    {
+      "id": "real_save_dir",
+      "path": "{appdata}/DarkSoulsIII",
+      "purpose": "The player's real Dark Souls III saves: read for the copy and the hash check only; restored from backup if it ever changes",
+      "access": "read",
+      "system": "save_backup_verify",
+      "guarded": true,
+      "milestone": 1
+    },
+    {
+      "id": "real_save_backup",
+      "path": "{data}/backups",
+      "purpose": "Full copy of the real save taken before each launch (newest three kept)",
+      "access": "write",
+      "system": "save_backup_verify",
+      "guarded": false,
+      "milestone": 1
+    },
+    {
+      "id": "sandbox_save_dir",
+      "path": "{data}/save/DarkSoulsIII",
+      "purpose": "The mashup's private copy of the save; the game's save folder is redirected here",
+      "access": "readwrite",
+      "system": "save_sandbox_copy",
+      "guarded": false,
+      "milestone": 1
+    },
+    {
+      "id": "ds3_exe",
+      "path": "{game}/Game/DarkSoulsIII.exe",
+      "purpose": "The game; started only through ModEngine2, never modified",
+      "access": "read",
+      "system": "me2_launch",
+      "guarded": true,
+      "milestone": 1
+    },
+    {
+      "id": "me2_launcher",
+      "path": "{me2}/modengine2_launcher.exe",
+      "purpose": "ModEngine2's launcher, installed by Melty",
+      "access": "read",
+      "system": "me2_launch",
+      "guarded": true,
+      "milestone": 1
+    },
+    {
+      "id": "me2_dll",
+      "path": "{me2}/modengine2/bin/modengine2.dll",
+      "purpose": "ModEngine2's injected library, installed by Melty",
+      "access": "read",
+      "system": "me2_launch",
+      "guarded": true,
+      "milestone": 1
+    },
+    {
+      "id": "me2_config",
+      "path": "{data}/config/config_ashenmarine.toml",
+      "purpose": "ModEngine2 config generated before every launch: our hook DLL and mod folder",
+      "access": "write",
+      "system": "me2_launch",
+      "guarded": false,
+      "milestone": 1
+    },
+    {
+      "id": "hook_config",
+      "path": "{data}/config/ashenmarine.json",
+      "purpose": "Generated before every launch: tells the hook DLL the real and private save folders and the log path",
+      "access": "write",
+      "system": "save_redirect",
+      "guarded": false,
+      "milestone": 1
+    },
+    {
+      "id": "hook_dll_file",
+      "path": "{data}/ashenmarine_hook.dll",
+      "purpose": "The hook DLL ModEngine2 loads into the game",
+      "access": "read",
+      "system": "me2_launch",
+      "guarded": false,
+      "milestone": 1
+    },
+    {
+      "id": "mod_dir",
+      "path": "{data}/mod",
+      "purpose": "ModEngine2 mod folder (loose game-file overrides); empty in milestone 1",
+      "access": "read",
+      "system": "me2_launch",
+      "guarded": false,
+      "milestone": 1
+    },
+    {
+      "id": "hook_log",
+      "path": "{data}/logs/hook.log",
+      "purpose": "What the hook DLL did this session",
+      "access": "write",
+      "system": "hook_logging",
+      "guarded": false,
+      "milestone": 1
+    },
+    {
+      "id": "launcher_log",
+      "path": "{data}/logs/launcher.log",
+      "purpose": "What the launcher did this session",
+      "access": "write",
+      "system": "hook_logging",
+      "guarded": false,
+      "milestone": 1
+    },
+    {
+      "id": "sm2_install",
+      "path": "{sm2}",
+      "purpose": "The player's Space Marine 2 install: read-only, never written, never launched",
+      "access": "read",
+      "system": "sm2_read",
+      "guarded": true,
+      "milestone": 2
+    },
+    {
+      "id": "converted_assets",
+      "path": "{data}/assets",
+      "purpose": "SM2 content converted on the player's PC; private, never uploaded or committed",
+      "access": "write",
+      "system": "asset_convert",
+      "guarded": false,
+      "milestone": 2
+    }
+  ]
+}

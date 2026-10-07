@@ -1,0 +1,24 @@
+{
+  "sheet": "components",
+  "doc": "Release components (the archives uploaded to Melty) and where each installs.",
+  "columns": {
+    "id": {"type": "id"},
+    "file_name": {"type": "string", "doc": "upload name; {version} is replaced"},
+    "label": {"type": "string"},
+    "kind": {"type": "enum", "values": ["main", "optional", "symbols", "extra"]},
+    "required": {"type": "bool"},
+    "install_to": {"type": "string", "doc": "destination root token + folder"},
+    "milestone": {"type": "int"}
+  },
+  "rows": [
+    {
+      "id": "main",
+      "file_name": "AshenMarine-{version}.zip",
+      "label": "Ashen Marine",
+      "kind": "main",
+      "required": true,
+      "install_to": "{managed}/ashenmarine",
+      "milestone": 1
+    }
+  ]
+}

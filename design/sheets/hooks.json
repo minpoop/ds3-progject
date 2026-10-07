@@ -1,0 +1,862 @@
+{
+  "sheet": "hooks",
+  "doc": "One row per Windows function the hook DLL intercepts inside the game process. Each row generates one detour function and one install entry (tools/gen.py). Actions: redirect_paths (rewrite paths under the real save folder to the private copy), deny_addr (refuse non-loopback socket addresses), deny_name (refuse non-local host names), custom (hand-written in crates/hook/src/custom.rs).",
+  "columns": {
+    "id": {
+      "type": "id"
+    },
+    "system": {
+      "type": "ref",
+      "sheet": "systems"
+    },
+    "module": {
+      "type": "string",
+      "doc": "DLL that exports the function"
+    },
+    "function": {
+      "type": "string",
+      "doc": "exported name"
+    },
+    "args": {
+      "type": "list",
+      "doc": "'name:RustType' in call order"
+    },
+    "ret": {
+      "type": "string",
+      "doc": "Rust return type"
+    },
+    "action": {
+      "type": "enum",
+      "values": [
+        "redirect_paths",
+        "deny_addr",
+        "deny_name",
+        "custom"
+      ]
+    },
+    "target_args": {
+      "type": "intlist",
+      "min": 0,
+      "doc": "argument indexes the action looks at (paths, or the socket address / host name); empty for custom hooks"
+    },
+    "name_kind": {
+      "type": "enum",
+      "values": [
+        "none",
+        "utf16",
+        "ansi"
+      ],
+      "doc": "encoding of the host name for deny_name"
+    },
+    "deny_ret": {
+      "type": "string",
+      "doc": "Rust expression returned when denied ('none' if the action never denies)"
+    },
+    "error_api": {
+      "type": "enum",
+      "values": [
+        "none",
+        "wsa",
+        "win32"
+      ],
+      "doc": "which API sets the last error when denying"
+    },
+    "deny_error": {
+      "type": "int",
+      "doc": "error code set when denying (0 when none)"
+    },
+    "custom_fn": {
+      "type": "string",
+      "doc": "function in custom.rs for action=custom, else 'none'"
+    },
+    "optional": {
+      "type": "bool",
+      "doc": "true: skip (log) instead of failing closed when the function does not exist"
+    },
+    "milestone": {
+      "type": "int"
+    },
+    "fallback_module": {
+      "type": "string",
+      "doc": "second module to try when the function is not exported by `module` (Windows and Wine put some file APIs in kernel32, others in kernelbase); 'none' if there is no fallback"
+    }
+  },
+  "rows": [
+    {
+      "id": "fs_createfilew",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "CreateFileW",
+      "args": [
+        "lpFileName:*const u16",
+        "dwDesiredAccess:u32",
+        "dwShareMode:u32",
+        "lpSecurityAttributes:*const c_void",
+        "dwCreationDisposition:u32",
+        "dwFlagsAndAttributes:u32",
+        "hTemplateFile:isize"
+      ],
+      "ret": "isize",
+      "action": "redirect_paths",
+      "target_args": [
+        0
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_createfile2",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "CreateFile2",
+      "args": [
+        "lpFileName:*const u16",
+        "dwDesiredAccess:u32",
+        "dwShareMode:u32",
+        "dwCreationDisposition:u32",
+        "pCreateExParams:*const c_void"
+      ],
+      "ret": "isize",
+      "action": "redirect_paths",
+      "target_args": [
+        0
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": true,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_getfileattributesw",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "GetFileAttributesW",
+      "args": [
+        "lpFileName:*const u16"
+      ],
+      "ret": "u32",
+      "action": "redirect_paths",
+      "target_args": [
+        0
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_getfileattributesexw",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "GetFileAttributesExW",
+      "args": [
+        "lpFileName:*const u16",
+        "fInfoLevelId:i32",
+        "lpFileInformation:*mut c_void"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_findfirstfilew",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "FindFirstFileW",
+      "args": [
+        "lpFileName:*const u16",
+        "lpFindFileData:*mut c_void"
+      ],
+      "ret": "isize",
+      "action": "redirect_paths",
+      "target_args": [
+        0
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_findfirstfileexw",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "FindFirstFileExW",
+      "args": [
+        "lpFileName:*const u16",
+        "fInfoLevelId:i32",
+        "lpFindFileData:*mut c_void",
+        "fSearchOp:i32",
+        "lpSearchFilter:*const c_void",
+        "dwAdditionalFlags:u32"
+      ],
+      "ret": "isize",
+      "action": "redirect_paths",
+      "target_args": [
+        0
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_createdirectoryw",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "CreateDirectoryW",
+      "args": [
+        "lpPathName:*const u16",
+        "lpSecurityAttributes:*const c_void"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_createdirectoryexw",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "CreateDirectoryExW",
+      "args": [
+        "lpTemplateDirectory:*const u16",
+        "lpNewDirectory:*const u16",
+        "lpSecurityAttributes:*const c_void"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0,
+        1
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": true,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_removedirectoryw",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "RemoveDirectoryW",
+      "args": [
+        "lpPathName:*const u16"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_deletefilew",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "DeleteFileW",
+      "args": [
+        "lpFileName:*const u16"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_setfileattributesw",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "SetFileAttributesW",
+      "args": [
+        "lpFileName:*const u16",
+        "dwFileAttributes:u32"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_movefilew",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "MoveFileW",
+      "args": [
+        "lpExistingFileName:*const u16",
+        "lpNewFileName:*const u16"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0,
+        1
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_movefileexw",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "MoveFileExW",
+      "args": [
+        "lpExistingFileName:*const u16",
+        "lpNewFileName:*const u16",
+        "dwFlags:u32"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0,
+        1
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_movefilewithprogressw",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "MoveFileWithProgressW",
+      "args": [
+        "lpExistingFileName:*const u16",
+        "lpNewFileName:*const u16",
+        "lpProgressRoutine:*const c_void",
+        "lpData:*const c_void",
+        "dwFlags:u32"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0,
+        1
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_copyfilew",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "CopyFileW",
+      "args": [
+        "lpExistingFileName:*const u16",
+        "lpNewFileName:*const u16",
+        "bFailIfExists:i32"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0,
+        1
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_copyfileexw",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "CopyFileExW",
+      "args": [
+        "lpExistingFileName:*const u16",
+        "lpNewFileName:*const u16",
+        "lpProgressRoutine:*const c_void",
+        "lpData:*const c_void",
+        "pbCancel:*mut i32",
+        "dwCopyFlags:u32"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0,
+        1
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "fs_replacefilew",
+      "system": "save_redirect",
+      "module": "kernelbase.dll",
+      "function": "ReplaceFileW",
+      "args": [
+        "lpReplacedFileName:*const u16",
+        "lpReplacementFileName:*const u16",
+        "lpBackupFileName:*const u16",
+        "dwReplaceFlags:u32",
+        "lpExclude:*mut c_void",
+        "lpReserved:*mut c_void"
+      ],
+      "ret": "i32",
+      "action": "redirect_paths",
+      "target_args": [
+        0,
+        1,
+        2
+      ],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "kernel32.dll"
+    },
+    {
+      "id": "net_connect",
+      "system": "offline_guard",
+      "module": "ws2_32.dll",
+      "function": "connect",
+      "args": [
+        "s:usize",
+        "name:*const c_void",
+        "namelen:i32"
+      ],
+      "ret": "i32",
+      "action": "deny_addr",
+      "target_args": [
+        1
+      ],
+      "name_kind": "none",
+      "deny_ret": "-1",
+      "error_api": "wsa",
+      "deny_error": 10061,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "net_wsaconnect",
+      "system": "offline_guard",
+      "module": "ws2_32.dll",
+      "function": "WSAConnect",
+      "args": [
+        "s:usize",
+        "name:*const c_void",
+        "namelen:i32",
+        "lpCallerData:*const c_void",
+        "lpCalleeData:*mut c_void",
+        "lpSQOS:*const c_void",
+        "lpGQOS:*const c_void"
+      ],
+      "ret": "i32",
+      "action": "deny_addr",
+      "target_args": [
+        1
+      ],
+      "name_kind": "none",
+      "deny_ret": "-1",
+      "error_api": "wsa",
+      "deny_error": 10061,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "net_sendto",
+      "system": "offline_guard",
+      "module": "ws2_32.dll",
+      "function": "sendto",
+      "args": [
+        "s:usize",
+        "buf:*const u8",
+        "len:i32",
+        "flags:i32",
+        "to:*const c_void",
+        "tolen:i32"
+      ],
+      "ret": "i32",
+      "action": "deny_addr",
+      "target_args": [
+        4
+      ],
+      "name_kind": "none",
+      "deny_ret": "-1",
+      "error_api": "wsa",
+      "deny_error": 10051,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "net_wsasendto",
+      "system": "offline_guard",
+      "module": "ws2_32.dll",
+      "function": "WSASendTo",
+      "args": [
+        "s:usize",
+        "lpBuffers:*mut c_void",
+        "dwBufferCount:u32",
+        "lpNumberOfBytesSent:*mut u32",
+        "dwFlags:u32",
+        "lpTo:*const c_void",
+        "iTolen:i32",
+        "lpOverlapped:*mut c_void",
+        "lpCompletionRoutine:*mut c_void"
+      ],
+      "ret": "i32",
+      "action": "deny_addr",
+      "target_args": [
+        5
+      ],
+      "name_kind": "none",
+      "deny_ret": "-1",
+      "error_api": "wsa",
+      "deny_error": 10051,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "net_wsaioctl",
+      "system": "offline_guard",
+      "module": "ws2_32.dll",
+      "function": "WSAIoctl",
+      "args": [
+        "s:usize",
+        "dwIoControlCode:u32",
+        "lpvInBuffer:*mut c_void",
+        "cbInBuffer:u32",
+        "lpvOutBuffer:*mut c_void",
+        "cbOutBuffer:u32",
+        "lpcbBytesReturned:*mut u32",
+        "lpOverlapped:*mut c_void",
+        "lpCompletionRoutine:*mut c_void"
+      ],
+      "ret": "i32",
+      "action": "custom",
+      "target_args": [],
+      "name_kind": "none",
+      "deny_ret": "none",
+      "error_api": "none",
+      "deny_error": 0,
+      "custom_fn": "wsaioctl_guard",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "net_getaddrinfo",
+      "system": "offline_guard",
+      "module": "ws2_32.dll",
+      "function": "getaddrinfo",
+      "args": [
+        "pNodeName:*const u8",
+        "pServiceName:*const u8",
+        "pHints:*const c_void",
+        "ppResult:*mut *mut c_void"
+      ],
+      "ret": "i32",
+      "action": "deny_name",
+      "target_args": [
+        0
+      ],
+      "name_kind": "ansi",
+      "deny_ret": "11001",
+      "error_api": "wsa",
+      "deny_error": 11001,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "net_getaddrinfow",
+      "system": "offline_guard",
+      "module": "ws2_32.dll",
+      "function": "GetAddrInfoW",
+      "args": [
+        "pNodeName:*const u16",
+        "pServiceName:*const u16",
+        "pHints:*const c_void",
+        "ppResult:*mut *mut c_void"
+      ],
+      "ret": "i32",
+      "action": "deny_name",
+      "target_args": [
+        0
+      ],
+      "name_kind": "utf16",
+      "deny_ret": "11001",
+      "error_api": "wsa",
+      "deny_error": 11001,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "net_getaddrinfoexw",
+      "system": "offline_guard",
+      "module": "ws2_32.dll",
+      "function": "GetAddrInfoExW",
+      "args": [
+        "pName:*const u16",
+        "pServiceName:*const u16",
+        "dwNameSpace:u32",
+        "lpNspId:*mut c_void",
+        "hints:*const c_void",
+        "ppResult:*mut *mut c_void",
+        "timeout:*mut c_void",
+        "lpOverlapped:*mut c_void",
+        "lpCompletionRoutine:*mut c_void",
+        "lpHandle:*mut isize"
+      ],
+      "ret": "i32",
+      "action": "deny_name",
+      "target_args": [
+        0
+      ],
+      "name_kind": "utf16",
+      "deny_ret": "11001",
+      "error_api": "wsa",
+      "deny_error": 11001,
+      "custom_fn": "none",
+      "optional": true,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "net_gethostbyname",
+      "system": "offline_guard",
+      "module": "ws2_32.dll",
+      "function": "gethostbyname",
+      "args": [
+        "name:*const u8"
+      ],
+      "ret": "*mut c_void",
+      "action": "deny_name",
+      "target_args": [
+        0
+      ],
+      "name_kind": "ansi",
+      "deny_ret": "core::ptr::null_mut()",
+      "error_api": "wsa",
+      "deny_error": 11001,
+      "custom_fn": "none",
+      "optional": false,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "net_wsaconnectbynamew",
+      "system": "offline_guard",
+      "module": "ws2_32.dll",
+      "function": "WSAConnectByNameW",
+      "args": [
+        "s:usize",
+        "nodename:*const u16",
+        "servicename:*const u16",
+        "lpLocalAddressLength:*mut u32",
+        "lpLocalAddress:*mut c_void",
+        "lpRemoteAddressLength:*mut u32",
+        "lpRemoteAddress:*mut c_void",
+        "timeout:*const c_void",
+        "reserved:*mut c_void"
+      ],
+      "ret": "i32",
+      "action": "deny_name",
+      "target_args": [
+        1
+      ],
+      "name_kind": "utf16",
+      "deny_ret": "0",
+      "error_api": "wsa",
+      "deny_error": 10061,
+      "custom_fn": "none",
+      "optional": true,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "http_winhttpconnect",
+      "system": "offline_guard",
+      "module": "winhttp.dll",
+      "function": "WinHttpConnect",
+      "args": [
+        "hSession:isize",
+        "pswzServerName:*const u16",
+        "nServerPort:u16",
+        "dwReserved:u32"
+      ],
+      "ret": "isize",
+      "action": "deny_name",
+      "target_args": [
+        1
+      ],
+      "name_kind": "utf16",
+      "deny_ret": "0",
+      "error_api": "win32",
+      "deny_error": 12029,
+      "custom_fn": "none",
+      "optional": true,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "http_internetconnectw",
+      "system": "offline_guard",
+      "module": "wininet.dll",
+      "function": "InternetConnectW",
+      "args": [
+        "hInternet:isize",
+        "lpszServerName:*const u16",
+        "nServerPort:u16",
+        "lpszUserName:*const u16",
+        "lpszPassword:*const u16",
+        "dwService:u32",
+        "dwFlags:u32",
+        "dwContext:usize"
+      ],
+      "ret": "isize",
+      "action": "deny_name",
+      "target_args": [
+        1
+      ],
+      "name_kind": "utf16",
+      "deny_ret": "0",
+      "error_api": "win32",
+      "deny_error": 12029,
+      "custom_fn": "none",
+      "optional": true,
+      "milestone": 1,
+      "fallback_module": "none"
+    },
+    {
+      "id": "http_internetconnecta",
+      "system": "offline_guard",
+      "module": "wininet.dll",
+      "function": "InternetConnectA",
+      "args": [
+        "hInternet:isize",
+        "lpszServerName:*const u8",
+        "nServerPort:u16",
+        "lpszUserName:*const u8",
+        "lpszPassword:*const u8",
+        "dwService:u32",
+        "dwFlags:u32",
+        "dwContext:usize"
+      ],
+      "ret": "isize",
+      "action": "deny_name",
+      "target_args": [
+        1
+      ],
+      "name_kind": "ansi",
+      "deny_ret": "0",
+      "error_api": "win32",
+      "deny_error": 12029,
+      "custom_fn": "none",
+      "optional": true,
+      "milestone": 1,
+      "fallback_module": "none"
+    }
+  ]
+}

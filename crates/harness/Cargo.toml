@@ -1,0 +1,13 @@
+[package]
+name = "ashen-harness"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Test harness: probes the hook DLL and stands in for ModEngine2 and the game under Wine"
+
+[[bin]]
+name = "ashen-harness"
+path = "src/main.rs"
+
+[dependencies]
+ashen-common = { path = "../common" }

@@ -1,0 +1,24 @@
+[package]
+name = "ashen-launcher"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Ashen Marine launcher: protects the real save, prepares the private copy, starts Dark Souls III through ModEngine2"
+
+[[bin]]
+name = "ashenmarine-launcher"
+path = "src/main.rs"
+
+[dependencies]
+ashen-common = { path = "../common" }
+anyhow.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }

@@ -1,0 +1,46 @@
+{
+  "sheet": "artifacts",
+  "doc": "Everything built or shipped, and which component carries it.",
+  "columns": {
+    "id": {"type": "id"},
+    "path_in_package": {"type": "string"},
+    "crate": {"type": "string", "doc": "workspace crate that builds it, or 'none'"},
+    "kind": {"type": "enum", "values": ["exe", "dll", "text", "data"]},
+    "component": {"type": "ref", "sheet": "components"},
+    "milestone": {"type": "int"}
+  },
+  "rows": [
+    {
+      "id": "launcher_exe",
+      "path_in_package": "ashenmarine-launcher.exe",
+      "crate": "launcher",
+      "kind": "exe",
+      "component": "main",
+      "milestone": 1
+    },
+    {
+      "id": "hook_dll",
+      "path_in_package": "ashenmarine_hook.dll",
+      "crate": "hook",
+      "kind": "dll",
+      "component": "main",
+      "milestone": 1
+    },
+    {
+      "id": "readme_txt",
+      "path_in_package": "README.txt",
+      "crate": "none",
+      "kind": "text",
+      "component": "main",
+      "milestone": 1
+    },
+    {
+      "id": "setup_exe",
+      "path_in_package": "ashenmarine-setup.exe",
+      "crate": "setup",
+      "kind": "exe",
+      "component": "main",
+      "milestone": 2
+    }
+  ]
+}

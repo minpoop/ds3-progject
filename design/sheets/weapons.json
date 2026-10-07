@@ -1,0 +1,26 @@
+{
+  "sheet": "weapons",
+  "doc": "The weapons the player gets. Moves and damage rules are Dark Souls III's; look, sound and numbers are Space Marine 2's. Empty cells are decisions that wait for the real SM2 files.",
+  "columns": {
+    "id": {"type": "id"},
+    "display_name": {"type": "string"},
+    "kind": {"type": "enum", "values": ["melee", "ranged"]},
+    "hand": {"type": "enum", "values": ["right", "left", "two"]},
+    "grant": {"type": "enum", "values": ["start_inventory", "shop", "pickup"]},
+    "ds3_weapon_class": {"type": "string", "doc": "which DS3 weapon type supplies the moveset"},
+    "model_source": {"type": "ref", "sheet": "sm2_sources"},
+    "texture_source": {"type": "ref", "sheet": "sm2_sources"},
+    "stats_source": {"type": "ref", "sheet": "sm2_sources"},
+    "milestone": {"type": "int"}
+  },
+  "rows": [
+    {
+      "id": "chainsword", "display_name": "Chainsword", "kind": "melee", "hand": "right", "grant": "start_inventory",
+      "ds3_weapon_class": null, "model_source": "chainsword_model", "texture_source": "chainsword_texture", "stats_source": "chainsword_stats", "milestone": 3
+    },
+    {
+      "id": "bolt_pistol", "display_name": "Bolt Pistol", "kind": "ranged", "hand": "left", "grant": "start_inventory",
+      "ds3_weapon_class": null, "model_source": "boltpistol_model", "texture_source": "boltpistol_texture", "stats_source": "boltpistol_stats", "milestone": 3
+    }
+  ]
+}

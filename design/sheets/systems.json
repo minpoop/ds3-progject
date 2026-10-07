@@ -1,0 +1,171 @@
+{
+  "sheet": "systems",
+  "doc": "Every game system the mashup touches. Rows with a null mechanism are not designed yet (they depend on what the real SM2 files turn out to contain).",
+  "columns": {
+    "id": {"type": "id"},
+    "name": {"type": "string"},
+    "game": {"type": "ref", "sheet": "games"},
+    "what": {"type": "string"},
+    "mechanism": {"type": "string"},
+    "owner": {"type": "ref", "sheet": "artifacts", "doc": "the artifact that implements it"},
+    "risk": {"type": "enum", "values": ["low", "medium", "high"]},
+    "oracle": {"type": "enum", "values": ["harness", "pc_log", "pc_visual", "reading"], "doc": "what proves it works"},
+    "milestone": {"type": "int"}
+  },
+  "rows": [
+    {
+      "id": "me2_launch",
+      "name": "Start Dark Souls III through ModEngine2",
+      "game": "ds3",
+      "what": "Play starts the game with the mashup's own ModEngine2 config, which loads the hook DLL.",
+      "mechanism": "modengine2_launcher.exe -t ds3 -p <DarkSoulsIII.exe> -c <generated toml> --modengine-dll <modengine2.dll>; the toml lists the hook DLL under external_dlls and the mod folder under mods",
+      "owner": "launcher_exe",
+      "risk": "medium",
+      "oracle": "pc_log",
+      "milestone": 1
+    },
+    {
+      "id": "save_backup_verify",
+      "name": "Back up and verify the real save",
+      "game": "ds3",
+      "what": "The player's real save is proven untouched after every session, or restored.",
+      "mechanism": "sha256 manifest of the real save folder before launch plus a full copy in {data}/backups; after the game exits compare, and restore from the copy if anything differs",
+      "owner": "launcher_exe",
+      "risk": "low",
+      "oracle": "harness",
+      "milestone": 1
+    },
+    {
+      "id": "save_sandbox_copy",
+      "name": "Private copy of the save",
+      "game": "ds3",
+      "what": "The mashup plays its own copy of the player's character, created on first Play.",
+      "mechanism": "recursive copy (never move) of the real save folder to {data}/save on first Play; later Plays reuse the private copy",
+      "owner": "launcher_exe",
+      "risk": "low",
+      "oracle": "harness",
+      "milestone": 1
+    },
+    {
+      "id": "save_redirect",
+      "name": "Send save file access to the private copy",
+      "game": "ds3",
+      "what": "Every file operation the game does under its real save folder lands in the private copy instead.",
+      "mechanism": "inline hooks (MinHook) on kernelbase file APIs rewrite any path under the real save folder to the private copy",
+      "owner": "hook_dll",
+      "risk": "medium",
+      "oracle": "harness",
+      "milestone": 1
+    },
+    {
+      "id": "offline_guard",
+      "name": "Keep the game offline",
+      "game": "ds3",
+      "what": "The game process cannot reach any non-loopback network address.",
+      "mechanism": "inline hooks on ws2_32/winhttp/wininet entry points deny every non-loopback destination or host name; a WSAIoctl hook swaps ConnectEx for a guarded version",
+      "owner": "hook_dll",
+      "risk": "medium",
+      "oracle": "harness",
+      "milestone": 1
+    },
+    {
+      "id": "fail_closed",
+      "name": "Close the game if the sandbox is not in place",
+      "game": "ds3",
+      "what": "If a sandbox hook cannot be installed the game does not run unprotected.",
+      "mechanism": "any hook installation error is logged and shown in a message box, then the process is terminated",
+      "owner": "hook_dll",
+      "risk": "low",
+      "oracle": "harness",
+      "milestone": 1
+    },
+    {
+      "id": "hook_logging",
+      "name": "Diagnostic logs",
+      "game": "ds3",
+      "what": "A plain log shows what the launcher and hooks did, so a failed test can be diagnosed.",
+      "mechanism": "append-only text files in {data}/logs with counts of redirected paths and denied connections",
+      "owner": "hook_dll",
+      "risk": "low",
+      "oracle": "pc_log",
+      "milestone": 1
+    },
+    {
+      "id": "window_marker",
+      "name": "Mark the game window",
+      "game": "ds3",
+      "what": "The window title says this is the Ashen Marine offline copy, so screenshots and the player can tell.",
+      "mechanism": "SetWindowTextW on the game's top-level window once it exists, appending ' - Ashen Marine (offline copy)'",
+      "owner": "hook_dll",
+      "risk": "low",
+      "oracle": "pc_visual",
+      "milestone": 1
+    },
+    {
+      "id": "sm2_discovery",
+      "name": "Find the player's Space Marine 2",
+      "game": "sm2",
+      "what": "The setup step locates the SM2 install itself, because Melty cannot see it.",
+      "mechanism": "read Steam's registry path, libraryfolders.vdf and appmanifest_2183900.acf to resolve steamapps/common/<installdir>",
+      "owner": "setup_exe",
+      "risk": "low",
+      "oracle": "harness",
+      "milestone": 2
+    },
+    {
+      "id": "sm2_read",
+      "name": "Read SM2 files",
+      "game": "sm2",
+      "what": "SM2's own weapon files are read from the player's install, never changed, never uploaded.",
+      "mechanism": "open each .pak read-only and read entries by name; never write, never launch or hook SM2",
+      "owner": "setup_exe",
+      "risk": "low",
+      "oracle": "harness",
+      "milestone": 2
+    },
+    {
+      "id": "asset_convert",
+      "name": "Convert SM2 content for DS3",
+      "game": "sm2",
+      "what": "SM2 sounds, textures, models and numbers become something Dark Souls III can use, in the mashup's private folder.",
+      "mechanism": null,
+      "owner": "setup_exe",
+      "risk": "high",
+      "oracle": "pc_log",
+      "milestone": 2
+    },
+    {
+      "id": "weapon_grant",
+      "name": "Put the weapons in the player's inventory",
+      "game": "ds3",
+      "what": "The chainsword and bolt pistol are in the inventory the first time the private save loads.",
+      "mechanism": null,
+      "owner": "hook_dll",
+      "risk": "high",
+      "oracle": "pc_visual",
+      "milestone": 3
+    },
+    {
+      "id": "weapon_look",
+      "name": "Weapons look like SM2's",
+      "game": "ds3",
+      "what": "The chainsword and bolt pistol show SM2's models and textures in Dark Souls III.",
+      "mechanism": null,
+      "owner": "hook_dll",
+      "risk": "high",
+      "oracle": "pc_visual",
+      "milestone": 3
+    },
+    {
+      "id": "weapon_sound",
+      "name": "Weapons sound like SM2's",
+      "game": "ds3",
+      "what": "Swings, hits and shots play SM2's own sounds.",
+      "mechanism": null,
+      "owner": "hook_dll",
+      "risk": "high",
+      "oracle": "pc_visual",
+      "milestone": 3
+    }
+  ]
+}

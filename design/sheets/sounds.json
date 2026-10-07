@@ -1,0 +1,20 @@
+{
+  "sheet": "sounds",
+  "doc": "Which Space Marine 2 sound plays on which Dark Souls III event. Triggers are decided once the hook points in DS3 are known.",
+  "columns": {
+    "id": {"type": "id"},
+    "weapon": {"type": "ref", "sheet": "weapons"},
+    "event": {"type": "enum", "values": ["swing", "hit", "idle", "fire", "equip"]},
+    "sm2_source": {"type": "ref", "sheet": "sm2_sources"},
+    "ds3_trigger": {"type": "string", "doc": "the DS3 event or state that starts the sound"},
+    "volume": {"type": "float"},
+    "milestone": {"type": "int"}
+  },
+  "rows": [
+    {"id": "chainsword_swing", "weapon": "chainsword", "event": "swing", "sm2_source": "chainsword_sounds", "ds3_trigger": null, "volume": 1.0, "milestone": 3},
+    {"id": "chainsword_hit", "weapon": "chainsword", "event": "hit", "sm2_source": "chainsword_sounds", "ds3_trigger": null, "volume": 1.0, "milestone": 3},
+    {"id": "chainsword_idle", "weapon": "chainsword", "event": "idle", "sm2_source": "chainsword_sounds", "ds3_trigger": null, "volume": 0.6, "milestone": 3},
+    {"id": "boltpistol_fire", "weapon": "bolt_pistol", "event": "fire", "sm2_source": "boltpistol_sounds", "ds3_trigger": null, "volume": 1.0, "milestone": 3},
+    {"id": "boltpistol_equip", "weapon": "bolt_pistol", "event": "equip", "sm2_source": "boltpistol_sounds", "ds3_trigger": null, "volume": 0.8, "milestone": 3}
+  ]
+}

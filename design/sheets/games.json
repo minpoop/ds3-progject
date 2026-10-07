@@ -1,0 +1,45 @@
+{
+  "sheet": "games",
+  "doc": "The games that are really in the mashup and how each one is in it.",
+  "columns": {
+    "id": {"type": "id"},
+    "name": {"type": "string"},
+    "melty_slug": {"type": "string", "doc": "slug from Melty search_games / game_info"},
+    "role": {"type": "enum", "values": ["primary", "companion", "secondary"], "doc": "recipe role"},
+    "in_melty_catalog": {"type": "bool"},
+    "steam_app_id": {"type": "int"},
+    "found_by": {"type": "enum", "values": ["melty", "mod"], "doc": "who locates the install: Melty, or this mod itself"},
+    "access": {"type": "enum", "values": ["loader_writes", "read_only"]},
+    "anti_cheat": {"type": "string"},
+    "online_note": {"type": "string"},
+    "milestone": {"type": "int"}
+  },
+  "rows": [
+    {
+      "id": "ds3",
+      "name": "Dark Souls III",
+      "melty_slug": "dark-souls-3",
+      "role": "primary",
+      "in_melty_catalog": true,
+      "steam_app_id": 374320,
+      "found_by": "melty",
+      "access": "loader_writes",
+      "anti_cheat": "none client-side; FromSoftware's online service flags modified files/saves",
+      "online_note": "The mashup never goes online: save is a private copy and the process network is blocked.",
+      "milestone": 0
+    },
+    {
+      "id": "sm2",
+      "name": "Warhammer 40,000: Space Marine 2",
+      "melty_slug": "custom-warhammer-40-000-space-marine-2",
+      "role": "secondary",
+      "in_melty_catalog": false,
+      "steam_app_id": 2183900,
+      "found_by": "mod",
+      "access": "read_only",
+      "anti_cheat": "Easy Anti-Cheat",
+      "online_note": "Never launched, patched or hooked. Only its files are read, offline, by a separate setup program.",
+      "milestone": 0
+    }
+  ]
+}
