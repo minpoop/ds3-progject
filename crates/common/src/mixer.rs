@@ -64,7 +64,15 @@ struct Voice {
     clip: Arc<Clip>,
     pos: usize, // in frames
     gain: f32,
+    /// loops until stopped; only voices with a key can be stopped
+    looping: bool,
+    key: Option<u32>,
+    /// frames of fade-out left once stopped (None = not stopping)
+    fade: Option<usize>,
 }
+
+/// A stopped voice fades out over this many frames (20 ms) so stopping never clicks.
+const FADE_FRAMES: usize = (RATE as usize) / 50;
 
 #[derive(Default)]
 pub struct Mixer {
@@ -80,13 +88,32 @@ impl Mixer {
     }
 
     pub fn play(&mut self, clip: Arc<Clip>, gain: f32) {
-        if clip.len_frames() == 0 {
+        self.push(Voice { clip, pos: 0, gain: gain.clamp(0.0, 4.0), looping: false, key: None, fade: None });
+    }
+
+    /// Start a looping voice under `key` (an earlier voice with the same key is replaced). Stop it with [`Mixer::stop`].
+    pub fn play_loop(&mut self, key: u32, clip: Arc<Clip>, gain: f32) {
+        self.voices.retain(|v| v.key != Some(key));
+        self.push(Voice { clip, pos: 0, gain: gain.clamp(0.0, 4.0), looping: true, key: Some(key), fade: None });
+    }
+
+    /// Fade out and remove the voice(s) started with `key`.
+    pub fn stop(&mut self, key: u32) {
+        for v in self.voices.iter_mut().filter(|v| v.key == Some(key)) {
+            v.fade.get_or_insert(FADE_FRAMES);
+        }
+    }
+
+    fn push(&mut self, v: Voice) {
+        if v.clip.len_frames() == 0 {
             return;
         }
         if self.voices.len() >= Self::MAX_VOICES {
-            self.voices.remove(0);
+            // the oldest one that is not a keyed loop goes first; if every voice is a loop, the oldest of those
+            let at = self.voices.iter().position(|x| x.key.is_none()).unwrap_or(0);
+            self.voices.remove(at);
         }
-        self.voices.push(Voice { clip, pos: 0, gain: gain.clamp(0.0, 4.0) });
+        self.voices.push(v);
     }
 
     pub fn active(&self) -> usize {
@@ -99,14 +126,38 @@ impl Mixer {
         let frames = out.len() / 2;
         let mut acc = vec![0i32; frames * 2];
         for v in &mut self.voices {
-            let avail = v.clip.len_frames() - v.pos;
-            let n = avail.min(frames);
-            for i in 0..n * 2 {
-                acc[i] += (v.clip.frames[v.pos * 2 + i] as f32 * v.gain) as i32;
+            let len = v.clip.len_frames();
+            let mut i = 0usize; // frames written into acc
+            while i < frames {
+                if v.pos >= len {
+                    if v.looping {
+                        v.pos = 0;
+                    } else {
+                        break;
+                    }
+                }
+                let n = (len - v.pos).min(frames - i);
+                for k in 0..n {
+                    let mut g = v.gain;
+                    if let Some(left) = v.fade {
+                        // linear fade over the frames that remain; a voice with nothing left is silent
+                        g *= left.saturating_sub(k) as f32 / FADE_FRAMES as f32;
+                    }
+                    for c in 0..2 {
+                        acc[(i + k) * 2 + c] += (v.clip.frames[(v.pos + k) * 2 + c] as f32 * g) as i32;
+                    }
+                }
+                v.pos += n;
+                i += n;
+                if let Some(left) = v.fade {
+                    v.fade = Some(left.saturating_sub(n));
+                }
+                if v.fade == Some(0) {
+                    break;
+                }
             }
-            v.pos += n;
         }
-        self.voices.retain(|v| v.pos < v.clip.len_frames());
+        self.voices.retain(|v| v.fade != Some(0) && (v.looping || v.pos < v.clip.len_frames()));
         for (o, a) in out.iter_mut().zip(acc) {
             *o = a.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
         }
@@ -188,6 +239,47 @@ mod tests {
         assert_eq!(m.active(), Mixer::MAX_VOICES);
         m.play(Arc::new(Clip { frames: Vec::new() }), 1.0);
         assert_eq!(m.active(), Mixer::MAX_VOICES, "an empty clip is ignored");
+    }
+
+    #[test]
+    fn a_loop_wraps_around_until_it_is_stopped_and_stopping_fades_out() {
+        let beat = Arc::new(Clip { frames: vec![1000; 6] }); // 3 frames
+        let mut m = Mixer::new();
+        m.play_loop(7, beat.clone(), 1.0);
+        let mut out = [0i16; 16]; // 8 frames: wraps twice
+        m.mix(&mut out);
+        assert!(out.iter().all(|&s| s == 1000), "{out:?}");
+        assert_eq!(m.active(), 1);
+        // the same key replaces the voice instead of stacking
+        m.play_loop(7, beat.clone(), 1.0);
+        assert_eq!(m.active(), 1);
+        m.stop(7);
+        let mut fade = vec![0i16; 2 * (RATE as usize / 25)]; // 40 ms, longer than the 20 ms fade
+        m.mix(&mut fade);
+        assert!(fade[0] > 900, "starts at full level: {}", fade[0]);
+        let mid = fade[2 * (RATE as usize / 100)]; // 10 ms in
+        assert!(mid > 300 && mid < 700, "about half way: {mid}");
+        assert_eq!(*fade.last().unwrap(), 0, "silent after the fade");
+        assert_eq!(m.active(), 0, "a stopped loop is gone");
+        // stopping something that is not playing is harmless
+        m.stop(7);
+        m.stop(99);
+    }
+
+    #[test]
+    fn loops_survive_a_flood_of_one_shots() {
+        let c = Arc::new(Clip { frames: vec![1; 2_000] });
+        let mut m = Mixer::new();
+        m.play_loop(1, c.clone(), 1.0);
+        for _ in 0..200 {
+            m.play(c.clone(), 1.0);
+        }
+        assert_eq!(m.active(), Mixer::MAX_VOICES);
+        m.stop(1);
+        let mut out = vec![0i16; 2 * (RATE as usize / 10)];
+        m.mix(&mut out);
+        // the loop was kept (it faded out instead of having been dropped): the first frame still carries its sample
+        assert!(out[0] >= 24, "{}", out[0]);
     }
 
     #[test]

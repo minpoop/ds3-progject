@@ -12,8 +12,10 @@ use windows_sys::Win32::Media::Audio::{waveOutClose, waveOutOpen, waveOutPrepare
 const BUFFERS: usize = 4;
 const BUFFER_FRAMES: usize = (RATE as usize) / 50; // 20 ms
 
-enum Msg {
+pub(super) enum Msg {
     Play(Arc<Clip>, f32),
+    Loop(u32, Arc<Clip>, f32),
+    Stop(u32),
 }
 
 /// Handle to the mixer thread. Cheap to clone and call from any thread.
@@ -25,6 +27,22 @@ pub struct Audio {
 impl Audio {
     pub fn play(&self, clip: Arc<Clip>, gain: f32) {
         let _ = self.tx.send(Msg::Play(clip, gain));
+    }
+
+    /// Play `clip` over and over until [`Audio::stop`] is called with the same key.
+    pub fn play_loop(&self, key: u32, clip: Arc<Clip>, gain: f32) {
+        let _ = self.tx.send(Msg::Loop(key, clip, gain));
+    }
+
+    pub fn stop(&self, key: u32) {
+        let _ = self.tx.send(Msg::Stop(key));
+    }
+
+    /// A handle that is not connected to any sound device: the messages can be read from the returned receiver.
+    #[cfg(test)]
+    pub(super) fn test_pair() -> (Audio, Receiver<Msg>) {
+        let (tx, rx) = channel();
+        (Audio { tx }, rx)
     }
 }
 
@@ -96,6 +114,8 @@ fn run(rx: Receiver<Msg>, ready: Sender<Result<(), String>>, log: Arc<Logger>) {
             loop {
                 match rx.try_recv() {
                     Ok(Msg::Play(clip, gain)) => mixer.play(clip, gain),
+                    Ok(Msg::Loop(key, clip, gain)) => mixer.play_loop(key, clip, gain),
+                    Ok(Msg::Stop(key)) => mixer.stop(key),
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => break 'run,
                 }

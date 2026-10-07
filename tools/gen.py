@@ -154,7 +154,7 @@ def outputs(ms):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true")
-    ap.add_argument("--milestone", type=int, default=1, help="generate rows up to this milestone (default 1)")
+    ap.add_argument("--milestone", type=int, default=3, help="generate rows up to this milestone (default 3: everything with a file or hook row so far)")
     args = ap.parse_args()
     stale = []
     for path, text in outputs(args.milestone).items():

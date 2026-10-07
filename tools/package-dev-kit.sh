@@ -13,7 +13,7 @@ BIN="target/x86_64-pc-windows-gnu/release"
 NAME="AshenMarine-dev-$VERSION"
 OUT="dist/$NAME"
 
-python3 tools/preflight.py --milestone 1 >/dev/null || { echo "preflight is not clean: fix the sheets first"; exit 1; }
+python3 tools/preflight.py --milestone 2 >/dev/null || { echo "preflight is not clean: fix the sheets first"; exit 1; }
 python3 tools/gen.py --check
 cargo build --release --target x86_64-pc-windows-gnu --workspace   # same command as the tests: the tested binaries ARE the shipped ones
 for f in ashenmarine-launcher.exe ashenmarine_hook.dll ashenmarine-setup.exe; do [ -f "$BIN/$f" ] || { echo "missing $BIN/$f"; exit 1; }; done
@@ -23,7 +23,7 @@ mkdir -p "$OUT/ashenmarine" "$OUT/modengine2/modengine2/bin" "$OUT/modengine2/mo
 
 cp "$BIN/ashenmarine-launcher.exe" "$BIN/ashenmarine_hook.dll" "$BIN/ashenmarine-setup.exe" "$OUT/ashenmarine/"
 # Windows line endings for everything a person opens or double-clicks
-for f in packaging/dev-kit/Play-AshenMarine.bat packaging/dev-kit/Probe-SM2.bat packaging/dev-kit/Send-Logs.bat packaging/dev-kit/Send-Samples.bat packaging/dev-kit/README-FIRST.txt; do sed 's/\r$//; s/$/\r/' "$f" > "$OUT/$(basename "$f")"; done
+for f in packaging/dev-kit/Prepare-AshenMarine.bat packaging/dev-kit/Play-AshenMarine.bat packaging/dev-kit/Send-Logs.bat packaging/dev-kit/README-FIRST.txt; do sed 's/\r$//; s/$/\r/' "$f" > "$OUT/$(basename "$f")"; done
 sed 's/\r$//; s/$/\r/' THIRD_PARTY_NOTICES.md > "$OUT/THIRD_PARTY_NOTICES.txt"
 
 # ModEngine2: only what it needs to run (no debug-menu assets, no developer headers)

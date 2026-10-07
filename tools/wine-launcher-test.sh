@@ -105,7 +105,8 @@ cp "$W/ashen/logs/launcher.log" "$W/first-so-far.log" 2>/dev/null
 check "J the second launcher refused (exit code 2)" '[ "$(cat "$W/second.rc")" = "2" ]'
 check "J it said why" 'grep -q "already starting or running" "$W/ashen/logs/launcher.log"'
 wait
-check "J the first launcher finished normally" '[ "$(cat "$W/first.rc")" = "0" ]'
+# the sleeping stand-in game never loads the hook, so the first launcher rightly reports "no protection ran" (exit code 5)
+check "J the first launcher finished and noticed that no protection ran inside that game (exit code 5)" '[ "$(cat "$W/first.rc")" = "5" ]'
 check "J real save untouched" '[ "$(treehash "$W/appdata")" = "$REAL0" ]'
 
 echo; echo "== L: --probe (read-only game probe) in a game it does not know =="
@@ -121,6 +122,31 @@ check "L the hook config said probe=true" 'grep -q "\"probe\": true" "$W/ashen/c
 make_world L2; LAUNCHER_ARGS="" launch "$W" ASHEN_FAKE_HOLD_SECS=0
 check "L2 without --probe no probe file is created" '[ ! -e "$W/ashen/logs/probe-ds3.txt" ]'
 
+echo; echo "== M: --sounds --experiments in a game it does not know (the feature loads its sounds, says why it stays off, changes nothing) =="
+make_world M; REAL0="$(treehash "$W/appdata")"
+mkdir -p "$W/ashen/assets/sounds"
+python3 -I - "$W/ashen/assets/sounds" <<'PY'
+import json, os, struct, sys
+d = sys.argv[1]
+data = b''.join(struct.pack('<h', 1000) for _ in range(4410))
+wav = b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt ' + struct.pack('<IHHIIHH', 16, 1, 1, 44100, 88200, 2, 16) + b'data' + struct.pack('<I', len(data)) + data
+open(os.path.join(d, 'a_1.wav'), 'wb').write(wav)
+open(os.path.join(d, 'a_2.wav'), 'wb').write(wav)
+json.dump({'format': 1, 'sounds': [{'slot': 'chainsword_swing_1', 'event': 'x', 'loop': False, 'files': ['a_1.wav', 'a_2.wav']}]}, open(os.path.join(d, 'index.json'), 'w'))
+PY
+LAUNCHER_ARGS="--sounds --experiments" launch "$W" ASHEN_FAKE_HOLD_SECS=6
+sed 's/^/    /' "$W/ashen/logs/sfx.txt" 2>/dev/null | cut -c1-220 | head -10
+check "M launcher exit code 0" '[ "$(cat "$W/launcher.rc")" = "0" ]'
+check "M the hook config switched sounds and experiments on and names the assets folder" 'grep -q "\"sounds\": true" "$W/ashen/config/ashenmarine.json" && grep -q "\"experiments\": true" "$W/ashen/config/ashenmarine.json" && grep -q "assets" "$W/ashen/config/ashenmarine.json"'
+check "M the sound feature started and loaded the prepared slot" 'grep -q "sound feature v" "$W/ashen/logs/sfx.txt" && grep -q "loaded 1 sound slots" "$W/ashen/logs/sfx.txt"'
+check "M it noticed it cannot read this game version and stayed off" 'grep -q "cannot tell which game build" "$W/ashen/logs/sfx.txt"'
+check "M the sandbox still worked (VERIFIED, real save untouched)" 'grep -q "VERIFIED" "$W/ashen/logs/launcher.log" && [ "$(treehash "$W/appdata")" = "$REAL0" ]'
+make_world M2; LAUNCHER_ARGS="--sounds" launch "$W" ASHEN_FAKE_HOLD_SECS=4
+check "M2 without prepared sounds it says what to do" 'grep -q "Run Prepare-AshenMarine.bat" "$W/ashen/logs/sfx.txt"'
+check "M2 the game was not disturbed (exit code 0)" '[ "$(cat "$W/launcher.rc")" = "0" ]'
+make_world M3; LAUNCHER_ARGS="" launch "$W" ASHEN_FAKE_HOLD_SECS=0
+check "M3 without --sounds no sound file is created" '[ ! -e "$W/ashen/logs/sfx.txt" ]'
+
 echo; echo "== K: the packaged kit layout with the REAL (trimmed) ModEngine2 =="
 KITSRC="$(ls -d "$ROOT"/dist/AshenMarine-dev-* 2>/dev/null | grep -v '\.zip$' | head -1)"
 if [ -z "$KITSRC" ]; then
@@ -131,7 +157,7 @@ else
   # The kit is tested exactly as shipped, and must contain the very binaries the other scenarios just used.
   check "K the kit ships the binaries that were tested" '[ "$(sha256sum < "$W/kit/ashenmarine/ashenmarine_hook.dll")" = "$(sha256sum < "$BIN/ashenmarine_hook.dll")" ] && [ "$(sha256sum < "$W/kit/ashenmarine/ashenmarine-launcher.exe")" = "$(sha256sum < "$BIN/ashenmarine-launcher.exe")" ]'
   ( cd "$W" && ASHEN_FAKE_BEHAVIOR=sleep ASHEN_FAKE_REAL="$(winpath "$W/appdata/DarkSoulsIII")" WINEDEBUG=-all timeout 150 xvfb-run -a "$WINE" "$W/kit/ashenmarine/ashenmarine-launcher.exe" \
-      --game "$(winpath "$W/game")" --appdata "$(winpath "$W/appdata")" --silent --probe > "$W/launcher.out" 2>&1; echo $? > "$W/launcher.rc" )
+      --game "$(winpath "$W/game")" --appdata "$(winpath "$W/appdata")" --silent --probe --sounds > "$W/launcher.out" 2>&1; echo $? > "$W/launcher.rc" )
   sed 's/^/    /' "$W/kit/ashenmarine/logs/launcher.log" | tail -14; echo "    -- hook.log:"; sed 's/^/    /' "$W/kit/ashenmarine/logs/hook.log" | cut -c1-220 | head -12
   check "K launcher exit code 0" '[ "$(cat "$W/launcher.rc")" = "0" ]'
   check "K the kit's ModEngine2 was found by default (no --me2 given)" 'grep -q "ModEngine2:" "$W/kit/ashenmarine/logs/launcher.log"'

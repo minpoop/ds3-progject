@@ -14,6 +14,15 @@ pub const HOOK_DLL_FILE: &str = "hook_dll_file";
 pub const MOD_DIR: &str = "mod_dir";
 pub const HOOK_LOG: &str = "hook_log";
 pub const LAUNCHER_LOG: &str = "launcher_log";
+pub const SM2_INSTALL: &str = "sm2_install";
+pub const CONVERTED_ASSETS: &str = "converted_assets";
+pub const PROBE_DS3_FILES: &str = "probe_ds3_files";
+pub const SM2_PROBE_OUT: &str = "sm2_probe_out";
+pub const SM2_FOLDER_HINT: &str = "sm2_folder_hint";
+pub const ASSETS_SOUNDS_DIR: &str = "assets_sounds_dir";
+pub const ASSETS_READY: &str = "assets_ready";
+pub const PREPARE_REPORT: &str = "prepare_report";
+pub const SOUNDS_INDEX: &str = "sounds_index";
 
 pub static FILES: &[FileRule] = &[
     FileRule {
@@ -123,5 +132,86 @@ pub static FILES: &[FileRule] = &[
         system: "hook_logging",
         guarded: false,
         milestone: 1,
+    },
+    FileRule {
+        id: "sm2_install",
+        path: "{sm2}",
+        purpose: "The player's Space Marine 2 install: read-only, never written, never launched",
+        access: Access::Read,
+        system: "sm2_read",
+        guarded: true,
+        milestone: 2,
+    },
+    FileRule {
+        id: "converted_assets",
+        path: "{data}/assets",
+        purpose: "SM2 content converted on the player's PC; private, never uploaded or committed",
+        access: Access::Write,
+        system: "asset_convert",
+        guarded: false,
+        milestone: 2,
+    },
+    FileRule {
+        id: "probe_ds3_files",
+        path: "{data}/logs/probe-ds3.txt",
+        purpose: "What the read-only game probe found (also probe-ds3-weapons.csv, -goods.csv, -inventory.csv, -samples.csv, -text-*.csv next to it)",
+        access: Access::Write,
+        system: "ds3_probe",
+        guarded: false,
+        milestone: 2,
+    },
+    FileRule {
+        id: "sm2_probe_out",
+        path: "{data}/probe-sm2",
+        purpose: "The setup tool's probe report and texture preview pictures (private; made from the player's own install)",
+        access: Access::Write,
+        system: "sm2_probe",
+        guarded: false,
+        milestone: 2,
+    },
+    FileRule {
+        id: "sm2_folder_hint",
+        path: "{data}/sm2-folder.txt",
+        purpose: "Optional: the player's Space Marine 2 folder on its first line, when it is not in a normal Steam library",
+        access: Access::Read,
+        system: "sm2_discovery",
+        guarded: false,
+        milestone: 2,
+    },
+    FileRule {
+        id: "assets_sounds_dir",
+        path: "{data}/assets/sounds",
+        purpose: "WAV files made on the player's PC from their own Space Marine 2 sound files (private; never uploaded or committed)",
+        access: Access::Write,
+        system: "asset_convert",
+        guarded: false,
+        milestone: 2,
+    },
+    FileRule {
+        id: "assets_ready",
+        path: "{data}/assets/ready.json",
+        purpose: "Written last by the setup tool: says the conversion finished and what it made",
+        access: Access::Write,
+        system: "asset_convert",
+        guarded: false,
+        milestone: 2,
+    },
+    FileRule {
+        id: "prepare_report",
+        path: "{data}/prepare-sm2/prepare-report.txt",
+        purpose: "What the setup tool converted, with the sound-container trees it followed (private)",
+        access: Access::Write,
+        system: "asset_convert",
+        guarded: false,
+        milestone: 2,
+    },
+    FileRule {
+        id: "sounds_index",
+        path: "{data}/assets/sounds/index.json",
+        purpose: "Lists the sound slots and their WAV files; read by the hook DLL when the game starts",
+        access: Access::Read,
+        system: "weapon_sound",
+        guarded: false,
+        milestone: 3,
     },
 ];

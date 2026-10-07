@@ -13,6 +13,13 @@ pub struct Features {
     /// `probe-ds3.txt` and `probe-ds3-weapons.csv` next to the hook log. Used by private test kits only.
     #[serde(default)]
     pub probe: bool,
+    /// Space Marine 2 sounds for swings and shots (needs the WAV files the setup tool prepared in `assets_dir`).
+    #[serde(default)]
+    pub sounds: bool,
+    /// Private test kits only: hotkey experiments that CHANGE the running game (F8: put the test weapons in the
+    /// inventory and rename them in memory). Everything else is read-only or plays sound.
+    #[serde(default)]
+    pub experiments: bool,
 }
 
 /// What the hook DLL needs to know. Written by the launcher before every launch (sheet: files.hook_config).
@@ -32,6 +39,9 @@ pub struct HookConfig {
     pub block_network: bool,
     #[serde(default)]
     pub features: Features,
+    /// Folder holding what the setup tool prepared (`sounds/index.json` and the WAV files). Empty = none.
+    #[serde(default)]
+    pub assets_dir: String,
 }
 
 impl HookConfig {
@@ -98,7 +108,8 @@ mod tests {
             window_suffix: " - x".into(),
             silent: true,
             block_network: true,
-            features: Features { probe: true },
+            features: Features { probe: true, sounds: true, experiments: true },
+            assets_dir: r"D:\b\assets".into(),
         };
         let p = dir.path().join("sub/ashenmarine.json");
         c.save(&p).unwrap();
@@ -111,6 +122,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("c.json");
         std::fs::write(&p, old).unwrap();
-        assert_eq!(HookConfig::load(&p).unwrap().features, Features::default());
+        let c = HookConfig::load(&p).unwrap();
+        assert_eq!(c.features, Features::default());
+        assert_eq!(c.assets_dir, "");
     }
 }

@@ -12,13 +12,11 @@
 //! Lesson from the first real run: a step must never switch the whole probe off. Every step is tried on its own, a
 //! failed step is retried later and only given up after several failures, and pointers are checked with
 //! `ReadProcessMemory` before they are followed.
-use super::{audio, memscan, version};
+use super::{audio, gametask, memscan, version};
 use ashen_common::{config::HookConfig, fmg, logging::Logger, mixer::Clip, VERSION};
 use darksouls3::param::{EQUIP_PARAM_WEAPON_ST, ParamDef};
-use darksouls3::sprj::{CSRegulationManager, GameDataMan, ParamResCap, PlayerIns, SprjTaskGroupIndex, SprjTaskImp};
-use darksouls3::util::system::wait_for_system_init;
-use fromsoftware_shared::{FromStatic, Program, SharedTaskImpExt};
-use pelite::pe64::Pe;
+use darksouls3::sprj::{CSRegulationManager, GameDataMan, ParamResCap, PlayerIns};
+use fromsoftware_shared::FromStatic;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -159,31 +157,11 @@ fn audio_check(log: &Arc<Logger>, when: &str) {
 // ------------------------------------------------------------------------------------------ in-game task
 
 fn register(cfg: &HookConfig, log: &Arc<Logger>) -> Result<fromsoftware_shared::RecurringTaskHandle<usize>, String> {
-    // The crate's own wait spins a CPU core; poll the same flag ourselves with sleeps, then let the crate confirm it.
-    let flag_va = Program::current().rva_to_va(darksouls3::rva::get().global_hinstance).map_err(|e| format!("bad address table: {e}"))? as usize;
-    let waited = Instant::now();
-    loop {
-        if memscan::read(flag_va, 8).is_some_and(|b| b.iter().any(|&x| x != 0)) {
-            break;
-        }
-        if waited.elapsed() > Duration::from_secs(180) {
-            return Err("the game did not finish starting within 3 minutes".into());
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    wait_for_system_init(&Program::current(), Duration::from_secs(30)).map_err(|e| format!("the game did not finish starting: {e}"))?;
-    log.log(&format!("game systems are initialised ({:.1}s after the probe started)", waited.elapsed().as_secs_f32()));
-    let task = SprjTaskImp::wait_for_instance(Duration::from_secs(60)).map_err(|e| format!("no task manager: {e}"))?;
-    log.log("task manager found; registering the per-frame probe");
     let mut state = ProbeState::new(cfg, log.clone());
-    let handle = task.run_recurring(
-        move |_: &usize| {
-            FRAMES.fetch_add(1, Ordering::Relaxed);
-            state.frame();
-        },
-        SprjTaskGroupIndex::FrameBegin,
-    );
-    Ok(handle)
+    gametask::register(log, "the probe", move || {
+        FRAMES.fetch_add(1, Ordering::Relaxed);
+        state.frame();
+    })
 }
 
 /// One part of the probe. A part that is not ready is tried again later; one that crashes is tried again a few
@@ -249,6 +227,7 @@ struct ProbeState {
     last_inventory_check: Instant,
     samples: String,
     samples_rows: usize,
+    last_flush: Instant,
     finished: bool,
 }
 
@@ -281,6 +260,7 @@ impl ProbeState {
             last_inventory_check: Instant::now(),
             samples: String::from("t_ms,chr_hp,chr_fp,chr_stamina,save_hp,save_mp,save_stamina\n"),
             samples_rows: 0,
+            last_flush: Instant::now(),
             finished: false,
         }
     }
@@ -377,9 +357,10 @@ impl ProbeState {
             self.last_values = Some(cur);
             let _ = writeln!(self.samples, "{},{},{},{},{},{},{}", self.t0.elapsed().as_millis(), cur.0, cur.1, cur.2, cur.3, cur.4, cur.5);
             self.samples_rows += 1;
-            if self.samples_rows.is_multiple_of(100) {
-                self.flush_samples();
-            }
+        }
+        // written every few seconds (the first real run lost its samples because the game was closed before the 100th row)
+        if self.samples_rows > 0 && self.last_flush.elapsed() >= Duration::from_secs(3) {
+            self.flush_samples();
         }
         if self.last_slots != Some(pgd.equipment.equipment_indexes) {
             let first = self.last_slots.is_none();
@@ -408,6 +389,7 @@ impl ProbeState {
     }
 
     fn flush_samples(&mut self) {
+        self.last_flush = Instant::now();
         let _ = std::fs::write(self.dir.join("probe-ds3-samples.csv"), &self.samples);
     }
 }
@@ -433,8 +415,10 @@ unsafe fn table_info(reg: &CSRegulationManager, idx: usize) -> Result<(String, u
         return Err(format!("table {idx}: data not loaded yet"));
     }
     let table_ref = &*(table as *const darksouls3::sprj::ParamTable);
+    // the table's own name sits behind all of its rows, so for big tables the offset is large (the first real run
+    // wrongly refused anything over 4 KB, which hid the weapon table); it must still lie inside the table
     let name_at = table + table_ref.name_offset;
-    if table_ref.name_offset > 0x1000 || !readable(name_at, 8) {
+    if table_ref.name_offset < 0x40 || table_ref.name_offset > 256 << 20 || !readable(name_at, 8) {
         return Err(format!("table {idx}: name not readable yet"));
     }
     let mut name = Vec::new();
@@ -476,7 +460,35 @@ unsafe fn list_tables(log: &Logger, tries: u32) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Dump the weapon table once it is loaded. Ok(false) = not loaded yet.
+/// The name the game keeps for a parameter row (its third header word is the offset of the name from the start of the
+/// table). UTF-16 or single-byte text; empty when there is none.
+unsafe fn row_name(table_addr: usize, info: &darksouls3::sprj::ParamRowInfo) -> String {
+    let raw = (info as *const darksouls3::sprj::ParamRowInfo as *const u64).add(2).read_unaligned();
+    if raw == 0 || raw > 256 << 20 {
+        return String::new();
+    }
+    let at = table_addr + raw as usize;
+    let mut b = [0u8; 96];
+    let n = memscan::read_into(at, &mut b);
+    if n < 2 {
+        return String::new();
+    }
+    let b = &b[..n];
+    if b[1] == 0 && b[0] != 0 {
+        // UTF-16
+        let units: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&u| u != 0).collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        let end = b.iter().position(|&x| x == 0).unwrap_or(b.len());
+        String::from_utf8_lossy(&b[..end]).to_string()
+    }
+}
+
+fn csv_text(s: &str) -> String {
+    format!("\"{}\"", s.replace('"', "\"\""))
+}
+
+/// Dump the weapon table (and the goods table's names) once it is loaded. Ok(false) = not loaded yet.
 unsafe fn dump_weapon_params(log: &Logger, dir: &Path) -> Result<bool, String> {
     let reg = match CSRegulationManager::instance() {
         Ok(r) => r,
@@ -495,13 +507,22 @@ unsafe fn dump_weapon_params(log: &Logger, dir: &Path) -> Result<bool, String> {
         }
     }
     let weapons = reg.get_param::<EQUIP_PARAM_WEAPON_ST>();
-    let mut csv = String::from("id,weapon_category,wepmotion_category,equip_model_id,icon_id,atk_base_physics,weight,durability,behavior_variation_id,arrow_bolt_equip_id,max_arrow_quantity,wep_se_id_offset\n");
+    let table_addr = &weapons.table as *const darksouls3::sprj::ParamTable as usize;
+    let mut csv = String::from("id,name,weapon_category,wepmotion_category,equip_model_id,icon_id,atk_base_physics,weight,durability,behavior_variation_id,arrow_bolt_equip_id,max_arrow_quantity,wep_se_id_offset\n");
     let mut n = 0usize;
-    for (id, row) in weapons.iter() {
+    let mut named = 0usize;
+    for info in weapons.table.row_info() {
+        let Some(row) = weapons.get(info.id) else { continue };
         n += 1;
+        let name = row_name(table_addr, info);
+        if !name.is_empty() {
+            named += 1;
+        }
         let _ = writeln!(
             csv,
-            "{id},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            info.id,
+            csv_text(&name),
             row.weapon_category(),
             row.wepmotion_category(),
             row.equip_model_id(),
@@ -516,7 +537,22 @@ unsafe fn dump_weapon_params(log: &Logger, dir: &Path) -> Result<bool, String> {
         );
     }
     let _ = std::fs::write(dir.join("probe-ds3-weapons.csv"), csv);
-    log.log(&format!("weapon parameter table: {n} rows written to probe-ds3-weapons.csv"));
+    log.log(&format!("weapon parameter table: {n} rows ({named} with a row name) written to probe-ds3-weapons.csv"));
+
+    // the goods table (Estus Flask and friends): only the names, to compare them with the item-name text later
+    let gidx = darksouls3::param::EQUIP_PARAM_GOODS_ST::INDEX;
+    if let Ok((gname, grows)) = table_info(reg, gidx) {
+        if gname == darksouls3::param::EQUIP_PARAM_GOODS_ST::NAME && grows > 0 {
+            let goods = reg.get_param::<darksouls3::param::EQUIP_PARAM_GOODS_ST>();
+            let gaddr = &goods.table as *const darksouls3::sprj::ParamTable as usize;
+            let mut g = String::from("id,name\n");
+            for info in goods.table.row_info() {
+                let _ = writeln!(g, "{},{}", info.id, csv_text(&row_name(gaddr, info)));
+            }
+            let _ = std::fs::write(dir.join("probe-ds3-goods.csv"), g);
+            log.log(&format!("goods parameter table: {grows} rows written to probe-ds3-goods.csv"));
+        }
+    }
     Ok(true)
 }
 
@@ -666,59 +702,9 @@ fn scan_text_tables(log: &Logger, dir: &Path, round: usize, final_round: bool) {
             }
         }
     }
-    if found.is_empty() {
-        diagnose_anchor(log);
-    }
-}
-
-/// No table parsed although one may exist: the layout this code assumes could be off, or the tables are not loaded
-/// yet. For three item names, count how often each appears in memory and show the raw neighbourhood of the first
-/// matches, plus the nearest places before them that look like a table start, so the layout can be worked out
-/// offline from the log.
-fn diagnose_anchor(log: &Logger) {
-    let starts = memchr::memmem::Finder::new(&[0u8, 0, 2, 0]);
-    let mut buf = vec![0u8; 8 << 20];
-    for anchor in ["Straight Sword", "Estus Flask", "Longsword"] {
-        let needle: Vec<u8> = anchor.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
-        let finder = memchr::memmem::Finder::new(&needle);
-        let (mut total, mut shown) = (0usize, 0usize);
-        let mut samples: Vec<String> = Vec::new();
-        for r in memscan::regions(1 << 30) {
-            let mut off = 0usize;
-            while off < r.size {
-                let want = (8usize << 20).min(r.size - off);
-                let got = memscan::read_into(r.base + off, &mut buf[..want]);
-                for p in finder.find_iter(&buf[..got]) {
-                    total += 1;
-                    if shown >= 2 {
-                        continue;
-                    }
-                    shown += 1;
-                    let addr = r.base + off + p;
-                    let lo = p.saturating_sub(48);
-                    let hi = (p + needle.len() + 48).min(got);
-                    samples.push(format!("  \"{anchor}\" at 0x{addr:X} (region type {}, protect 0x{:X}): {:02x?}", r.kind, r.protect, &buf[lo..hi]));
-                    // the nearest candidate table starts before it (a table is a few KB to a few hundred KB long)
-                    let back = (1usize << 20).min(addr.saturating_sub(r.base));
-                    if let Some(chunk) = memscan::read(addr - back, back) {
-                        let mut cands: Vec<usize> = starts.find_iter(&chunk).collect();
-                        cands.reverse();
-                        for c in cands.into_iter().take(3) {
-                            let end = (c + 0x30).min(chunk.len());
-                            samples.push(format!("    candidate start {} bytes before it: {:02x?}", back - c, &chunk[c..end]));
-                        }
-                    }
-                }
-                if off + want >= r.size {
-                    break;
-                }
-                off += want - 64;
-            }
-        }
-        log.log(&format!("  no text table parsed; \"{anchor}\" occurs {total} time(s) in memory"));
-        for line in samples {
-            log.log(&line);
-        }
+    // the item names are not in an .fmg-shaped table (first real runs): look at how they are stored instead
+    if found.is_empty() && matches!(round, 3 | 6) {
+        super::textdiag::run(log, round);
     }
 }
 
@@ -759,20 +745,6 @@ mod tests {
         assert!(dumped.len() <= 4, "{dumped:?}");
         assert!(!dumped.iter().any(|d| d.contains("Other") || d.contains("Hello")), "tables without item names are not dumped");
         drop((block_a, block_b));
-    }
-
-    #[test]
-    fn explains_what_it_sees_when_no_table_parses() {
-        let dir = temp_dir("diag");
-        let mut block: Vec<u8> = vec![0, 0, 2, 0, 9, 9, 9, 9]; // looks like a table start but is not one
-        block.extend(vec![0u8; 100]);
-        block.extend("Straight Sword".encode_utf16().flat_map(|u| u.to_le_bytes()));
-        block.extend([0u8, 0]);
-        let log = Logger::open(&dir.join("log.txt"), "t");
-        diagnose_anchor(&log);
-        let text = std::fs::read_to_string(dir.join("log.txt")).unwrap();
-        assert!(text.contains("no text table parsed") && text.contains("Straight Sword"), "{text}");
-        drop(block);
     }
 
     #[test]

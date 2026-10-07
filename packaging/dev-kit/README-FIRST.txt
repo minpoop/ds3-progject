@@ -1,63 +1,77 @@
-ASHEN MARINE - private test kit 3 (look around, change nothing)
-================================================================
+ASHEN MARINE - private test kit 4 ("swing it first")
+====================================================
 
 What this is
-  Read-only tests that tell me what your own games contain, so the Space Marine weapons can be built on real facts.
-  Nothing here changes Dark Souls III, Space Marine 2 or your saves, and nothing is uploaded: you send me the files
-  yourself at the end.
+  The first version where you can HEAR the mashup: your Dark Souls III character swinging a sword with Space Marine 2's
+  real chainsword sounds, and firing a "bolt pistol" with Space Marine 2's real bolt pistol shot. It is still a private
+  test kit, so it also writes logs that tell me how to make it better.
 
-  Test 1 - Probe-SM2.bat         reads your Space Marine 2 files (under a minute) and writes a report.
-  Test 2 - Play-AshenMarine.bat  starts Dark Souls III as an OFFLINE COPY of your save (your real save is backed up
-                                 first and checked afterwards) with a read-only probe running inside the game.
-  Then   - Send-Logs.bat         collects the text logs into one zip on your Desktop.
-  Optional - Send-Samples.bat    a handful of short sound clips from your own Space Marine 2 (about half a megabyte),
-                                 so I can test the sound converter. Only attach that zip if you are happy to.
+  Everything runs on your PC. Nothing is uploaded: you send me the files yourself at the end. Dark Souls III runs as an
+  OFFLINE COPY of your save (your real save is backed up first and checked afterwards). Space Marine 2 is only READ,
+  never started and never changed.
 
-How to do it (about 15 minutes)
-  1. Unzip this whole folder anywhere (e.g. Desktop). Steam must be running; Dark Souls III must NOT be running.
-  2. Double-click  Probe-SM2.bat  and wait for "Done".
-  3. Double-click  Play-AshenMarine.bat .  Dark Souls III starts; the title bar reads
-     "DARK SOULS III - Ashen Marine (offline copy)".
-       - About 20 seconds after it starts (the title screen) you should hear TWO short beeps (low, then high).
-       - Load your normal character. About 6 seconds after you appear in the world you should hear TWO more beeps.
-         (Please tell me whether you heard each pair, and whether the game's own sound stayed normal.)
-       - Then play for about 3 minutes, in this order, with a pause of 2-3 seconds between actions:
-            a. stand still for 10 seconds
-            b. five single light attacks
-            c. three heavy attacks
-            d. three dodge rolls
-            e. sprint for 3 seconds
-            f. one sip of Estus (or any consumable)
-            g. if you have a bow or crossbow: shoot three arrows or bolts
-            h. open the inventory menu once
-         then quit to the desktop from the in-game menu as usual.
-       (If it asks about connecting online, that is expected: it is blocked on purpose.)
+  Step 1 - Prepare-AshenMarine.bat   reads your Space Marine 2 files and makes the sound files (a minute or two).
+  Step 2 - Play-AshenMarine.bat      starts Dark Souls III as the offline copy, with the sounds switched on.
+  Step 3 - Send-Logs.bat             collects the text logs into one zip on your Desktop.
+
+How to do it (about 20 minutes)
+  1. Unzip this whole folder anywhere (e.g. Desktop). Steam must be running and signed in; Dark Souls III must NOT be
+     running.
+  2. Double-click  Prepare-AshenMarine.bat  and wait for "Done".
+     Then open the folder  ashenmarine\assets\sounds  and double-click a few of the .wav files to listen, for example
+        chainsword_swing_1_1.wav   chainsword_idle_1.wav   boltpistol_fire_1.wav
+     Do they sound like a chainsword swing, a chainsword engine idling and a bolt pistol shot? (Your answer helps me
+     more than anything else in this test.)
+  3. Double-click  Play-AshenMarine.bat . Dark Souls III starts; the title bar reads
+     "DARK SOULS III - Ashen Marine (offline copy)".  (A question about connecting online is expected: it is blocked
+     on purpose.)  Load your normal character, then:
+       a. Swing your weapon four times in a row with the normal attack button (controller: RB, mouse: left button).
+          Each swing should play a chainsword sound, and the sound should change from swing to swing.
+          Then one strong attack (controller: RT, mouse: right button) - a different sound.
+          Then roll twice: rolls should be SILENT.
+       b. Press  F7  - a chainsword engine starts idling. Press F7 again to stop it.
+       c. Stand still (not in a menu) and press  F8  ONCE. This puts three test items in your inventory (in the
+          offline copy only): a sword, a crossbow and 60 bolts, and renames them in memory to "Chainsword",
+          "Bolt Pistol" and "Bolt Rounds". Open the inventory (Weapons / Ammunition) and look: what are they called?
+       d. Equip the new sword in your right hand and swing it a few times.
+       e. Equip the new crossbow in a hand slot and the bolts in a bolt slot, close the menu and shoot 5 times. Each
+          shot should play the bolt pistol sound.
+       f. Quit to the desktop from the in-game menu as usual.
   4. Double-click  Send-Logs.bat . It puts  AshenMarine-logs.zip  on your Desktop. Attach it to the chat and tell me:
-       - did Dark Souls III start and feel normal?
-       - did you hear the two pairs of beeps?
-  5. Optional: double-click  Send-Samples.bat  and attach  AshenMarine-sound-samples.zip  as well.
+       - did the .wav files sound right (step 2)?
+       - which of the actions in step 3 made a sound, and did the sound fit?  Too loud? Too quiet? Late?
+       - what were the three items called after F8?
+       - did Dark Souls III stay stable?
 
 What it records (you can read every file yourself)
-  ashenmarine\probe-sm2\probe-report.txt   what is inside your Space Marine 2 weapon files (names, sizes, text of the
-                                           weapon definition files)
-  ashenmarine\logs\probe-ds3.txt           game build, what the game reports about weapons, inventory, stamina, the beeps
-  ashenmarine\logs\probe-ds3-*.csv         the weapon table, your inventory item ids, stamina samples, item-name tables
-  ashenmarine\logs\hook.log, launcher.log  what the safety helper did
+  ashenmarine\prepare-sm2\prepare-report.txt   what was read from Space Marine 2 and how it became sound files
+  ashenmarine\logs\sfx.txt, sfx-trace.csv      every sound that played, and a trace of stamina / buttons / ammunition
+                                               (this is how I tune what counts as a swing)
+  ashenmarine\logs\probe-ds3.txt               game build, how the game stores item names, the beeps
+  ashenmarine\logs\probe-ds3-weapons.csv       the game's weapon table (ids and row names), probe-ds3-goods.csv likewise
+  ashenmarine\logs\probe-ds3-inventory.csv     your inventory item ids (not your name)
+  ashenmarine\logs\hook.log, launcher.log      what the safety helper did
   Your Windows user name and Steam id are masked in the copies Send-Logs makes. Your character's NAME is not logged.
+  The sound files themselves stay on your PC (they are made from your copy of Space Marine 2).
 
 If something goes wrong
   - A message box appears: read it, tell me what it says, send the logs.
-  - Dark Souls III crashes during the test: that is useful information - run Send-Logs.bat anyway and tell me roughly
-    when it happened. Your real save was not changed (it is backed up and checked each time).
+  - "Dark Souls III ran, but Ashen Marine's protection never started": Steam was probably not running. Start Steam,
+    wait until it is ready, close Dark Souls III, press Play again.
+  - Dark Souls III crashes: that is useful information - run Send-Logs.bat anyway and tell me roughly what you were
+    doing. Your real save was not changed (it is backed up and checked each time).
+  - No sound at all: check that Prepare-AshenMarine.bat said it prepared the sounds, then look in
+    ashenmarine\logs\sfx.txt (it says why sounds are off). Tell me what it says.
   - Windows Defender / antivirus complains: do NOT turn protection off. Tell me the exact message; the files are
     unsigned test builds. SHA-256 hashes are in the chat so you can check they are the ones I sent.
   - To remove everything: close the game and delete this folder. Backups of your real save are in ashenmarine\backups.
 
 Where things are
-  ashenmarine\save       the private copy of your save (what the test plays)
-  ashenmarine\backups    backups of your REAL save (original = first ever, session-* = newest three)
-  ashenmarine\logs       launcher.log, hook.log and the probe files
-  modengine2\            ModEngine2 2.1.0 (MIT license) - the loader Melty will install for you in the real release
+  ashenmarine\assets\sounds   the sound files made from your Space Marine 2 (private; safe to delete)
+  ashenmarine\save            the private copy of your save (what the test plays; F8's items live only here)
+  ashenmarine\backups         backups of your REAL save (original = first ever, session-* = newest three)
+  ashenmarine\logs            launcher.log, hook.log, sfx files and probe files
+  modengine2\                 ModEngine2 2.1.0 (MIT license) - the loader Melty will install for you in the real release
 
 Good to know
   - If it cannot find Dark Souls III by itself, put the game's folder (the one that contains Game\DarkSoulsIII.exe)
@@ -65,5 +79,7 @@ Good to know
   - If it cannot find Space Marine 2, put its folder on the first line of  ashenmarine\sm2-folder.txt .
   - The private save copy is a snapshot of your character taken the first time you press Play. To start a fresh
     copy of your current real character later, close the game and delete the  ashenmarine\save  folder.
+  - Keyboard and mouse: the mouse buttons only count while the game window is in front. If your attack buttons are
+    different from the defaults, tell me which ones - that is easy to change.
   - This kit never goes online, never launches Space Marine 2, and never modifies any game file.
   - It is an offline sandbox. Do not use it to play online.

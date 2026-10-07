@@ -20,13 +20,15 @@ use std::process::{Command, ExitCode};
 use std::time::{Duration, Instant};
 
 const DS3_EXE_NAME: &str = "DarkSoulsIII.exe";
-const USAGE: &str = "ashenmarine-launcher [--game <Dark Souls III folder>] [--me2 <ModEngine2 folder>] [--data <folder>] [--appdata <folder>] [--silent] [--probe]\n\
+const USAGE: &str = "ashenmarine-launcher [--game <Dark Souls III folder>] [--me2 <ModEngine2 folder>] [--data <folder>] [--appdata <folder>] [--silent] [--probe] [--sounds] [--experiments]\n\
   --game     Dark Souls III install folder (default: found through Steam)\n\
   --me2      ModEngine2 folder (default: ..\\modengine2 next to this program)\n\
   --data     where the mashup keeps its save copy, backups and logs (default: next to this program)\n\
   --appdata  override %APPDATA% (testing)\n\
   --silent   no message boxes (testing)\n\
-  --probe    private test kits: also write a read-only report about the running game (probe-ds3.txt)";
+  --probe    private test kits: also write a read-only report about the running game (probe-ds3.txt)\n\
+  --sounds   play the Space Marine 2 sounds the setup step prepared (assets\\sounds) for swings and shots\n\
+  --experiments  private test kits: hotkey experiments that change the running game (F8 gives the test weapons)";
 
 #[derive(Default)]
 struct Opts {
@@ -36,6 +38,8 @@ struct Opts {
     appdata: Option<PathBuf>,
     silent: bool,
     probe: bool,
+    sounds: bool,
+    experiments: bool,
 }
 
 fn parse_args() -> Result<Opts, String> {
@@ -50,6 +54,8 @@ fn parse_args() -> Result<Opts, String> {
             "--appdata" => o.appdata = Some(value("--appdata")?.into()),
             "--silent" => o.silent = true,
             "--probe" => o.probe = true,
+            "--sounds" => o.sounds = true,
+            "--experiments" => o.experiments = true,
             "--help" | "-h" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
@@ -146,6 +152,7 @@ fn run(o: &Opts, exe_dir: &Path) -> Result<ExitCode, (String, Option<Logger>)> {
     let hook_cfg_path = roots.file(f::HOOK_CONFIG).map_err(fail)?;
     let me2_cfg_path = roots.file(f::ME2_CONFIG).map_err(fail)?;
     let hook_log = roots.file(f::HOOK_LOG).map_err(fail)?;
+    let assets_dir = roots.file(f::CONVERTED_ASSETS).map_err(fail)?;
     ctx.say(&format!("Dark Souls III: {}", ds3_exe.display()));
     ctx.say(&format!("ModEngine2:      {}", me2_launcher.display()));
     ctx.say(&format!("real save:       {}", real_save.display()));
@@ -194,7 +201,8 @@ fn run(o: &Opts, exe_dir: &Path) -> Result<ExitCode, (String, Option<Logger>)> {
         window_suffix: WINDOW_SUFFIX.to_string(),
         silent: o.silent,
         block_network: true,
-        features: Features { probe: o.probe },
+        features: Features { probe: o.probe, sounds: o.sounds, experiments: o.experiments },
+        assets_dir: assets_dir.to_string_lossy().into_owned(),
     };
     hook_cfg.save(&hook_cfg_path).map_err(|e| fail(format!("Cannot write {}: {e}", hook_cfg_path.display())))?;
     std::fs::write(&me2_cfg_path, me2_toml(&hook_dll, &mod_dir)).map_err(|e| fail(format!("Cannot write {}: {e}", me2_cfg_path.display())))?;
@@ -237,10 +245,13 @@ fn run(o: &Opts, exe_dir: &Path) -> Result<ExitCode, (String, Option<Logger>)> {
         None => ctx.say("ModEngine2's launcher is running alongside the game"),
     }
     let running = platform::process_running(DS3_EXE_NAME);
+    let mut lasted = Duration::ZERO;
     if running {
         ctx.say("Dark Souls III is running");
+        let since = Instant::now();
         wait_for(Duration::from_secs(60 * 60 * 24), || !platform::process_running(DS3_EXE_NAME));
-        ctx.say("Dark Souls III closed");
+        lasted = since.elapsed();
+        ctx.say(&format!("Dark Souls III closed after {:.0} s", lasted.as_secs_f32()));
         wait_for(Duration::from_secs(5), || matches!(child.try_wait(), Ok(Some(_))));
     } else if appeared && fatal_exists() {
         ctx.say("Dark Souls III was closed by the hook straight after starting");
@@ -258,8 +269,17 @@ fn run(o: &Opts, exe_dir: &Path) -> Result<ExitCode, (String, Option<Logger>)> {
         ctx.tell(&text, true);
         exit = ExitCode::from(3);
     }
-    if running && !hook_text.contains("READY:") && exit == ExitCode::SUCCESS {
+    let hook_ready = hook_text.contains("READY:");
+    if running && !hook_ready && exit == ExitCode::SUCCESS {
+        // Typical cause: Steam was not running, so Dark Souls III restarted itself through Steam - and that copy has
+        // none of Ashen Marine's protection (it is the plain game on the real save).
         ctx.say("WARNING: the hook never reported READY. The real-save check below is the safety net.");
+        ctx.tell("Dark Souls III ran, but Ashen Marine's protection never started inside it, so that session was the NORMAL game on your real save (nothing of Ashen Marine was active). This usually happens when Steam is not running or not signed in: start Steam, wait until it is ready, then press Play again.", true);
+        exit = ExitCode::from(5);
+    } else if !running && !appeared && exit == ExitCode::SUCCESS {
+        ctx.tell("Dark Souls III did not start. Make sure Steam is running and signed in, then press Play again. (Details are in logs\\launcher.log.)", true);
+    } else if running && hook_ready && lasted < Duration::from_secs(20) && exit == ExitCode::SUCCESS {
+        ctx.tell(&format!("Dark Souls III closed after only {} seconds. If you did not close it yourself, check that Steam is running and signed in, then press Play again.", lasted.as_secs()), false);
     }
 
     // ---- prove the real save is untouched

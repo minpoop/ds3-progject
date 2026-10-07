@@ -16,3 +16,6 @@ assets-out/
 converted/
 sm2-extract/
 ds3-extract/
+
+# helper worktrees
+.claude/worktrees/
