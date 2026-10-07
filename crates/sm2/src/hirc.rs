@@ -468,7 +468,7 @@ pub fn resolve_event(bank: &Bank, nodes: &HashMap<u32, Node>, event_id: u32, rng
     out
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 pub mod testenc {
     //! Encoders for the objects above, written from the same layout description, so the tests can build banks.
     pub fn base(parent: u32, volume_db: f32, delay_ms: i32, volume_range: Option<(f32, f32)>) -> Vec<u8> {

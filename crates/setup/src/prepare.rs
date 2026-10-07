@@ -2,8 +2,10 @@
 //!
 //! What the mod wants comes from `design/sheets/sounds.json` (built into the program): every row names a Space Marine 2
 //! event. For each row this finds the event in `sounds/desktop/wpn.bnk` and plays it a few times in its head
-//! (`Bank::resolve_take`: a random container picks one sound, a layer container plays all of them; the random numbers
-//! come from a generator seeded by the slot, so the same install always gives the same files). The sound files of such
+//! (a random container picks one sound by its weight, a switch container follows its default switch, a layer container
+//! plays all of them, and every sound keeps the volume, pitch and delay the sound designers gave it - this needs the
+//! bank to be read exactly, see `hirc`; when it cannot be, the older approximate walk `Bank::resolve_take` is used; the
+//! random numbers come from a generator seeded by the slot, so the same install always gives the same files). The sound files of such
 //! a play are read from the game's `wpn.zip` (or from the bank), decoded, mixed and written as
 //! `<out>/sounds/<slot>_<n>.wav`. `index.json` lists what was made and `ready.json`, written last, says the job is done.
 //! Game files are only ever read.
@@ -12,8 +14,10 @@ use crate::{find_sm2, human, open_paks, words};
 use anyhow::{anyhow, bail, Context, Result};
 use ashen_common::VERSION;
 use ashen_sm2::bnk::{self, Bank, SoundInfo};
+use ashen_sm2::hirc;
 use ashen_sm2::mix::{mix_layers, MAX_SECONDS};
 use ashen_sm2::pak::{NestedZip, PakSet};
+use ashen_sm2::render::apply_voice;
 use ashen_sm2::wem::{self, Pcm};
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -25,6 +29,9 @@ pub struct Opts {
     pub sm2: Option<PathBuf>,
     /// the assets folder: the sounds go into `sounds` below it and `ready.json` into it
     pub out: PathBuf,
+    /// bring all sounds up together so the loudest one is near full scale (always on in the program; tests switch it off
+    /// to see the exact samples)
+    pub normalize: bool,
 }
 
 /// How a run ended.
@@ -342,6 +349,61 @@ impl Lookup {
     }
 }
 
+// ------------------------------------------------------------------------------------------------ what one play is made of
+
+/// One sound of one play of an event, with how loud, how high and how late it plays.
+#[derive(Debug, Clone)]
+struct Voice {
+    sound: SoundInfo,
+    /// linear gain (from the volume of the sound and of every container above it)
+    gain: f32,
+    pitch_cents: f32,
+    delay_ms: u32,
+}
+
+/// How the sounds of one play of an event are worked out.
+pub struct Engine {
+    /// the bank read exactly; `None` = only the approximate walk is available
+    strict: Option<hirc::Parsed>,
+}
+
+impl Engine {
+    pub fn approximate() -> Engine {
+        Engine { strict: None }
+    }
+
+    /// Use the exact reading when it understood (nearly) the whole bank, else the approximate walk.
+    pub fn choose(parsed: hirc::Parsed) -> Engine {
+        let enough = parsed.ok > 0 && parsed.failed * 50 <= parsed.ok;
+        Engine { strict: enough.then_some(parsed) }
+    }
+
+    pub fn is_exact(&self) -> bool {
+        self.strict.is_some()
+    }
+
+    /// The voices of one play of `event`, and whether they come from the exact reading.
+    fn draw(&self, bank: &Bank, event: u32, rng: &mut dyn FnMut(usize) -> usize) -> (Vec<Voice>, bool) {
+        if let Some(p) = &self.strict {
+            let voices = hirc::resolve_event(bank, &p.nodes, event, rng);
+            if !voices.is_empty() {
+                let voices = voices
+                    .into_iter()
+                    .map(|v| Voice {
+                        sound: SoundInfo { plugin: v.source.plugin, stream_type: v.source.stream_type, media_id: v.source.media_id, in_memory_size: 0 },
+                        gain: v.gain,
+                        pitch_cents: v.pitch_cents,
+                        delay_ms: v.delay_ms,
+                    })
+                    .collect();
+                return (voices, true);
+            }
+        }
+        let sounds = bank.resolve_take(event, &mut |n| rng(n));
+        (sounds.into_iter().map(|sound| Voice { sound, gain: 1.0, pitch_cents: 0.0, delay_ms: 0 }).collect(), false)
+    }
+}
+
 // ------------------------------------------------------------------------------------------------ making one slot
 
 fn channels_text(channels: u16) -> String {
@@ -378,27 +440,32 @@ struct Mixed {
     longest: f64,
 }
 
-/// Read, decode and mix the sound files `media` (the ones one play of the event uses). A file that cannot be used
-/// leaves out only its own layer; the take fails when no layer is left.
-fn build_take(sounds: &[SoundInfo], media: &[u32], read: &mut Reader, rep: &mut Report) -> Result<Mixed> {
-    if media.is_empty() {
+/// Read, decode and mix the sounds of one play of the event. A file that cannot be used leaves out only its own layer;
+/// the take fails when no layer is left.
+fn build_take(voices: &[Voice], read: &mut Reader, rep: &mut Report) -> Result<Mixed> {
+    if voices.is_empty() {
         bail!("this play of the event reaches no sound that this tool can follow");
     }
-    if media.len() > MAX_LAYERS {
-        bail!("this play of the event uses {} sound files at the same time, more than the {MAX_LAYERS} this tool will mix (the sound bank may be laid out differently than expected)", media.len());
+    if voices.len() > MAX_LAYERS {
+        bail!("this play of the event uses {} sound files at the same time, more than the {MAX_LAYERS} this tool will mix (the sound bank may be laid out differently than expected)", voices.len());
     }
     let mut layers: Vec<Pcm> = Vec::new();
     let mut problems: Vec<String> = Vec::new();
-    for &id in media {
-        let sound = sounds.iter().find(|s| s.media_id == id).expect("every id was taken from these sounds");
-        match load_layer(sound, read) {
+    for v in voices {
+        let id = v.sound.media_id;
+        match load_layer(&v.sound, read) {
             Ok((pcm, from)) => {
                 let peak = pcm.peak();
-                rep.detail(format!("    media {id}: {:.2} s, {}, {} Hz, loudest sample {peak} ({:.0}% of full scale), read from {from}", pcm.seconds(), channels_text(pcm.channels), pcm.sample_rate, peak as f64 * 100.0 / 32767.0));
-                layers.push(pcm);
+                let how = if v.gain != 1.0 || v.pitch_cents != 0.0 || v.delay_ms != 0 {
+                    format!(", played at {:+.1} dB{}{}", 20.0 * v.gain.max(1e-6).log10(), if v.pitch_cents != 0.0 { format!(", pitch {:+.0} cents", v.pitch_cents) } else { String::new() }, if v.delay_ms != 0 { format!(", starting {} ms late", v.delay_ms) } else { String::new() })
+                } else {
+                    String::new()
+                };
+                rep.detail(format!("    media {id}: {:.2} s, {}, {} Hz, loudest sample {peak} ({:.0}% of full scale), read from {from}{how}", pcm.seconds(), channels_text(pcm.channels), pcm.sample_rate, peak as f64 * 100.0 / 32767.0));
+                layers.push(apply_voice(&pcm, v.gain, v.pitch_cents, v.delay_ms));
             }
             Err(e) => {
-                rep.detail_wrapped("    ", &format!("media {id}: LEFT OUT, {e:#} (the sound object uses plugin {:#010x})", sound.plugin));
+                rep.detail_wrapped("    ", &format!("media {id}: LEFT OUT, {e:#} (the sound object uses plugin {:#010x})", v.sound.plugin));
                 problems.push(format!("media {id}: {e:#}"));
             }
         }
@@ -410,14 +477,14 @@ fn build_take(sounds: &[SoundInfo], media: &[u32], read: &mut Reader, rep: &mut 
         None => {
             let more = problems.len().saturating_sub(3);
             let shown = problems.iter().take(3).cloned().collect::<Vec<_>>().join("; ");
-            bail!("none of its {} sound files could be used ({shown}{})", media.len(), if more > 0 { format!("; and {more} more") } else { String::new() });
+            bail!("none of its {} sound files could be used ({shown}{})", voices.len(), if more > 0 { format!("; and {more} more") } else { String::new() });
         }
     }
 }
 
 /// Everything for one slot: draw the takes, build and write their files, tell the report. Returns the index entry, or why
 /// the slot got no sound.
-fn make_slot(slot: &Slot, bank: &Bank, read: &mut Reader, dir: &Path, rep: &mut Report) -> Result<IndexEntry> {
+fn make_slot(slot: &Slot, bank: &Bank, engine: &Engine, read: &mut Reader, dir: &Path, rep: &mut Report) -> Result<IndexEntry> {
     let event = bnk::fnv1_lower(&slot.event);
     let mut seen: Vec<Vec<u32>> = Vec::new();
     let mut files: Vec<String> = Vec::new();
@@ -426,8 +493,8 @@ fn make_slot(slot: &Slot, bank: &Bank, read: &mut Reader, dir: &Path, rep: &mut 
     'takes: for take in 0..slot.takes {
         for attempt in 0..=RETRIES {
             let mut rng = SplitMix64(take_seed(&slot.id, take, attempt));
-            let sounds = bank.resolve_take(event, &mut |n| rng.below(n));
-            let mut media: Vec<u32> = sounds.iter().map(|s| s.media_id).collect();
+            let (voices, exact) = engine.draw(bank, event, &mut |n| rng.below(n));
+            let mut media: Vec<u32> = voices.iter().map(|v| v.sound.media_id).collect();
             media.sort_unstable();
             media.dedup();
             if seen.contains(&media) {
@@ -435,8 +502,8 @@ fn make_slot(slot: &Slot, bank: &Bank, read: &mut Reader, dir: &Path, rep: &mut 
             }
             seen.push(media.clone());
             let n = files.len() + 1;
-            rep.detail_wrapped("  ", &format!("variation {n}: sound files {}", if media.is_empty() { "(none)".to_string() } else { id_list(&media) }));
-            match build_take(&sounds, &media, read, rep) {
+            rep.detail_wrapped("  ", &format!("variation {n}: sound files {} ({})", if media.is_empty() { "(none)".to_string() } else { id_list(&media) }, if exact { "volumes, delays and choices read exactly from the bank" } else { "approximate walk: every sound at full volume" }));
+            match build_take(&voices, read, rep) {
                 Ok(mixed) => {
                     let file = format!("{}_{n}.wav", slot.id);
                     std::fs::write(dir.join(&file), wem::wav_bytes(&mixed.pcm)).with_context(|| format!("could not save {file} in {}", dir.display()))?;
@@ -557,7 +624,7 @@ pub fn run(opts: &Opts) -> Outcome {
         return give_up(rep, outcome, &report);
     };
 
-    let Some((slots, bank_name, bank, mut media)) = stage(&mut rep, "3/4 Reading the weapon sound list", |rep| {
+    let Some((slots, bank_name, bank, mut media, engine)) = stage(&mut rep, "3/4 Reading the weapon sound list", |rep| {
         let slots = slots()?;
         let Some(bank_name) = find_entry(&paks, BANK, "/wpn.bnk") else {
             bail!("this Space Marine 2 has no weapon sound bank ({BANK}). Is the game fully installed and up to date? Steam can check it: right click the game, Properties, Installed Files, Verify integrity of game files")
@@ -583,7 +650,19 @@ pub fn run(opts: &Opts) -> Outcome {
         };
         let wanted: usize = slots.iter().map(|s| s.takes).sum();
         rep.say(format!("  the mod wants {} sounds, up to {wanted} files", slots.len()));
-        Ok((slots, bank_name, bank, media))
+        // how exactly can this bank be read? (the report tells me whether my picture of the format is right)
+        let parsed = hirc::parse_bank(&bank);
+        rep.detail(format!("  reading the bank exactly: {}", parsed.summary()));
+        for (kind, id, why) in &parsed.failures {
+            rep.detail_wrapped("    ", &format!("object {id} ({}) was not understood: {why}", bnk::kind_name(*kind)));
+        }
+        let engine = Engine::choose(parsed);
+        rep.detail(if engine.is_exact() {
+            "  using the exact reading: volumes, delays, weights and switches come from the bank"
+        } else {
+            "  the bank could not be read exactly, so an approximate walk is used (every sound at full volume)"
+        });
+        Ok((slots, bank_name, bank, media, engine))
     }) else {
         return give_up(rep, outcome, &report);
     };
@@ -611,7 +690,7 @@ pub fn run(opts: &Opts) -> Outcome {
             for line in bank.event_tree(event).lines() {
                 rep.detail(format!("    {line}"));
             }
-            catch_unwind(AssertUnwindSafe(|| make_slot(slot, &bank, &mut read, &sounds_dir, &mut rep))).unwrap_or_else(|p| Err(anyhow!("this sound crashed the program ({})", panic_text(&*p))))
+            catch_unwind(AssertUnwindSafe(|| make_slot(slot, &bank, &engine, &mut read, &sounds_dir, &mut rep))).unwrap_or_else(|p| Err(anyhow!("this sound crashed the program ({})", panic_text(&*p))))
         } else {
             Err(explain_missing(slot, &bank, &bank_name, &lookup, &mut rep))
         };
@@ -647,6 +726,9 @@ pub fn run(opts: &Opts) -> Outcome {
         rep.say_wrapped("  ", &format!("Please send me the report so I can see why:  {}", report.display()));
         return outcome;
     }
+    if opts.normalize {
+        normalize_loudness(&sounds_dir, &entries, &mut rep);
+    }
     // the index first, the marker last: ready.json only exists when everything above finished
     let source = format!("Space Marine 2 {}", build.as_deref().unwrap_or("unknown"));
     let written = write_atomic(&sounds_dir.join("index.json"), index_json(&source, &entries).as_bytes()).and_then(|_| write_atomic(&opts.out.join("ready.json"), ready_json(outcome.prepared, outcome.files).as_bytes()));
@@ -663,6 +745,38 @@ pub fn run(opts: &Opts) -> Outcome {
         rep.say_wrapped("  ", &format!("The mod works without the missing ones; it just stays silent for them. If you would like me to look into why, please send me the report:  {}", report.display()));
     }
     outcome
+}
+
+/// The loudest sample of all the sounds should be near full scale: sounds made from quiet game levels are all brought up by
+/// the same factor, so how loud they are compared with each other stays as the game has it.
+fn normalize_loudness(sounds: &Path, entries: &[IndexEntry], rep: &mut Report) {
+    const TARGET: f64 = 0.9 * 32767.0;
+    const MAX_BOOST: f64 = 16.0;
+    let files: Vec<PathBuf> = entries.iter().flat_map(|e| e.files.iter().map(|f| sounds.join(f))).collect();
+    let mut loudest = 0i32;
+    let mut decoded: Vec<(PathBuf, Pcm)> = Vec::new();
+    for path in files {
+        let Ok(bytes) = std::fs::read(&path) else { continue };
+        let Ok(pcm) = wem::decode(&bytes) else { continue };
+        loudest = loudest.max(pcm.peak() as i32);
+        decoded.push((path, pcm));
+    }
+    if loudest == 0 {
+        return;
+    }
+    let factor = (TARGET / loudest as f64).min(MAX_BOOST);
+    if factor < 1.1 {
+        rep.detail(format!("  loudness: the loudest sample is already at {:.0}% of full scale; nothing was changed", loudest as f64 * 100.0 / 32767.0));
+        return;
+    }
+    let mut changed = 0;
+    for (path, pcm) in &decoded {
+        let louder = Pcm { channels: pcm.channels, sample_rate: pcm.sample_rate, samples: pcm.samples.iter().map(|s| (*s as f64 * factor).round().clamp(-32768.0, 32767.0) as i16).collect() };
+        if std::fs::write(path, wem::wav_bytes(&louder)).is_ok() {
+            changed += 1;
+        }
+    }
+    rep.say_wrapped("  ", &format!("All sounds were made {:+.1} dB louder together (the loudest one was at {:.0}% of full scale); {changed} files. How loud they are compared with each other is unchanged.", 20.0 * factor.log10(), loudest as f64 * 100.0 / 32767.0));
 }
 
 /// Say why an event is missing from the weapon bank, and what is known that might help; returns the one-line reason.
@@ -746,7 +860,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let mut rep = Report::create(&t.path().join("report.txt"));
         let mut read = reader(broken);
-        let res = make_slot(slot, bank, &mut read, t.path(), &mut rep);
+        let res = make_slot(slot, bank, &Engine::approximate(), &mut read, t.path(), &mut rep);
         let firsts = res.as_ref().map(|e| e.files.iter().map(|f| wem::decode(&std::fs::read(t.path().join(f)).unwrap()).unwrap().samples[0]).collect()).unwrap_or_default();
         (res, firsts, std::fs::read_to_string(t.path().join("report.txt")).unwrap())
     }
@@ -964,7 +1078,7 @@ mod tests {
         let single = bank(|b| {
             b.container(kind::LAYER, 100, &[1]);
         });
-        let why = make_slot(&slot(1), &single, &mut garbage, t.path(), &mut rep).err().unwrap().to_string();
+        let why = make_slot(&slot(1), &single, &Engine::approximate(), &mut garbage, t.path(), &mut rep).err().unwrap().to_string();
         assert!(why.contains("it could not be decoded"), "{why}");
     }
 
@@ -980,7 +1094,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let mut rep = Report::create(&t.path().join("r.txt"));
         let mut never = |_: &SoundInfo| -> Result<(Vec<u8>, &'static str)> { panic!("nothing may be read for a refused event") };
-        let why = make_slot(&slot(3), &bank, &mut never, t.path(), &mut rep).err().unwrap().to_string();
+        let why = make_slot(&slot(3), &bank, &Engine::approximate(), &mut never, t.path(), &mut rep).err().unwrap().to_string();
         assert!(why.contains("33 sound files at the same time") && why.contains("more than the 32"), "{why}");
         assert!(std::fs::read_dir(t.path()).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".wav")));
     }
@@ -993,7 +1107,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let mut rep = Report::create(&t.path().join("r.txt"));
         let mut long = |_: &SoundInfo| -> Result<(Vec<u8>, &'static str)> { Ok((pcm_wem(1000, &[500], 9000), "the test")) };
-        let entry = make_slot(&slot(1), &b, &mut long, t.path(), &mut rep).unwrap();
+        let entry = make_slot(&slot(1), &b, &Engine::approximate(), &mut long, t.path(), &mut rep).unwrap();
         assert_eq!(entry.seconds, [8.0]);
         let report = std::fs::read_to_string(t.path().join("r.txt")).unwrap();
         assert!(report.contains("cut at 8 s with a short fade-out"), "{report}");
@@ -1016,5 +1130,104 @@ mod tests {
         left.sort();
         assert_eq!(left, ["chainsword_idle_2.wav.bak", "chainsword_idle_start_1.wav", "chainsword_idle_start_2.wav", "notes.txt", "other_1.wav"]);
         assert!(!out.join("ready.json").exists());
+    }
+
+    /// Media 11..=14 as in `reader`, but a bank built with the exact encoders, so the exact reading applies.
+    fn exact_bank(objs: Vec<(u8, Vec<u8>)>) -> Bank {
+        let mut all = objs;
+        all.push(hirc::testenc::action(900, ACTION_PLAY, 100));
+        all.push(hirc::testenc::event(bnk::fnv1_lower("test_event"), &[900]));
+        Bank::parse(hirc::testenc::bank(all)).unwrap()
+    }
+
+    #[test]
+    fn the_exact_reading_applies_volume_delay_and_switch_choices() {
+        use hirc::testenc as enc;
+        // a layer: sound 13 at full volume, sound 12 half as loud (-6.02 dB) and 10 ms late
+        let bank = exact_bank(vec![
+            enc::obj(kind::SOUND, 1, &enc::sound(100, 13, 0.0, 0)),
+            enc::obj(kind::SOUND, 2, &enc::sound(100, 12, -6.0206, 10)),
+            enc::obj(kind::LAYER, 100, &enc::layer(0, &[1, 2], 0.0)),
+        ]);
+        let engine = Engine::choose(hirc::parse_bank(&bank));
+        assert!(engine.is_exact());
+        let t = tempfile::tempdir().unwrap();
+        let mut rep = Report::create(&t.path().join("report.txt"));
+        let mut read = reader(&[]);
+        let entry = make_slot(&slot(1), &bank, &engine, &mut read, t.path(), &mut rep).unwrap();
+        let pcm = wem::decode(&std::fs::read(t.path().join(&entry.files[0])).unwrap()).unwrap();
+        assert_eq!(pcm.samples[0], 3000, "only the first layer at the start");
+        assert!((pcm.samples[441] as i32 - 4000).abs() <= 1, "the second layer comes in 10 ms later at half level: {}", pcm.samples[441]);
+        let report = std::fs::read_to_string(t.path().join("report.txt")).unwrap();
+        assert!(report.contains("read exactly from the bank") && report.contains("played at -6.0 dB") && report.contains("starting 10 ms late"), "{report}");
+
+        // a switch container plays what is assigned to its default switch
+        let bank = exact_bank(vec![
+            enc::obj(kind::SOUND, 1, &enc::sound(100, 11, 0.0, 0)),
+            enc::obj(kind::SOUND, 2, &enc::sound(100, 12, 0.0, 0)),
+            enc::obj(kind::SWITCH, 100, &enc::switch(0, 22, &[1, 2], &[(21, vec![1]), (22, vec![2])])),
+        ]);
+        let engine = Engine::choose(hirc::parse_bank(&bank));
+        let t = tempfile::tempdir().unwrap();
+        let mut rep = Report::create(&t.path().join("report.txt"));
+        let mut read = reader(&[]);
+        let entry = make_slot(&slot(3), &bank, &engine, &mut read, t.path(), &mut rep).unwrap();
+        assert_eq!(entry.files.len(), 1, "the only branch that can play is the default switch's");
+        assert_eq!(wem::decode(&std::fs::read(t.path().join(&entry.files[0])).unwrap()).unwrap().samples[0], 2000);
+    }
+
+    #[test]
+    fn a_bank_that_is_not_understood_exactly_uses_the_approximate_walk() {
+        // the synthetic banks of the other tests do not follow the real layout: the exact reader refuses them
+        let approx = bank(|b| {
+            b.container(kind::LAYER, 100, &[1, 2]);
+        });
+        let parsed = hirc::parse_bank(&approx);
+        assert!(parsed.failed > 0 || parsed.ok == 0);
+        let engine = Engine::choose(parsed);
+        assert!(!engine.is_exact());
+        let t = tempfile::tempdir().unwrap();
+        let mut rep = Report::create(&t.path().join("report.txt"));
+        let mut read = reader(&[]);
+        let entry = make_slot(&slot(1), &approx, &engine, &mut read, t.path(), &mut rep).unwrap();
+        assert_eq!(wem::decode(&std::fs::read(t.path().join(&entry.files[0])).unwrap()).unwrap().samples[0], 3000);
+        assert!(std::fs::read_to_string(t.path().join("report.txt")).unwrap().contains("approximate walk"));
+        // a few failures among very many understood objects are tolerated, many are not
+        let mut p = hirc::parse_bank(&exact_bank(vec![hirc::testenc::obj(kind::SOUND, 1, &hirc::testenc::sound(0, 11, 0.0, 0))]));
+        p.ok = 100;
+        p.failed = 2;
+        assert!(Engine::choose(p).is_exact());
+        let mut p = hirc::parse_bank(&exact_bank(vec![hirc::testenc::obj(kind::SOUND, 1, &hirc::testenc::sound(0, 11, 0.0, 0))]));
+        p.ok = 100;
+        p.failed = 3;
+        assert!(!Engine::choose(p).is_exact());
+    }
+
+    #[test]
+    fn the_loudest_sound_is_brought_up_to_near_full_scale_and_the_others_with_it() {
+        let t = tempfile::tempdir().unwrap();
+        let mk = |name: &str, v: i16| {
+            std::fs::write(t.path().join(name), wem::wav_bytes(&Pcm { channels: 1, sample_rate: 48_000, samples: vec![v; 100] })).unwrap();
+        };
+        mk("a_1.wav", 3000);
+        mk("b_1.wav", 1500);
+        let entries = vec![
+            IndexEntry { slot: "a".into(), event: "e".into(), looped: false, files: vec!["a_1.wav".into()], seconds: vec![0.0] },
+            IndexEntry { slot: "b".into(), event: "e".into(), looped: false, files: vec!["b_1.wav".into()], seconds: vec![0.0] },
+        ];
+        let mut rep = Report::create(&t.path().join("r.txt"));
+        normalize_loudness(t.path(), &entries, &mut rep);
+        let a = wem::decode(&std::fs::read(t.path().join("a_1.wav")).unwrap()).unwrap().samples[0] as i32;
+        let b = wem::decode(&std::fs::read(t.path().join("b_1.wav")).unwrap()).unwrap().samples[0] as i32;
+        assert!((a - 29_490).abs() <= 2, "{a}");
+        assert!((a - 2 * b).abs() <= 2, "the relation between the two is kept: {a} {b}");
+        // already loud: untouched
+        let before = std::fs::read(t.path().join("a_1.wav")).unwrap();
+        normalize_loudness(t.path(), &entries, &mut rep);
+        assert_eq!(std::fs::read(t.path().join("a_1.wav")).unwrap(), before);
+        // silence is left alone (no division by zero)
+        mk("a_1.wav", 0);
+        mk("b_1.wav", 0);
+        normalize_loudness(t.path(), &entries, &mut rep);
     }
 }
