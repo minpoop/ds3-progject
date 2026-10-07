@@ -1,24 +1,123 @@
 {
   "sheet": "sm2_sources",
-  "doc": "What the setup step reads from the player's Space Marine 2 install, one row per kind of asset per weapon. Most cells stay empty until the real file scan says what exists and in which format.",
+  "doc": "What the setup step reads from the player's Space Marine 2 install, one row per kind of asset per weapon. Sounds are real from milestone 2; textures are decoded to PNG; models and numbers are a later upgrade (milestone 5) - the first build uses Dark Souls III's own weapon models and numbers and says so.",
   "columns": {
-    "id": {"type": "id"},
-    "weapon_name": {"type": "string", "doc": "SM2's own name for the weapon"},
-    "asset_kind": {"type": "enum", "values": ["model", "texture", "sound", "stats"]},
-    "pak_pattern": {"type": "string", "doc": "which pak entries hold it (name pattern)"},
-    "format": {"type": "string", "doc": "container/codec as seen in the scan"},
-    "converter": {"type": "string", "doc": "how it becomes something DS3 can use"},
-    "output": {"type": "string", "doc": "where the converted result goes, under {data}/assets"},
-    "milestone": {"type": "int"}
+    "id": {
+      "type": "id"
+    },
+    "weapon_name": {
+      "type": "string",
+      "doc": "SM2's own name for the weapon"
+    },
+    "asset_kind": {
+      "type": "enum",
+      "values": [
+        "model",
+        "texture",
+        "sound",
+        "stats"
+      ]
+    },
+    "pak_pattern": {
+      "type": "string",
+      "doc": "which pak entries hold it (name pattern)"
+    },
+    "format": {
+      "type": "string",
+      "doc": "container/codec as seen in the scan"
+    },
+    "converter": {
+      "type": "string",
+      "doc": "how it becomes something DS3 can use"
+    },
+    "output": {
+      "type": "string",
+      "doc": "where the converted result goes, under {data}/assets"
+    },
+    "milestone": {
+      "type": "int"
+    }
   },
   "rows": [
-    {"id": "chainsword_model", "weapon_name": "chainsword", "asset_kind": "model", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
-    {"id": "chainsword_texture", "weapon_name": "chainsword", "asset_kind": "texture", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
-    {"id": "chainsword_sounds", "weapon_name": "chainsword", "asset_kind": "sound", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
-    {"id": "chainsword_stats", "weapon_name": "chainsword", "asset_kind": "stats", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
-    {"id": "boltpistol_model", "weapon_name": "bolt pistol", "asset_kind": "model", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
-    {"id": "boltpistol_texture", "weapon_name": "bolt pistol", "asset_kind": "texture", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
-    {"id": "boltpistol_sounds", "weapon_name": "bolt pistol", "asset_kind": "sound", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2},
-    {"id": "boltpistol_stats", "weapon_name": "bolt pistol", "asset_kind": "stats", "pak_pattern": null, "format": null, "converter": null, "output": null, "milestone": 2}
+    {
+      "id": "chainsword_model",
+      "weapon_name": "chainsword",
+      "asset_kind": "model",
+      "pak_pattern": "tpl/wpn_<weapon>*.tpl/ {.tpl .tpl_data .geom_dbg .cdt .lods_base .tpl_markup}",
+      "format": "Saber 1SER binary classes (changes with SM2 patches)",
+      "converter": "later upgrade: parse the mesh and write a Dark Souls III weapon model; not part of the first build",
+      "output": "{data}/assets/models (later)",
+      "milestone": 5
+    },
+    {
+      "id": "chainsword_texture",
+      "weapon_name": "chainsword",
+      "asset_kind": "texture",
+      "pak_pattern": "client_pc/root/paks/client/**: pct/wpn_<weapon>_<map>_<n>.pct.resource (YAML) + <name>_<mip>.pct_mip",
+      "format": "res_desc_pct descriptor + raw block-compressed mip data (BC7, BC5 for normal maps)",
+      "converter": "crates/sm2 texture loader (bcdec_rs) writes PNG previews; not applied to Dark Souls III weapons in the first build",
+      "output": "{data}/probe-sm2/textures/*.png (previews)",
+      "milestone": 2
+    },
+    {
+      "id": "chainsword_sounds",
+      "weapon_name": "chainsword",
+      "asset_kind": "sound",
+      "pak_pattern": "client_pc/root/paks/client/**: sounds/desktop/wpn.bnk (events) and sounds/desktop/wpn.zip (<media id>.wem, a stored zip inside a pak)",
+      "format": "Wwise bank v150 (BKHD+HIRC, no embedded media) + Wwise Vorbis .wem (format tag 0xFFFF, stripped setup, external aoTuV codebooks)",
+      "converter": "ashenmarine-setup prepare: event -> action -> container walk, rebuild standard Vorbis packets (ww2ogg algorithm, BSD-3), decode with lewton, mix layers into takes",
+      "output": "{data}/assets/sounds/<slot>_<take>.wav + index.json",
+      "milestone": 2
+    },
+    {
+      "id": "chainsword_stats",
+      "weapon_name": "chainsword",
+      "asset_kind": "stats",
+      "pak_pattern": "ssl/weapons/**/*.cls (text)",
+      "format": "Saber .cls text: key = { __type = \"...\" } (effects and sound names; no damage numbers found so far)",
+      "converter": "later upgrade: read the numbers the .cls files hold, if any, and map them onto the Dark Souls III weapon row",
+      "output": "{data}/assets/stats (later)",
+      "milestone": 5
+    },
+    {
+      "id": "boltpistol_model",
+      "weapon_name": "bolt pistol",
+      "asset_kind": "model",
+      "pak_pattern": "tpl/wpn_<weapon>*.tpl/ {.tpl .tpl_data .geom_dbg .cdt .lods_base .tpl_markup}",
+      "format": "Saber 1SER binary classes (changes with SM2 patches)",
+      "converter": "later upgrade: parse the mesh and write a Dark Souls III weapon model; not part of the first build",
+      "output": "{data}/assets/models (later)",
+      "milestone": 5
+    },
+    {
+      "id": "boltpistol_texture",
+      "weapon_name": "bolt pistol",
+      "asset_kind": "texture",
+      "pak_pattern": "client_pc/root/paks/client/**: pct/wpn_<weapon>_<map>_<n>.pct.resource (YAML) + <name>_<mip>.pct_mip",
+      "format": "res_desc_pct descriptor + raw block-compressed mip data (BC7, BC5 for normal maps)",
+      "converter": "crates/sm2 texture loader (bcdec_rs) writes PNG previews; not applied to Dark Souls III weapons in the first build",
+      "output": "{data}/probe-sm2/textures/*.png (previews)",
+      "milestone": 2
+    },
+    {
+      "id": "boltpistol_sounds",
+      "weapon_name": "bolt pistol",
+      "asset_kind": "sound",
+      "pak_pattern": "client_pc/root/paks/client/**: sounds/desktop/wpn.bnk (events) and sounds/desktop/wpn.zip (<media id>.wem, a stored zip inside a pak)",
+      "format": "Wwise bank v150 (BKHD+HIRC, no embedded media) + Wwise Vorbis .wem (format tag 0xFFFF, stripped setup, external aoTuV codebooks)",
+      "converter": "ashenmarine-setup prepare: event -> action -> container walk, rebuild standard Vorbis packets (ww2ogg algorithm, BSD-3), decode with lewton, mix layers into takes",
+      "output": "{data}/assets/sounds/<slot>_<take>.wav + index.json",
+      "milestone": 2
+    },
+    {
+      "id": "boltpistol_stats",
+      "weapon_name": "bolt pistol",
+      "asset_kind": "stats",
+      "pak_pattern": "ssl/weapons/**/*.cls (text)",
+      "format": "Saber .cls text: key = { __type = \"...\" } (effects and sound names; no damage numbers found so far)",
+      "converter": "later upgrade: read the numbers the .cls files hold, if any, and map them onto the Dark Souls III weapon row",
+      "output": "{data}/assets/stats (later)",
+      "milestone": 5
+    }
   ]
 }

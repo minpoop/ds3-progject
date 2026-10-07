@@ -161,7 +161,7 @@
     {
       "id": "probe_ds3_files",
       "path": "{data}/logs/probe-ds3.txt",
-      "purpose": "What the read-only game probe found (also probe-ds3-weapons.csv, -inventory.csv, -samples.csv, -text-*.csv next to it)",
+      "purpose": "What the read-only game probe found (also probe-ds3-weapons.csv, -goods.csv, -inventory.csv, -samples.csv, -text-*.csv next to it)",
       "access": "write",
       "system": "ds3_probe",
       "guarded": false,
@@ -184,6 +184,42 @@
       "system": "sm2_discovery",
       "guarded": false,
       "milestone": 2
+    },
+    {
+      "id": "assets_sounds_dir",
+      "path": "{data}/assets/sounds",
+      "purpose": "WAV files made on the player's PC from their own Space Marine 2 sound files (private; never uploaded or committed)",
+      "access": "write",
+      "system": "asset_convert",
+      "guarded": false,
+      "milestone": 2
+    },
+    {
+      "id": "assets_ready",
+      "path": "{data}/assets/ready.json",
+      "purpose": "Written last by the setup tool: says the conversion finished and what it made",
+      "access": "write",
+      "system": "asset_convert",
+      "guarded": false,
+      "milestone": 2
+    },
+    {
+      "id": "prepare_report",
+      "path": "{data}/prepare-sm2/prepare-report.txt",
+      "purpose": "What the setup tool converted, with the sound-container trees it followed (private)",
+      "access": "write",
+      "system": "asset_convert",
+      "guarded": false,
+      "milestone": 2
+    },
+    {
+      "id": "sounds_index",
+      "path": "{data}/assets/sounds/index.json",
+      "purpose": "Lists the sound slots and their WAV files; read by the hook DLL when the game starts",
+      "access": "read",
+      "system": "weapon_sound",
+      "guarded": false,
+      "milestone": 3
     }
   ]
 }

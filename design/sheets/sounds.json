@@ -1,20 +1,213 @@
 {
   "sheet": "sounds",
-  "doc": "Which Space Marine 2 sound plays on which Dark Souls III event. Triggers are decided once the hook points in DS3 are known.",
+  "doc": "Which Space Marine 2 sound plays on which Dark Souls III event. One row per slot; the setup tool renders each slot's SM2 event into a few WAV 'takes' and the hook picks one at random. Triggers are polled from game state each frame (read-only).",
   "columns": {
-    "id": {"type": "id"},
-    "weapon": {"type": "ref", "sheet": "weapons"},
-    "event": {"type": "enum", "values": ["swing", "hit", "idle", "fire", "equip"]},
-    "sm2_source": {"type": "ref", "sheet": "sm2_sources"},
-    "ds3_trigger": {"type": "string", "doc": "the DS3 event or state that starts the sound"},
-    "volume": {"type": "float"},
-    "milestone": {"type": "int"}
+    "id": {
+      "type": "id"
+    },
+    "weapon": {
+      "type": "ref",
+      "sheet": "weapons"
+    },
+    "event": {
+      "type": "enum",
+      "values": [
+        "swing",
+        "strong",
+        "hit",
+        "idle_start",
+        "idle",
+        "charge",
+        "parry",
+        "fire",
+        "empty",
+        "equip",
+        "unequip"
+      ]
+    },
+    "sm2_source": {
+      "type": "ref",
+      "sheet": "sm2_sources"
+    },
+    "ds3_trigger": {
+      "type": "string",
+      "doc": "the DS3 event or state that starts the sound"
+    },
+    "volume": {
+      "type": "float"
+    },
+    "milestone": {
+      "type": "int"
+    },
+    "sm2_event": {
+      "type": "string",
+      "doc": "the Space Marine 2 (Wwise) event whose sounds are rendered for this slot"
+    },
+    "takes": {
+      "type": "int",
+      "doc": "how many different renderings of the event the setup tool makes"
+    },
+    "looped": {
+      "type": "bool",
+      "doc": "true: played in a loop until stopped"
+    }
   },
   "rows": [
-    {"id": "chainsword_swing", "weapon": "chainsword", "event": "swing", "sm2_source": "chainsword_sounds", "ds3_trigger": null, "volume": 1.0, "milestone": 3},
-    {"id": "chainsword_hit", "weapon": "chainsword", "event": "hit", "sm2_source": "chainsword_sounds", "ds3_trigger": null, "volume": 1.0, "milestone": 3},
-    {"id": "chainsword_idle", "weapon": "chainsword", "event": "idle", "sm2_source": "chainsword_sounds", "ds3_trigger": null, "volume": 0.6, "milestone": 3},
-    {"id": "boltpistol_fire", "weapon": "bolt_pistol", "event": "fire", "sm2_source": "boltpistol_sounds", "ds3_trigger": null, "volume": 1.0, "milestone": 3},
-    {"id": "boltpistol_equip", "weapon": "bolt_pistol", "event": "equip", "sm2_source": "boltpistol_sounds", "ds3_trigger": null, "volume": 0.8, "milestone": 3}
+    {
+      "id": "chainsword_swing_1",
+      "weapon": "chainsword",
+      "event": "swing",
+      "sm2_source": "chainsword_sounds",
+      "sm2_event": "wpn_melee_chswd_light_1hit",
+      "takes": 3,
+      "looped": false,
+      "ds3_trigger": "an attack starts: stamina falls by 5 or more while an attack button went down in the last 0.35 s, and no other swing sound began in the last 1.4 s",
+      "volume": 0.9,
+      "milestone": 3
+    },
+    {
+      "id": "chainsword_swing_2",
+      "weapon": "chainsword",
+      "event": "swing",
+      "sm2_source": "chainsword_sounds",
+      "sm2_event": "wpn_melee_chswd_light_2hit",
+      "takes": 3,
+      "looped": false,
+      "ds3_trigger": "an attack starts within 1.4 s of the previous swing sound (combo step 2)",
+      "volume": 0.9,
+      "milestone": 3
+    },
+    {
+      "id": "chainsword_swing_3",
+      "weapon": "chainsword",
+      "event": "swing",
+      "sm2_source": "chainsword_sounds",
+      "sm2_event": "wpn_melee_chswd_light_3hit",
+      "takes": 3,
+      "looped": false,
+      "ds3_trigger": "an attack starts within 1.4 s of the previous swing sound (combo step 3)",
+      "volume": 0.9,
+      "milestone": 3
+    },
+    {
+      "id": "chainsword_swing_4",
+      "weapon": "chainsword",
+      "event": "swing",
+      "sm2_source": "chainsword_sounds",
+      "sm2_event": "wpn_melee_chswd_light_4hit",
+      "takes": 3,
+      "looped": false,
+      "ds3_trigger": "an attack starts within 1.4 s of the previous swing sound (combo step 4); later swings start the cycle again",
+      "volume": 0.9,
+      "milestone": 3
+    },
+    {
+      "id": "chainsword_strong",
+      "weapon": "chainsword",
+      "event": "strong",
+      "sm2_source": "chainsword_sounds",
+      "sm2_event": "wpn_melee_chswd_slash_1hit",
+      "takes": 3,
+      "looped": false,
+      "ds3_trigger": "an attack starts while the strong-attack button (gamepad right trigger, right mouse button) is down",
+      "volume": 0.9,
+      "milestone": 3
+    },
+    {
+      "id": "chainsword_idle_start",
+      "weapon": "chainsword",
+      "event": "idle_start",
+      "sm2_source": "chainsword_sounds",
+      "sm2_event": "wpn_melee_chswd_idle_start",
+      "takes": 1,
+      "looped": false,
+      "ds3_trigger": "Space Marine mode is switched on (key F7) - later: the chainsword is the equipped right-hand weapon",
+      "volume": 0.7,
+      "milestone": 3
+    },
+    {
+      "id": "chainsword_idle",
+      "weapon": "chainsword",
+      "event": "idle",
+      "sm2_source": "chainsword_sounds",
+      "sm2_event": "wpn_melee_chswd_idle_loop",
+      "takes": 1,
+      "looped": true,
+      "ds3_trigger": "plays in a loop while Space Marine mode is on",
+      "volume": 0.5,
+      "milestone": 3
+    },
+    {
+      "id": "chainsword_charge",
+      "weapon": "chainsword",
+      "event": "charge",
+      "sm2_source": "chainsword_sounds",
+      "sm2_event": "wpn_melee_chswd_charge_loop_start",
+      "takes": 1,
+      "looped": false,
+      "ds3_trigger": "audition only so far; no trigger yet",
+      "volume": 0.8,
+      "milestone": 3
+    },
+    {
+      "id": "chainsword_parry",
+      "weapon": "chainsword",
+      "event": "parry",
+      "sm2_source": "chainsword_sounds",
+      "sm2_event": "wpn_melee_chswd_parry",
+      "takes": 3,
+      "looped": false,
+      "ds3_trigger": "audition only so far; no trigger yet",
+      "volume": 0.9,
+      "milestone": 3
+    },
+    {
+      "id": "boltpistol_fire",
+      "weapon": "bolt_pistol",
+      "event": "fire",
+      "sm2_source": "boltpistol_sounds",
+      "sm2_event": "wpn_firearm_shoot_2d_bolt_pistol",
+      "takes": 3,
+      "looped": false,
+      "ds3_trigger": "the count of an ammunition stack in the inventory falls by one (a shot)",
+      "volume": 0.9,
+      "milestone": 3
+    },
+    {
+      "id": "boltpistol_empty",
+      "weapon": "bolt_pistol",
+      "event": "empty",
+      "sm2_source": "boltpistol_sounds",
+      "sm2_event": "wpn_firearm_shoot_2d_bolt_pistol_empty_shoot",
+      "takes": 1,
+      "looped": false,
+      "ds3_trigger": "audition only so far; no trigger yet",
+      "volume": 0.8,
+      "milestone": 3
+    },
+    {
+      "id": "boltpistol_equip",
+      "weapon": "bolt_pistol",
+      "event": "equip",
+      "sm2_source": "boltpistol_sounds",
+      "sm2_event": "wpn_firearm_foley_bolt_pistol_zoom_in",
+      "takes": 1,
+      "looped": false,
+      "ds3_trigger": "audition only so far; no trigger yet",
+      "volume": 0.8,
+      "milestone": 3
+    },
+    {
+      "id": "boltpistol_unequip",
+      "weapon": "bolt_pistol",
+      "event": "unequip",
+      "sm2_source": "boltpistol_sounds",
+      "sm2_event": "wpn_firearm_foley_bolt_pistol_zoom_out",
+      "takes": 1,
+      "looped": false,
+      "ds3_trigger": "audition only so far; no trigger yet",
+      "volume": 0.8,
+      "milestone": 3
+    }
   ]
 }

@@ -4,3 +4,4 @@ pub mod bnk;
 pub mod pak;
 pub mod texture;
 pub mod wem;
+pub mod wwvorbis;

@@ -1,26 +1,103 @@
 {
   "sheet": "weapons",
-  "doc": "The weapons the player gets. Moves and damage rules are Dark Souls III's; look, sound and numbers are Space Marine 2's. Empty cells are decisions that wait for the real SM2 files.",
+  "doc": "The weapons the player gets. Moves and damage rules are Dark Souls III's. The first build repurposes an existing Dark Souls III weapon row (same moveset, same numbers) and gives it Space Marine 2's sounds; Space Marine 2's models and numbers are a later upgrade (milestone 5).",
   "columns": {
-    "id": {"type": "id"},
-    "display_name": {"type": "string"},
-    "kind": {"type": "enum", "values": ["melee", "ranged"]},
-    "hand": {"type": "enum", "values": ["right", "left", "two"]},
-    "grant": {"type": "enum", "values": ["start_inventory", "shop", "pickup"]},
-    "ds3_weapon_class": {"type": "string", "doc": "which DS3 weapon type supplies the moveset"},
-    "model_source": {"type": "ref", "sheet": "sm2_sources"},
-    "texture_source": {"type": "ref", "sheet": "sm2_sources"},
-    "stats_source": {"type": "ref", "sheet": "sm2_sources"},
-    "milestone": {"type": "int"}
+    "id": {
+      "type": "id"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "enum",
+      "values": [
+        "melee",
+        "ranged"
+      ]
+    },
+    "hand": {
+      "type": "enum",
+      "values": [
+        "right",
+        "left",
+        "two"
+      ]
+    },
+    "grant": {
+      "type": "enum",
+      "values": [
+        "start_inventory",
+        "shop",
+        "pickup"
+      ]
+    },
+    "ds3_weapon_class": {
+      "type": "string",
+      "doc": "which Dark Souls III weapon supplies the moveset"
+    },
+    "model_source": {
+      "type": "ref",
+      "sheet": "sm2_sources",
+      "required": false,
+      "doc": "later upgrade (milestone 5); empty while the first build uses the Dark Souls III model"
+    },
+    "texture_source": {
+      "type": "ref",
+      "sheet": "sm2_sources",
+      "required": false
+    },
+    "stats_source": {
+      "type": "ref",
+      "sheet": "sm2_sources",
+      "required": false,
+      "doc": "later upgrade (milestone 5); empty while the first build uses the Dark Souls III numbers"
+    },
+    "milestone": {
+      "type": "int"
+    },
+    "ds3_base_row": {
+      "type": "int",
+      "doc": "EQUIP_PARAM_WEAPON_ST row id of the Dark Souls III weapon that is repurposed (checked against the game's own table by the probe)"
+    },
+    "ds3_base_name": {
+      "type": "string",
+      "doc": "that row's name in Dark Souls III (English); the text is replaced by display_name in memory only"
+    },
+    "ammo_row": {
+      "type": "int",
+      "required": false,
+      "doc": "ranged weapons: EQUIP_PARAM_WEAPON_ST row id of the ammunition (a stack whose count falls when the weapon fires)"
+    }
   },
   "rows": [
     {
-      "id": "chainsword", "display_name": "Chainsword", "kind": "melee", "hand": "right", "grant": "start_inventory",
-      "ds3_weapon_class": null, "model_source": "chainsword_model", "texture_source": "chainsword_texture", "stats_source": "chainsword_stats", "milestone": 3
+      "id": "chainsword",
+      "display_name": "Chainsword",
+      "kind": "melee",
+      "hand": "right",
+      "grant": "start_inventory",
+      "ds3_weapon_class": "one-handed straight sword",
+      "model_source": null,
+      "texture_source": null,
+      "stats_source": null,
+      "milestone": 3,
+      "ds3_base_row": 2000000,
+      "ds3_base_name": "Shortsword"
     },
     {
-      "id": "bolt_pistol", "display_name": "Bolt Pistol", "kind": "ranged", "hand": "left", "grant": "start_inventory",
-      "ds3_weapon_class": null, "model_source": "boltpistol_model", "texture_source": "boltpistol_texture", "stats_source": "boltpistol_stats", "milestone": 3
+      "id": "bolt_pistol",
+      "display_name": "Bolt Pistol",
+      "kind": "ranged",
+      "hand": "left",
+      "grant": "start_inventory",
+      "ds3_weapon_class": "crossbow",
+      "model_source": null,
+      "texture_source": null,
+      "stats_source": null,
+      "milestone": 3,
+      "ds3_base_row": 14040000,
+      "ds3_base_name": "Light Crossbow",
+      "ammo_row": 404000
     }
   ]
 }

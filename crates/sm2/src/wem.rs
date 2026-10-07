@@ -17,6 +17,11 @@ pub struct WemInfo {
     pub data_offset: usize,
     pub data_len: usize,
     pub chunks: Vec<(String, usize)>,
+    /// where the `fmt ` chunk body starts and how long the chunk says it is
+    pub fmt_offset: usize,
+    pub fmt_size: usize,
+    /// (body offset, length) of a separate `vorb` chunk, when the file has one
+    pub vorb: Option<(usize, usize)>,
 }
 
 pub fn codec_name(tag: u16) -> &'static str {
@@ -63,8 +68,11 @@ impl WemInfo {
                     if end > body + 16 {
                         info.fmt_extra = wem[body + 16..end].to_vec();
                     }
+                    info.fmt_offset = body;
+                    info.fmt_size = len;
                     have_fmt = true;
                 }
+                "vorb" => info.vorb = Some((body, len)),
                 "data" => {
                     info.data_offset = body;
                     info.data_len = end - body;
@@ -106,9 +114,13 @@ impl Pcm {
     }
 }
 
-/// Decode a wem into PCM. Only plain PCM is understood so far; anything else returns an error that names the codec.
+/// Decode a wem into PCM: plain PCM and Wwise Vorbis (what Space Marine 2 uses). Any other codec returns an error that
+/// names it.
 pub fn decode(wem: &[u8]) -> Result<Pcm> {
     let info = WemInfo::parse(wem)?;
+    if info.format_tag == 0xFFFF {
+        return crate::wwvorbis::decode(wem);
+    }
     let data = wem.get(info.data_offset..info.data_offset + info.data_len).ok_or_else(|| anyhow!("data chunk is cut off"))?;
     let is_pcm = info.format_tag == 0x0001 || (info.format_tag == 0xFFFE && info.fmt_extra.len() >= 24 && u16le(&info.fmt_extra, 8 + 8) == Some(1));
     if !is_pcm {
@@ -200,9 +212,12 @@ mod tests {
 
     #[test]
     fn other_codecs_are_named_in_the_error() {
-        let w = test_wem(0xFFFF, 2, 48000, 0, &[0u8; 8], &[1, 2, 3, 4]);
+        let w = test_wem(0x3041, 2, 48000, 0, &[0u8; 8], &[1, 2, 3, 4]);
         let err = decode(&w).unwrap_err().to_string();
-        assert!(err.contains("Wwise Vorbis") && err.contains("FFFF"), "{err}");
+        assert!(err.contains("Wwise Opus") && err.contains("3041"), "{err}");
+        // a damaged Wwise Vorbis file is an error too, not a panic
+        let v = test_wem(0xFFFF, 2, 48000, 0, &[0u8; 8], &[1, 2, 3, 4]);
+        assert!(decode(&v).is_err());
     }
 
     #[test]
