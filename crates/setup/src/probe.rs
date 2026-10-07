@@ -272,6 +272,32 @@ fn step_classes(rep: &mut Report, paks: &mut PakSet) -> Result<()> {
         }
     }
     rep.say(format!("  {mentions} lines in {files_with} .cls files mention a chainsword or a bolt pistol"));
+
+    // other text-like files that name the weapons (a quick census so nothing important is missed)
+    for ext in ["asset", "csv", "txt", "xml", "json", "sfx", "lua", "ini"] {
+        let names = paks.find(|k| k.ends_with(&format!(".{ext}")));
+        if names.is_empty() {
+            continue;
+        }
+        let (mut checked, mut with, mut shown) = (0usize, 0usize, 0usize);
+        for n in names.iter().take(6000) {
+            let Ok(text) = paks.read_text(n, 2 << 20) else { continue };
+            checked += 1;
+            let low = text.to_ascii_lowercase();
+            if low.contains("chainsword") || low.contains("bolt_pistol") {
+                with += 1;
+                if shown < 3 {
+                    shown += 1;
+                    let line = text.lines().find(|l| {
+                        let ll = l.to_ascii_lowercase();
+                        ll.contains("chainsword") || ll.contains("bolt_pistol")
+                    });
+                    rep.say(format!("  .{ext} mention in {n}: {}", line.unwrap_or("").trim()));
+                }
+            }
+        }
+        rep.say(format!("  .{ext}: {} files, {checked} read, {with} mention the weapons", names.len()));
+    }
     Ok(())
 }
 

@@ -7,8 +7,8 @@
 //!
 //! Output goes next to the hook log: probe-ds3.txt, probe-ds3-weapons.csv, probe-ds3-inventory.csv,
 //! probe-ds3-samples.csv and probe-ds3-text-*.csv. Nothing here writes to game memory or calls a game function.
-use super::{memscan, version};
-use ashen_common::{config::HookConfig, fmg, logging::Logger, VERSION};
+use super::{audio, memscan, version};
+use ashen_common::{config::HookConfig, fmg, logging::Logger, mixer::Clip, VERSION};
 use darksouls3::param::EQUIP_PARAM_WEAPON_ST;
 use darksouls3::sprj::{CSRegulationManager, GameDataMan, PlayerIns, SprjTaskGroupIndex, SprjTaskImp};
 use darksouls3::util::system::wait_for_system_init;
@@ -18,11 +18,13 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 static FRAMES: AtomicU64 = AtomicU64::new(0);
+/// Set by the in-game task once a real world is loaded (not the title screen).
+static IN_WORLD: AtomicBool = AtomicBool::new(false);
 
 /// The anchors that identify the item-name tables (exact whole strings, English game).
 const ANCHORS: [&str; 10] = ["Straight Sword", "Dagger", "Broadsword", "Longsword", "Short Bow", "Light Crossbow", "Avelyn", "Bolt", "Estus Flask", "Uchigatana"];
@@ -64,6 +66,8 @@ pub fn thread_body(cfg: HookConfig) {
     }
 
     let start = Instant::now();
+    let mut world_since: Option<Instant> = None;
+    let mut audio_checked = false;
     let mut scans_done = 0usize;
     let scan_at = [Duration::from_secs(25), Duration::from_secs(100), Duration::from_secs(260)];
     let mut last_frames = 0u64;
@@ -78,6 +82,14 @@ pub fn thread_body(cfg: HookConfig) {
                 Err(p) => log.log(&format!("text-table scan {scans_done} crashed: {}", panic_text(&*p))),
             }
         }
+        if IN_WORLD.load(Ordering::Relaxed) && world_since.is_none() {
+            world_since = Some(Instant::now());
+            log.log("a world is loaded (the player is in the game)");
+        }
+        if !audio_checked && world_since.is_some_and(|w| w.elapsed() > Duration::from_secs(6)) {
+            audio_checked = true;
+            audio_check(&log);
+        }
         if t.as_secs() % 30 == 5 {
             let f = FRAMES.load(Ordering::Relaxed);
             if f != last_frames {
@@ -91,6 +103,22 @@ pub fn thread_body(cfg: HookConfig) {
             // nothing left to do: stay alive only because the task handle lives here
             std::thread::sleep(Duration::from_secs(3600));
         }
+    }
+}
+
+/// Two short beeps through the mashup's own output path, so the player can confirm sound works inside the game.
+fn audio_check(log: &Arc<Logger>) {
+    match catch_unwind(AssertUnwindSafe(|| audio::start(log.clone()))) {
+        Ok(Some(a)) => {
+            a.play(Arc::new(Clip::tone(523.0, 250, 0.25)), 1.0);
+            std::thread::sleep(Duration::from_millis(450));
+            a.play(Arc::new(Clip::tone(784.0, 250, 0.25)), 1.0);
+            std::thread::sleep(Duration::from_millis(400));
+            log.log("audio check: two beeps were sent to the sound device (the player should have heard a low and a high beep)");
+            // the device thread ends when the handle is dropped
+        }
+        Ok(None) => log.log("audio check: no sound device could be opened"),
+        Err(p) => log.log(&format!("audio check crashed: {}", panic_text(&*p))),
     }
 }
 
@@ -215,6 +243,7 @@ impl ProbeState {
         if !self.world_dumped {
             self.world_dumped = true;
             self.dump_player(player);
+            IN_WORLD.store(true, Ordering::Relaxed);
         }
         // live values: the character's own data module, and the save-side copy, side by side
         let m = &player.super_chr_ins.modules.data;

@@ -5,6 +5,7 @@ pub mod config;
 pub mod fmg;
 pub mod generated;
 pub mod logging;
+pub mod mixer;
 pub mod netguard;
 pub mod paths;
 pub mod redirect;

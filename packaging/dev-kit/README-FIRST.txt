@@ -24,14 +24,17 @@ How to do it (about 15 minutes)
         - use any consumable (an Estus sip is fine) and, if you have one, shoot a bow or crossbow once,
         - open the inventory menu once, then quit to the desktop from the in-game menu as usual.
      (If it asks about connecting online, that is expected: it is blocked on purpose.)
+     About 6 seconds after your character appears in the world you should hear TWO short beeps (a low one, then a
+     higher one). That is a test of playing sound inside the game; please note whether you heard them.
      Please do this once with your normal character - the probe records what the game reports while you play.
   4. Double-click  Send-Logs.bat . It puts  AshenMarine-logs.zip  on your Desktop. Attach it to the chat and tell me:
        - did Dark Souls III start and feel normal (load times, menus, anything odd)?
+       - did you hear the two beeps, and did the game's own sound stay normal while they played?
        - did the pictures in step 2 look right?
 
 What it records (you can read every file yourself)
   ashenmarine\probe-sm2\probe-report.txt   what is inside your Space Marine 2 weapon files (names, sizes, a few text lines)
-  ashenmarine\logs\probe-ds3.txt           game build, and what the game reports about weapons, inventory, stamina
+  ashenmarine\logs\probe-ds3.txt           game build, what the game reports about weapons, inventory, stamina, the beep test
   ashenmarine\logs\probe-ds3-*.csv         the weapon table, your inventory item ids, stamina samples, item-name tables
   ashenmarine\logs\hook.log, launcher.log  what the safety helper did
   Your Windows user name and Steam id are masked in the copies Send-Logs makes. Your character's NAME is not logged.

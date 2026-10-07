@@ -1,5 +1,6 @@
 //! Optional in-game features. EVERYTHING here is optional: if anything is unexpected it logs why and stops, and the
 //! sandbox (save redirect + offline guard) keeps working. Nothing in this module may close the game.
+mod audio;
 mod memscan;
 mod probe;
 mod version;

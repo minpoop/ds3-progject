@@ -37,7 +37,10 @@ Anything not written here is lost at the next context compaction. Newest entries
 | Fail closed (missing private save / missing config) | scenarios C, D |
 | Launcher: backup, private copy, launch, verify; restore if the real save changed; refuse if game already running / second launcher | `tools/wine-launcher-test.sh` E, H, F, G, I, J |
 | Real ModEngine2 2.1.0 accepts our config + CLI and loads our hook DLL through `external_dlls` | scenario K and an earlier manual run (ME2's own log: "Loaded external DLL ...") |
-| **Not verified yet:** anything inside the real Dark Souls III process | needs the owner's PC test |
+| SM2 readers (`crates/sm2`): zip paks incl. a stored zip inside a pak, both texture mip layouts, BC1-BC7 decode to PNG/DDS, Wwise bank chunks + event->action->container->sound chains, wem headers, PCM->WAV | 26 unit tests on synthetic data (no game file) |
+| `ashenmarine-setup probe`: finds SM2, reports weapon files / textures / .cls / sounds, writes previews; **install stays byte-identical** | integration test on a synthetic install + `tools/wine-setup-test.sh` (the shipped .exe under Wine) |
+| Hook `features` (read-only probe): strict FMG text-table finder in own memory (no false hits in random data), version gate, diagnostics, two-beep audio path, mixer | Wine unit tests (5) + native tests (40 in common incl. fmg + mixer); launcher scenarios L/K (probe thread starts, copes with an unknown game, sandbox unaffected) |
+| **Not verified yet:** anything inside the real Dark Souls III process (hooks, the probe, audio) and the real SM2 formats | needs the owner's PC test (kit 0.2) |
 
 ## Findings / gotchas
 
@@ -51,6 +54,18 @@ Anything not written here is lost at the next context compaction. Newest entries
 - The hook must never show a dialog while the game keeps running: it writes `FATAL.txt` and terminates; the launcher shows
   the reason after the process is gone.
 - ModEngine2's launcher stays alive while the game runs (real behaviour): the launcher watches the game process, not ME2.
+- `darksouls3` 0.14 (read from source, not run): knows only DS3 **1.15.2.0 (English)** and **1.15.2.1 (Japanese)** and *panics* on any other
+  build, so the hook checks the exe's version resource first. It gives: `GameDataMan::give_item_directly(ItemId, qty)` and
+  `MapItemMan::grant_item` (with pop-up); `CSRegulationManager::get_param::<EQUIP_PARAM_WEAPON_ST>()` rows editable in memory (fields incl.
+  `atk_base_physics`, `equip_model_id`, `icon_id`, `wep_se_id_offset`, `arrow_bolt_equip_id`, `max_arrow_quantity`, `durability`, `weight`);
+  `PlayerGameData` (stats, inventory with quantities, equipped slots); `ChrDataModule` hp/fp/stamina; a per-frame task API (`SprjTaskImp::run_recurring`).
+  It does **not** give: animation/TAE state, message (FMG) lookup, sound events, input.
+- DS3 PC has Arxan (guardIT) code restoration: do not patch game code; our inline hooks are only on system DLL APIs, the crate's task API
+  runs on the game's own thread instead.
+- Triggers for the weapon sounds will be polled (a stamina drop = a swing, a falling ammo count = a shot); item names will need the text tables
+  (FMG) found in memory, or a loose msg override. The probe in kit 0.2 collects exactly that evidence.
+- Panics now unwind (workspace profile): optional features catch them at their own thread entry points and log; every `extern "system"`
+  boundary still aborts on unwind, as before.
 
 ## Scan part 1 (owner's PC, 2026-10-07) - what it showed
 
@@ -81,10 +96,15 @@ and an archive reader to modify an existing weapon file). The in-game side (gran
 
 ## Open questions (waiting on the owner's PC)
 
-1. Scan part 2 (DS3 version/save location; the real file set of one chainsword and one bolt pistol; audio archive structure) and the owner's choice of first-build path.
-2. Does the milestone-1 kit run Dark Souls III normally on the owner's PC (hooks inside the real process)?
+1. Kit 0.2 step 1 (`Probe-SM2.bat`): do my readers cope with the real SM2 files? Texture descriptor/mip layout, `.cls` grammar, Wwise bank version
+   and HIRC chains, event names, wem codec (Vorbis / Opus / PCM?). Scan part 2 (PowerShell, independent of my parsers) is the fallback.
+2. Kit 0.2 step 2 (`Play-AshenMarine.bat`): does Dark Souls III run normally with the hooks? Which build is it (1.15.2.0 English?)? Does the
+   per-frame probe run, does the FMG finder see the item-name tables, do stamina/ammo samples show swings and shots, are the two beeps heard?
 3. Where exactly does DS3 keep its save on the owner's PC (`%APPDATA%\DarkSoulsIII\<steamid>\DS30000.sl2` expected).
 
 ## Next
 
-- M2: read SM2 weapon content (after the scan). M3: weapons in DS3. M4: Melty listing/release/screenshot/publish.
+- Owner runs kit 0.2 (dist/AshenMarine-dev-0.2.0.zip) and sends AshenMarine-logs.zip. Then: fill `sm2_sources` / `sounds` / `weapons` sheet cells from
+  the report, decide the weapon-row and naming approach from the DS3 probe, finish the real conversion (assets/ + ready.json) in the setup tool.
+- M3: grant + edit the two weapons, SM2 sounds through the mixer, polled triggers. M4: Melty listing, release, one-click check, real screenshot,
+  publish only with the owner's OK.
