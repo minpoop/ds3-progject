@@ -3,6 +3,7 @@
 pub mod bnk;
 pub mod hirc;
 pub mod pak;
+pub mod render;
 pub mod texture;
 pub mod wem;
 pub mod wwvorbis;
