@@ -22,8 +22,9 @@ rm -rf "$OUT" "dist/$NAME.zip"
 mkdir -p "$OUT/ashenmarine" "$OUT/modengine2/modengine2/bin" "$OUT/modengine2/modengine2/crashpad" "$OUT/modengine2/modengine2/tools/scyllahide"
 
 cp "$BIN/ashenmarine-launcher.exe" "$BIN/ashenmarine_hook.dll" "$OUT/ashenmarine/"
-cp packaging/dev-kit/Play-AshenMarine.bat packaging/dev-kit/Send-Logs.bat packaging/dev-kit/README-FIRST.txt "$OUT/"
-cp THIRD_PARTY_NOTICES.md "$OUT/THIRD_PARTY_NOTICES.txt"
+# Windows line endings for everything a person opens or double-clicks
+for f in packaging/dev-kit/Play-AshenMarine.bat packaging/dev-kit/Send-Logs.bat packaging/dev-kit/README-FIRST.txt; do sed 's/\r$//; s/$/\r/' "$f" > "$OUT/$(basename "$f")"; done
+sed 's/\r$//; s/$/\r/' THIRD_PARTY_NOTICES.md > "$OUT/THIRD_PARTY_NOTICES.txt"
 
 # ModEngine2: only what it needs to run (no debug-menu assets, no developer headers)
 cp "$ME2_DIR/modengine2_launcher.exe" "$OUT/modengine2/"
