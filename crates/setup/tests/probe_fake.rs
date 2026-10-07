@@ -43,9 +43,10 @@ fn probe_reads_a_synthetic_install_and_leaves_it_untouched() {
         "sound events about pistols and firearms in general: 1",
         "wpn_firearm_shoot_2d_bolt_pistol",
         "1 zip files inside the paks",
-        "weapon bank: 3 distinct media ids are referenced; 3 of them are in the zips",
-        "codec Wwise Vorbis (0xFFFF): 2 files",
-        "codec PCM (0x0001): 1 files",
+        // 13 sound files are named by the weapon bank; 11 are in its zip (one is stored in the bank, one is missing)
+        "weapon bank: 13 distinct media ids are referenced; 11 of them are in the zips",
+        "codec Wwise Vorbis (0xFFFF): 4 files",
+        "codec PCM (0x0001): 7 files",
         "kept 2 small sound clips",
     ] {
         assert!(report.contains(needle), "report is missing {needle:?}:\n{report}");

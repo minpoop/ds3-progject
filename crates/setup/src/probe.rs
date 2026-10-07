@@ -2,10 +2,11 @@
 //! It writes `probe-report.txt` (everything it found, line by line) plus a few preview pictures into the output
 //! folder. It never writes anything inside the game folder.
 use crate::report::{panic_text, Report};
-use anyhow::{bail, Result};
-use ashen_common::{steam, SM2_APP_ID, VERSION};
+use crate::{find_sm2, human, open_paks, words};
+use anyhow::Result;
+use ashen_common::VERSION;
 use ashen_sm2::bnk::{self, Bank};
-use ashen_sm2::pak::{self, NestedZip, PakSet};
+use ashen_sm2::pak::{NestedZip, PakSet};
 use ashen_sm2::texture::{self, format_name};
 use ashen_sm2::wem::{self, WemInfo};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -20,17 +21,6 @@ pub struct Opts {
 
 const WEAPON_WORDS: [&str; 4] = ["chainsword", "bolt_pistol", "bolt_rifle", "bolt_carbine"];
 
-fn human(n: u64) -> String {
-    const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut v = n as f64;
-    let mut i = 0;
-    while v >= 1024.0 && i < U.len() - 1 {
-        v /= 1024.0;
-        i += 1;
-    }
-    if i == 0 { format!("{n} B") } else { format!("{v:.1} {}", U[i]) }
-}
-
 fn safe_name(s: &str) -> String {
     s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect()
 }
@@ -39,8 +29,8 @@ fn step(rep: &mut Report, title: &str, f: impl FnOnce(&mut Report) -> Result<()>
     rep.section(title);
     match catch_unwind(AssertUnwindSafe(|| f(rep))) {
         Ok(Ok(())) => {}
-        Ok(Err(e)) => rep.say(format!("  THIS STEP FAILED: {e:#}")),
-        Err(p) => rep.say(format!("  THIS STEP CRASHED: {}", panic_text(&*p))),
+        Ok(Err(e)) => rep.say_wrapped("  ", &format!("THIS STEP FAILED: {e:#}")),
+        Err(p) => rep.say_wrapped("  ", &format!("THIS STEP CRASHED: {}", panic_text(&*p))),
     }
 }
 
@@ -52,13 +42,7 @@ pub fn run(opts: &Opts) -> bool {
 
     let mut install: Option<(PathBuf, Option<String>)> = None;
     step(&mut rep, "1/6 Finding Space Marine 2", |rep| {
-        let found = match &opts.sm2 {
-            Some(p) => (p.clone(), None),
-            None => match steam::locate(SM2_APP_ID) {
-                Some(x) => x,
-                None => bail!("Space Marine 2 was not found through Steam (app {SM2_APP_ID}). Start the probe again with  --sm2 \"<its folder>\""),
-            },
-        };
+        let found = find_sm2(opts.sm2.as_deref())?;
         rep.say(format!("  folder:   {}", found.0.display()));
         rep.say(format!("  Steam build id: {}", found.1.as_deref().unwrap_or("(unknown)")));
         for rel in ["Warhammer 40000 Space Marine 2.exe", "start_protected_game.exe", "client_pc", "server_pc", "EasyAntiCheat"] {
@@ -71,33 +55,7 @@ pub fn run(opts: &Opts) -> bool {
 
     let mut pakset: Option<PakSet> = None;
     step(&mut rep, "2/6 Opening the game archives (.pak)", |rep| {
-        let mut dir = None;
-        for rel in ["client_pc/root/paks/client", "client_pc/root/paks"] {
-            let p = root.join(rel);
-            if p.is_dir() && pak::list_paks(&p).map(|v| !v.is_empty()).unwrap_or(false) {
-                dir = Some(p);
-                break;
-            }
-        }
-        let Some(dir) = dir else { bail!("no .pak files found below {}\\client_pc\\root\\paks", root.display()) };
-        let files = pak::list_paks(&dir)?;
-        rep.say(format!("  {} archives below {}", files.len(), dir.display()));
-        let mut set = PakSet::new();
-        let total: u64 = files.iter().filter_map(|f| std::fs::metadata(f).ok()).map(|m| m.len()).sum();
-        rep.say(format!("  together {}", human(total)));
-        for (i, f) in files.iter().enumerate() {
-            if let Err(e) = set.add(f) {
-                set.skipped.push((f.clone(), format!("{e:#}")));
-            }
-            if (i + 1) % 10 == 0 || i + 1 == files.len() {
-                rep.progress(&format!("    opened {}/{} ({:.0}s)", i + 1, files.len(), rep.elapsed()));
-            }
-        }
-        rep.say(format!("  opened {} archives, {} names in total, {} duplicate names", set.pak_count(), set.entry_count(), set.duplicate_names));
-        for (p, why) in &set.skipped {
-            rep.say(format!("  SKIPPED {}: {why}", p.display()));
-        }
-        pakset = Some(set);
+        pakset = Some(open_paks(rep, &root)?);
         Ok(())
     });
     let Some(mut paks) = pakset else { return false };
@@ -357,11 +315,6 @@ fn step_classes(rep: &mut Report, paks: &mut PakSet) -> Result<()> {
         rep.say(format!("  .{ext}: {} files, {checked} read, {with} mention the weapons", names.len()));
     }
     Ok(())
-}
-
-/// Identifier-like words of a text (letters, digits, underscore), 5..=80 characters.
-fn words(text: &str) -> impl Iterator<Item = &str> {
-    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| (5..=80).contains(&w.len()) && w.bytes().any(|b| b.is_ascii_alphabetic()))
 }
 
 /// The first `n` bytes of an entry of a nested zip (empty if it cannot be read).
