@@ -108,15 +108,97 @@ pub fn fake_install(root: &Path) {
         false,
     );
 
-    // a weapon bank like the real one: only the object table (no DIDX/DATA); every media file is in the bank's zip
+    let (wpn_bnk, wpn_zip) = weapon_sounds();
+    make_zip(
+        &paks.join("default/default_sound_0.pak"),
+        &[("sounds/desktop/wpn.bnk", wpn_bnk), ("sounds/desktop/wpn.zip", wpn_zip), ("sounds/desktop/wpn_melee.bnk", melee_bank())],
+        true,
+    );
+}
+
+/// A plain 16-bit PCM wem (format tag 1) of `frames` identical frames; `frame` holds one value per channel.
+pub fn pcm_wem(rate: u32, frame: &[i16], frames: usize) -> Vec<u8> {
+    let data: Vec<u8> = (0..frames).flat_map(|_| frame.iter().flat_map(|s| s.to_le_bytes())).collect();
+    test_wem(1, frame.len() as u16, rate, 16, &[], &data)
+}
+
+/// A Wwise Vorbis wem that is cut off: it reads as Vorbis but cannot be decoded.
+pub fn damaged_vorbis() -> Vec<u8> {
+    test_wem(0xFFFF, 2, 48000, 0, &[0u8; 8], &[1, 2, 3, 4])
+}
+
+/// The fake weapon bank and the stored zip of its sound files. Like the real bank it holds the object table only and
+/// the sound files are in the zip - except one, to cover a sound that is stored in the bank. The events (the names are the
+/// real ones of design/sheets/sounds.json, hashed at build time):
+///
+/// * `wpn_melee_chainsword_swing`: a random container over two (undecodable) Vorbis sounds; older than `prepare`, the probe test counts it
+/// * `wpn_firearm_shoot_2d_bolt_pistol`: a LAYER of two sounds: mono 1000 for 0.1 s (stream type 0 but not in the bank: found in the
+///   zip) and stereo 2000/-2000 for 0.2 s. Mixed: 3000/-1000 for 0.1 s, then 2000/-2000.
+/// * `wpn_melee_chswd_light_1hit`: a LAYER of a random container over three sounds (1000 for 0.1 s, 2000 for 0.2 s, 3000 for 0.3 s)
+///   and a fourth, streamed with a prefetch (100 for 0.15 s). Takes: 1100, 2100 or 3100 first, 0.15 / 0.2 / 0.3 s long.
+/// * `wpn_melee_chswd_light_2hit`: a LAYER of a good sound (1500, 0.1 s), a sound whose file is not in the zip and one that is damaged
+/// * `wpn_melee_chswd_light_3hit`: one sound that is damaged
+/// * `wpn_melee_chswd_idle_loop`: one sound stored in the bank (500 for 0.2 s), plus a STOP action aimed at a swing sound
+///   (which must not be played)
+///
+/// Returns `(wpn.bnk, wpn.zip)`.
+pub fn weapon_sounds() -> (Vec<u8>, Vec<u8>) {
     let mut b = Builder::new(150);
     b.sound(100, 777, 0).sound(101, 888, 0).sound(102, 889, 1).container(5, 200, &[100, 102]);
-    b.action(300, 0x0403, 200).action(301, 0x0403, 101);
-    b.event(fnv1_lower("wpn_melee_chainsword_swing"), &[300]).event(fnv1_lower("wpn_firearm_shoot_2d_bolt_pistol"), &[301]);
-    let bank = b.build();
+    b.action(300, 0x0403, 200);
+    b.event(fnv1_lower("wpn_melee_chainsword_swing"), &[300]);
+
+    b.sound(118, 7009, 1).container(9, 213, &[101, 118]).action(301, 0x0403, 213);
+    b.event(fnv1_lower("wpn_firearm_shoot_2d_bolt_pistol"), &[301]);
+
+    b.sound(110, 7001, 1).sound(111, 7002, 1).sound(112, 7003, 1).sound(113, 7004, 2);
+    b.container(5, 210, &[110, 111, 112]).container(9, 211, &[210, 113]).action(310, 0x0403, 211);
+    b.event(fnv1_lower("wpn_melee_chswd_light_1hit"), &[310]);
+
+    b.sound(114, 7005, 1).sound(115, 7006, 1).sound(116, 7007, 1).container(9, 212, &[114, 115, 116]).action(311, 0x0403, 212);
+    b.event(fnv1_lower("wpn_melee_chswd_light_2hit"), &[311]);
+
+    b.sound(117, 7008, 1).action(312, 0x0403, 117);
+    b.event(fnv1_lower("wpn_melee_chswd_light_3hit"), &[312]);
+
+    b.sound(119, 7010, 0).media(7010, &pcm_wem(44100, &[500], 8820));
+    b.action(313, 0x0403, 119).action(314, 0x0102, 111);
+    b.event(fnv1_lower("wpn_melee_chswd_idle_loop"), &[313, 314]);
+
     let vorbis = test_wem(0xFFFF, 1, 48000, 0, &REAL_VORBIS_FMT_EXTRA, &[7u8; 900]);
-    let pcm = test_wem(1, 1, 22050, 16, &[], &vec![0u8; 4410]);
-    let media_zip = tempfile::NamedTempFile::new().unwrap();
-    make_zip(media_zip.path(), &[("777.wem", vorbis.clone()), ("888.wem", pcm), ("889.wem", vorbis), ("123456.wem", vec![0u8; 10])], true);
-    make_zip(&paks.join("default/default_sound_0.pak"), &[("sounds/desktop/wpn.bnk", bank), ("sounds/desktop/wpn.zip", fs::read(media_zip.path()).unwrap())], true);
+    let zip = tempfile::NamedTempFile::new().unwrap();
+    make_zip(
+        zip.path(),
+        &[
+            ("777.wem", vorbis.clone()),
+            ("888.wem", pcm_wem(44100, &[1000], 4410)),
+            ("889.wem", vorbis),
+            ("123456.wem", vec![0u8; 10]),
+            ("7001.wem", pcm_wem(44100, &[1000], 4410)),
+            ("7002.wem", pcm_wem(44100, &[2000], 8820)),
+            ("7003.wem", pcm_wem(44100, &[3000], 13230)),
+            ("7004.wem", pcm_wem(44100, &[100], 6615)),
+            ("7005.wem", pcm_wem(44100, &[1500], 4410)),
+            ("7007.wem", damaged_vorbis()),
+            ("7008.wem", damaged_vorbis()),
+            ("7009.wem", pcm_wem(44100, &[2000, -2000], 8820)),
+        ],
+        true,
+    );
+    (b.build(), fs::read(zip.path()).unwrap())
+}
+
+/// A second bank next to the weapon bank, holding an event of the sheet (`wpn_melee_chswd_light_4hit`) that the weapon bank lacks.
+pub fn melee_bank() -> Vec<u8> {
+    let mut b = Builder::new(150);
+    b.sound(1, 9001, 1).action(2, 0x0403, 1).event(fnv1_lower("wpn_melee_chswd_light_4hit"), &[2]);
+    b.build()
+}
+
+/// An install with nothing but a weapon bank and the zip of its sound files (for tests of how `prepare` copes with trouble).
+pub fn sound_install(root: &Path, bank: Vec<u8>, wems: &[(&str, Vec<u8>)]) {
+    fs::create_dir_all(root).unwrap();
+    let zip = tempfile::NamedTempFile::new().unwrap();
+    make_zip(zip.path(), wems, true);
+    make_zip(&root.join("client_pc/root/paks/client/default/default_sound_0.pak"), &[("sounds/desktop/wpn.bnk", bank), ("sounds/desktop/wpn.zip", fs::read(zip.path()).unwrap())], true);
 }

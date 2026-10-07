@@ -2,6 +2,7 @@
 //! Nothing in this crate writes to the install, and nothing in it contains game data.
 pub mod bnk;
 pub mod hirc;
+pub mod mix;
 pub mod pak;
 pub mod render;
 pub mod texture;
