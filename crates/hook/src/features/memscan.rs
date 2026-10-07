@@ -144,3 +144,12 @@ pub fn find_pointers(targets: &[usize], budget: Duration) -> Vec<(usize, usize)>
     hits.dedup();
     hits
 }
+
+/// Are `len` bytes at `addr` readable right now? (Checks both ends; for a pointer chain that must not fault.)
+pub fn readable(addr: usize, len: usize) -> bool {
+    if addr < 0x10000 || len == 0 {
+        return false;
+    }
+    let mut b = [0u8; 8];
+    read_into(addr, &mut b) == 8 && read_into(addr + len.saturating_sub(8), &mut b) == 8
+}

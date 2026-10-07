@@ -212,6 +212,17 @@ impl Sfx {
         }
 
         let Ok(player) = PlayerIns::local_player() else { return };
+        // This runs 60 times a second, also across loading screens: look before every hop so a stale pointer is a skipped
+        // frame, not a crash.
+        let pgd_addr = player.player_game_data.as_ptr() as usize;
+        let modules_addr = player.super_chr_ins.modules.as_ptr() as usize;
+        if !memscan::readable(player as *const PlayerIns as usize, core::mem::size_of::<PlayerIns>())
+            || !memscan::readable(pgd_addr, core::mem::size_of::<PlayerGameData>())
+            || !memscan::readable(modules_addr, 0x40)
+            || !memscan::readable(*(modules_addr as *const usize).add(3), 0x1c8)
+        {
+            return;
+        }
         let pgd: &PlayerGameData = player.player_game_data.as_ref();
         if pgd.equipment.is_main_menu() {
             return; // the placeholder character of the title screen

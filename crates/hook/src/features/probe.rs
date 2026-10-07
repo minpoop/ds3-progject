@@ -233,11 +233,7 @@ struct ProbeState {
 
 /// Is `len` bytes at `addr` readable right now?
 fn readable(addr: usize, len: usize) -> bool {
-    if addr < 0x10000 {
-        return false;
-    }
-    let mut b = [0u8; 8];
-    memscan::read_into(addr, &mut b) == 8 && memscan::read_into(addr + len.saturating_sub(8), &mut b) == 8
+    memscan::readable(addr, len)
 }
 
 impl ProbeState {
