@@ -14,6 +14,7 @@ pub const VK_F5: i32 = 0x74;
 pub const VK_F6: i32 = 0x75;
 pub const VK_F7: i32 = 0x76;
 pub const VK_F8: i32 = 0x77;
+pub const VK_F9: i32 = 0x78;
 
 // XINPUT_GAMEPAD button bits
 const XI_LEFT_SHOULDER: u16 = 0x0100;

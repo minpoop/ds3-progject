@@ -81,7 +81,7 @@ fn main() -> ExitCode {
     let sm2 = args.sm2.or_else(|| sm2_hint(&dir));
     let done = match args.command {
         Command::Probe => probe::run(&probe::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("probe-out")) }),
-        Command::Prepare => prepare::run(&prepare::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("assets")), normalize: true }).ok(),
+        Command::Prepare => prepare::run(&prepare::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("assets")), normalize: true, ab: true }).ok(),
         Command::MeshProbe => meshprobe::run(&meshprobe::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("probe-sm2-mesh")) }),
     };
     if done {

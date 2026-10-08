@@ -8,6 +8,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+/// The folder (below the assets folder) of the second sound set (files sheet row `assets_sounds_exact_dir`).
+pub const ALT_SET: &str = "sounds-exact";
+
 /// One row of the design sheet `sounds.json`: the settings of a slot that are decided by design, not by the files.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetSlot {
@@ -179,6 +182,12 @@ impl Rng {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_second_sets_folder_is_the_one_the_files_sheet_names() {
+        let row = crate::generated::files::FILES.iter().find(|f| f.id == "assets_sounds_exact_dir").expect("files sheet row");
+        assert!(row.path.ends_with(&format!("/{ALT_SET}")), "{}", row.path);
+    }
 
     fn write_set(dir: &Path) {
         std::fs::create_dir_all(dir).unwrap();

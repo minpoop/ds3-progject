@@ -32,6 +32,10 @@ pub struct Opts {
     /// bring all sounds up together so the loudest one is near full scale (always on in the program; tests switch it off
     /// to see the exact samples)
     pub normalize: bool,
+    /// when the bank can be read exactly, make two sets: `sounds` in the way kit 4 did it (every sound at full volume, the
+    /// set the owner already judged good) and `sounds-exact` with the volumes, delays and weights of the bank, so the two can
+    /// be compared in the game (key F9). Off: one set, made the best way the bank allows.
+    pub ab: bool,
 }
 
 /// How a run ended.
@@ -43,6 +47,9 @@ pub struct Outcome {
     pub prepared: usize,
     /// `.wav` files written
     pub files: usize,
+    /// the same for the second set (`sounds-exact`), when there is one
+    pub alt_prepared: usize,
+    pub alt_files: usize,
     /// `(slot, why)` of every slot that got no sound
     pub failed: Vec<(String, String)>,
     /// `ready.json` was written: the job finished with something to show
@@ -55,6 +62,8 @@ impl Outcome {
         self.ready
     }
 }
+
+pub use ashen_common::soundset::ALT_SET;
 
 /// The weapon sound bank, and the zip next to it that holds the sound files it streams.
 const BANK: &str = "sounds/desktop/wpn.bnk";
@@ -189,8 +198,9 @@ fn index_json(source: &str, entries: &[IndexEntry]) -> String {
 }
 
 /// `ready.json`: the marker that the whole job finished.
-fn ready_json(slots: usize, files: usize) -> String {
-    format!("{{\"format\":1,\"tool\":{},\"slots\":{slots},\"files\":{files}}}", json_text(&format!("ashenmarine-setup {VERSION}")))
+fn ready_json(slots: usize, files: usize, alt: bool) -> String {
+    let alt = if alt { format!(",\"alt_sets\":[{}]", json_text(ALT_SET)) } else { String::new() };
+    format!("{{\"format\":1,\"tool\":{},\"slots\":{slots},\"files\":{files}{alt}}}", json_text(&format!("ashenmarine-setup {VERSION}")))
 }
 
 /// Write through a temporary file and a rename, so a reader never sees half a file.
@@ -677,41 +687,18 @@ pub fn run(opts: &Opts) -> Outcome {
     let missing: HashSet<u32> = slots.iter().map(|s| bnk::fnv1_lower(&s.event)).filter(|id| !has_event(&bank, *id)).collect();
     let lookup = if missing.is_empty() { Lookup::default() } else { Lookup::build(&mut paks, &bank, &bank_name, &slots, &missing) };
     clear_old_output(&opts.out, &sounds_dir, &slots, &mut rep);
+    // a second set of an earlier run must not outlive this one: the game would find its index and play it
+    clear_old_output(&opts.out, &opts.out.join(ALT_SET), &slots, &mut rep);
 
-    let mut entries: Vec<IndexEntry> = Vec::new();
+    // The set the owner already judged good is made the way kit 4 made it (every sound at full volume). When the bank can be read
+    // exactly and both sets are wanted, the exact reading goes into a second folder for comparison.
+    let (engine, alt_engine) = if opts.ab && engine.is_exact() { (Engine::approximate(), Some(engine)) } else { (engine, None) };
+    let source = format!("Space Marine 2 {}", build.as_deref().unwrap_or("unknown"));
     let mut read = |s: &SoundInfo| media.read(&bank, s);
-    for (i, slot) in slots.iter().enumerate() {
-        let event = bnk::fnv1_lower(&slot.event);
-        rep.detail("");
-        rep.detail(format!("---- slot {} of {}: {} ----", i + 1, slots.len(), slot.id));
-        rep.detail(format!("  Space Marine 2 event {}  (id {event} = {event:#010x}); {} variation{} wanted, loop: {}", slot.event, slot.takes, if slot.takes == 1 { "" } else { "s" }, if slot.looped { "yes" } else { "no" }));
-        let made = if has_event(&bank, event) {
-            rep.detail(format!("  The event is in {bank_name}. What it reaches:"));
-            for line in bank.event_tree(event).lines() {
-                rep.detail(format!("    {line}"));
-            }
-            catch_unwind(AssertUnwindSafe(|| make_slot(slot, &bank, &engine, &mut read, &sounds_dir, &mut rep))).unwrap_or_else(|p| Err(anyhow!("this sound crashed the program ({})", panic_text(&*p))))
-        } else {
-            Err(explain_missing(slot, &bank, &bank_name, &lookup, &mut rep))
-        };
-        match made {
-            Ok(entry) => {
-                let secs: Vec<String> = entry.seconds.iter().map(|s| format!("{s:.2} s")).collect();
-                rep.say(format!("  [{:>2}/{}] {} ... {} variation{} ({})", i + 1, slots.len(), slot.id, entry.files.len(), if entry.files.len() == 1 { "" } else { "s" }, secs.join(", ")));
-                outcome.prepared += 1;
-                outcome.files += entry.files.len();
-                entries.push(entry);
-            }
-            Err(e) => {
-                let why = format!("{e:#}");
-                rep.say(format!("  [{:>2}/{}] {} ... NO SOUND", i + 1, slots.len(), slot.id));
-                rep.say_wrapped("          ", &why);
-                // whatever was written for this slot before it failed does not belong in the result
-                clear_slot(&sounds_dir, &slot.id);
-                outcome.failed.push((slot.id.clone(), why));
-            }
-        }
-    }
+    let mut set = render_set(&slots, &bank, &bank_name, &lookup, &engine, &mut read, &sounds_dir, &mut rep, None);
+    outcome.prepared = set.entries.len();
+    outcome.files = set.entries.iter().map(|e| e.files.len()).sum();
+    outcome.failed = std::mem::take(&mut set.failed);
 
     rep.section("Done");
     rep.say(format!("prepared {} of {} slots, {} files", outcome.prepared, outcome.slots, outcome.files));
@@ -721,17 +708,48 @@ pub fn run(opts: &Opts) -> Outcome {
             rep.say_item("  - ", &format!("{slot}: {why}"));
         }
     }
-    if entries.is_empty() {
+    if set.entries.is_empty() {
         rep.say("  Nothing could be prepared, so the mod has no Space Marine 2 sounds yet.");
         rep.say_wrapped("  ", &format!("Please send me the report so I can see why:  {}", report.display()));
         return outcome;
     }
     if opts.normalize {
-        normalize_loudness(&sounds_dir, &entries, &mut rep);
+        normalize_loudness(&sounds_dir, &set.entries, &mut rep);
+    }
+    // the second set, when there is one: a failure here never spoils the first
+    let mut alt_ready = false;
+    if let Some(alt) = &alt_engine {
+        let alt_dir = opts.out.join(ALT_SET);
+        rep.section("The second set: the bank read exactly");
+        rep.say_wrapped("  ", "These are the same sounds with the volumes, delays and weights the game's own sound bank gives them. In the game, key F9 switches between this set and the first one.");
+        let made = std::fs::create_dir_all(&alt_dir).map_err(|e| anyhow!("cannot create {}: {e}", alt_dir.display())).map(|_| {
+            clear_old_output(&opts.out, &alt_dir, &slots, &mut rep);
+            let alt_set = render_set(&slots, &bank, &bank_name, &lookup, alt, &mut read, &alt_dir, &mut rep, Some("exact"));
+            if opts.normalize && !alt_set.entries.is_empty() {
+                normalize_loudness(&alt_dir, &alt_set.entries, &mut rep);
+            }
+            alt_set
+        });
+        match made {
+            Ok(alt_set) if !alt_set.entries.is_empty() => match write_atomic(&alt_dir.join("index.json"), index_json(&source, &alt_set.entries).as_bytes()) {
+                Ok(()) => {
+                    outcome.alt_prepared = alt_set.entries.len();
+                    outcome.alt_files = alt_set.entries.iter().map(|e| e.files.len()).sum();
+                    alt_ready = true;
+                    rep.say(format!("  second set: {} of {} slots, {} files", outcome.alt_prepared, outcome.slots, outcome.alt_files));
+                }
+                Err(e) => rep.say_wrapped("  ", &format!("The second set could not be finished ({e:#}); the first set is not affected.")),
+            },
+            Ok(_) => rep.say_wrapped("  ", "The second set came out empty; the first set is not affected."),
+            Err(e) => rep.say_wrapped("  ", &format!("The second set could not be made ({e:#}); the first set is not affected.")),
+        }
+        if !alt_ready {
+            // no half-made second set may be left for the game to find
+            let _ = std::fs::remove_file(alt_dir.join("index.json"));
+        }
     }
     // the index first, the marker last: ready.json only exists when everything above finished
-    let source = format!("Space Marine 2 {}", build.as_deref().unwrap_or("unknown"));
-    let written = write_atomic(&sounds_dir.join("index.json"), index_json(&source, &entries).as_bytes()).and_then(|_| write_atomic(&opts.out.join("ready.json"), ready_json(outcome.prepared, outcome.files).as_bytes()));
+    let written = write_atomic(&sounds_dir.join("index.json"), index_json(&source, &set.entries).as_bytes()).and_then(|_| write_atomic(&opts.out.join("ready.json"), ready_json(outcome.prepared, outcome.files, alt_ready).as_bytes()));
     if let Err(e) = written {
         rep.say_wrapped("  ", &format!("PROBLEM: {e:#}. The sounds are not marked as ready."));
         return outcome;
@@ -745,6 +763,55 @@ pub fn run(opts: &Opts) -> Outcome {
         rep.say_wrapped("  ", &format!("The mod works without the missing ones; it just stays silent for them. If you would like me to look into why, please send me the report:  {}", report.display()));
     }
     outcome
+}
+
+/// What rendering every slot of the table into one folder gave.
+struct SetResult {
+    entries: Vec<IndexEntry>,
+    /// `(slot, why)` of every slot that got no sound
+    failed: Vec<(String, String)>,
+}
+
+/// Render every slot with `engine` into `dir`. `label` is `Some` for the second set (its lines in the report are shorter).
+#[allow(clippy::too_many_arguments)]
+fn render_set(slots: &[Slot], bank: &Bank, bank_name: &str, lookup: &Lookup, engine: &Engine, read: &mut Reader, dir: &Path, rep: &mut Report, label: Option<&str>) -> SetResult {
+    let mut set = SetResult { entries: Vec::new(), failed: Vec::new() };
+    let tag = label.map(|l| format!(" [{l}]")).unwrap_or_default();
+    for (i, slot) in slots.iter().enumerate() {
+        let event = bnk::fnv1_lower(&slot.event);
+        rep.detail("");
+        rep.detail(format!("---- slot {} of {}: {}{tag} ----", i + 1, slots.len(), slot.id));
+        if label.is_none() {
+            rep.detail(format!("  Space Marine 2 event {}  (id {event} = {event:#010x}); {} variation{} wanted, loop: {}", slot.event, slot.takes, if slot.takes == 1 { "" } else { "s" }, if slot.looped { "yes" } else { "no" }));
+        }
+        let made = if has_event(bank, event) {
+            if label.is_none() {
+                rep.detail(format!("  The event is in {bank_name}. What it reaches:"));
+                for line in bank.event_tree(event).lines() {
+                    rep.detail(format!("    {line}"));
+                }
+            }
+            catch_unwind(AssertUnwindSafe(|| make_slot(slot, bank, engine, read, dir, rep))).unwrap_or_else(|p| Err(anyhow!("this sound crashed the program ({})", panic_text(&*p))))
+        } else {
+            Err(explain_missing(slot, bank, bank_name, lookup, rep))
+        };
+        match made {
+            Ok(entry) => {
+                let secs: Vec<String> = entry.seconds.iter().map(|s| format!("{s:.2} s")).collect();
+                rep.say(format!("  [{:>2}/{}]{tag} {} ... {} variation{} ({})", i + 1, slots.len(), slot.id, entry.files.len(), if entry.files.len() == 1 { "" } else { "s" }, secs.join(", ")));
+                set.entries.push(entry);
+            }
+            Err(e) => {
+                let why = format!("{e:#}");
+                rep.say(format!("  [{:>2}/{}]{tag} {} ... NO SOUND", i + 1, slots.len(), slot.id));
+                rep.say_wrapped("          ", &why);
+                // whatever was written for this slot before it failed does not belong in the result
+                clear_slot(dir, &slot.id);
+                set.failed.push((slot.id.clone(), why));
+            }
+        }
+    }
+    set
 }
 
 /// The loudest sample of all the sounds should be near full scale: sounds made from quiet game levels are all brought up by
@@ -942,7 +1009,8 @@ mod tests {
                 "{\"slot\":\"chainsword_idle\",\"event\":\"wpn_melee_chswd_idle_loop\",\"loop\":true,\"files\":[\"chainsword_idle_1.wav\"],\"seconds\":[2.0]}]}"
             )
         );
-        assert_eq!(ready_json(13, 27), format!("{{\"format\":1,\"tool\":\"ashenmarine-setup {VERSION}\",\"slots\":13,\"files\":27}}"));
+        assert_eq!(ready_json(13, 27, false), format!("{{\"format\":1,\"tool\":\"ashenmarine-setup {VERSION}\",\"slots\":13,\"files\":27}}"));
+        assert_eq!(ready_json(13, 27, true), format!("{{\"format\":1,\"tool\":\"ashenmarine-setup {VERSION}\",\"slots\":13,\"files\":27,\"alt_sets\":[\"sounds-exact\"]}}"));
         // strings are escaped like any JSON string
         let v: Value = serde_json::from_str(&index_json("odd \"name\" \\", &[])).unwrap();
         assert_eq!(v["source"], "odd \"name\" \\");

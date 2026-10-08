@@ -28,6 +28,7 @@ pub const DS3_PREPARE_REPORT: &str = "ds3_prepare_report";
 pub const MSG_OVERRIDE_ITEM: &str = "msg_override_item";
 pub const MSG_OVERRIDE_MANIFEST: &str = "msg_override_manifest";
 pub const DS3_KEY_CACHE: &str = "ds3_key_cache";
+pub const ASSETS_SOUNDS_EXACT_DIR: &str = "assets_sounds_exact_dir";
 
 pub static FILES: &[FileRule] = &[
     FileRule {
@@ -263,5 +264,14 @@ pub static FILES: &[FileRule] = &[
         system: "item_names",
         guarded: false,
         milestone: 3,
+    },
+    FileRule {
+        id: "assets_sounds_exact_dir",
+        path: "{data}/assets/sounds-exact",
+        purpose: "A second set of the same sounds made with the volumes and delays of the game's own sound bank (only when the bank can be read exactly); the in-game key F9 switches between it and the first set",
+        access: Access::Write,
+        system: "asset_convert",
+        guarded: false,
+        milestone: 2,
     },
 ];

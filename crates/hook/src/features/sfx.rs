@@ -11,7 +11,7 @@ use super::{audio, equip, gametask, input, memscan, version};
 use ashen_common::{
     config::HookConfig,
     logging::Logger,
-    soundset::{self, Rng, SoundSet},
+    soundset::{self, Rng, SoundSet, ALT_SET},
     triggers::{AmmoTracker, Combo, Edge, Hand, ShotQueue, Swing, SwingDetector, SwingInput},
     weapons::{self, WeaponClass},
 };
@@ -86,6 +86,21 @@ pub fn thread_body(cfg: HookConfig) {
         log.log("nothing playable: sounds are off");
         return;
     }
+    // a second set made from the same events with the volumes and delays of the game's own sound bank (key F9 switches)
+    let alt_dir = Path::new(&cfg.assets_dir).join(ALT_SET);
+    let alt = match SoundSet::load(&alt_dir) {
+        Ok(l) if !l.set.is_empty() => {
+            for w in l.warnings.iter().take(20) {
+                log.log(&format!("second sound set, file problem: {w}"));
+            }
+            log.log(&format!("second sound set (the bank read exactly): {} slots, {:.1} s of audio; F9 switches between the two sets", l.set.len(), l.set.total_seconds()));
+            Some(l.set)
+        }
+        _ => {
+            log.log("no second sound set (the bank could not be read exactly, or it was not prepared): F9 does nothing");
+            None
+        }
+    };
 
     match version::detect() {
         Ok(v) if version::supported(&v) => log.log(&format!("game build {} is supported", v.version)),
@@ -109,12 +124,12 @@ pub fn thread_body(cfg: HookConfig) {
     let volumes: HashMap<String, f32> = soundset::sheet_slots().into_iter().map(|s| (s.id, s.volume)).collect();
     let input = input::Input::new();
     log.log(&format!(
-        "input: gamepad support {}, mouse {}; trace goes to sfx-trace.csv; hotkeys: F5/F6 quieter/louder, F7 chainsword idle loop{}",
+        "input: gamepad support {}, mouse {}; trace goes to sfx-trace.csv; hotkeys: F5/F6 quieter/louder, F7 chainsword idle loop, F9 other sound set{}",
         if input.has_gamepad_support() { "available" } else { "missing" },
         "read while the game window is in front",
         if cfg.features.experiments { ", F8 test weapons + names" } else { "" }
     ));
-    let mut state = Sfx::new(log.clone(), audio, sounds, volumes, input, dir.join("sfx-trace.csv"), cfg.features.experiments);
+    let mut state = Sfx::new(log.clone(), audio, sounds, alt, volumes, input, dir.join("sfx-trace.csv"), cfg.features.experiments);
     let task = gametask::register(&log, "the sound feature", move || state.frame());
     let _handle = match task {
         Ok(h) => h,
@@ -144,6 +159,9 @@ struct Sfx {
     log: Arc<Logger>,
     audio: audio::Audio,
     sounds: SoundSet,
+    /// the second set (F9), when the setup tool made one
+    alt: Option<SoundSet>,
+    use_alt: bool,
     volumes: HashMap<String, f32>,
     rng: Rng,
     input: input::Input,
@@ -159,6 +177,7 @@ struct Sfx {
     f6: Edge,
     f7: Edge,
     f8: Edge,
+    f9: Edge,
     /// master volume, changed with F5 (quieter) and F6 (louder) in steps of 3 dB
     master_db: f32,
     idle_on: bool,
@@ -174,12 +193,14 @@ struct Sfx {
 }
 
 impl Sfx {
-    fn new(log: Arc<Logger>, audio: audio::Audio, sounds: SoundSet, volumes: HashMap<String, f32>, input: input::Input, trace_path: PathBuf, experiments: bool) -> Sfx {
+    fn new(log: Arc<Logger>, audio: audio::Audio, sounds: SoundSet, alt: Option<SoundSet>, volumes: HashMap<String, f32>, input: input::Input, trace_path: PathBuf, experiments: bool) -> Sfx {
         let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1);
         Sfx {
             log,
             audio,
             sounds,
+            alt,
+            use_alt: false,
             volumes,
             rng: Rng::new(seed),
             input,
@@ -195,6 +216,7 @@ impl Sfx {
             f6: Edge::default(),
             f7: Edge::default(),
             f8: Edge::default(),
+            f9: Edge::default(),
             master_db: 0.0,
             idle_on: false,
             experiments,
@@ -242,6 +264,9 @@ impl Sfx {
         let f8 = self.f8.rising(focus && self.experiments && input::key_down(input::VK_F8));
         if f7 {
             self.toggle_idle();
+        }
+        if self.f9.rising(focus && input::key_down(input::VK_F9)) {
+            self.toggle_set();
         }
 
         let Ok(player) = PlayerIns::local_player() else { return };
@@ -347,7 +372,7 @@ impl Sfx {
             // the loop is already playing at the old level: restart it at the new one
             self.audio.stop(KEY_IDLE);
             let random = self.rng.next();
-            if let Some(clip) = self.sounds.pick("chainsword_idle", random) {
+            if let Some(clip) = active_set(&mut self.sounds, &mut self.alt, self.use_alt).pick("chainsword_idle", random) {
                 let gain = self.gain_of("chainsword_idle", 0.5);
                 self.audio.play_loop(KEY_IDLE, clip, gain);
             }
@@ -360,13 +385,13 @@ impl Sfx {
 
     fn play(&mut self, slot: &str) {
         let random = self.rng.next();
-        match self.sounds.pick(slot, random) {
+        match active_set(&mut self.sounds, &mut self.alt, self.use_alt).pick(slot, random) {
             Some(clip) => {
                 let gain = self.gain_of(slot, 0.8);
                 self.audio.play(clip, gain);
                 self.plays += 1;
                 if self.plays <= 25 {
-                    self.log.log(&format!("playing {slot} (gain {gain:.2})"));
+                    self.log.log(&format!("playing {slot} (gain {gain:.2}{})", if self.use_alt { ", exact set" } else { "" }));
                 }
             }
             None => {
@@ -382,7 +407,7 @@ impl Sfx {
         if self.idle_on {
             self.play("chainsword_idle_start");
             let random = self.rng.next();
-            match self.sounds.pick("chainsword_idle", random) {
+            match active_set(&mut self.sounds, &mut self.alt, self.use_alt).pick("chainsword_idle", random) {
                 Some(clip) => {
                     let gain = self.gain_of("chainsword_idle", 0.5);
                     self.audio.play_loop(KEY_IDLE, clip, gain);
@@ -394,6 +419,29 @@ impl Sfx {
             self.audio.stop(KEY_IDLE);
             self.log.log("F7: chainsword idle loop OFF");
         }
+    }
+
+    /// F9: switch between the two sound sets and play a swing from the one now in use, so the difference is heard at once.
+    fn toggle_set(&mut self) {
+        if self.alt.is_none() {
+            self.log.log("F9: there is no second sound set (Prepare-AshenMarine.bat makes one when the sound bank can be read exactly)");
+            return;
+        }
+        self.use_alt = !self.use_alt;
+        self.log.log(if self.use_alt {
+            "F9: now playing the EXACT set (volumes and delays from the game's own sound bank)"
+        } else {
+            "F9: now playing the CLASSIC set (every sound at full volume, as in kit 4)"
+        });
+        if self.idle_on {
+            self.audio.stop(KEY_IDLE);
+            let random = self.rng.next();
+            if let Some(clip) = active_set(&mut self.sounds, &mut self.alt, self.use_alt).pick("chainsword_idle", random) {
+                let gain = self.gain_of("chainsword_idle", 0.5);
+                self.audio.play_loop(KEY_IDLE, clip, gain);
+            }
+        }
+        self.play("chainsword_swing_1");
     }
 
     /// F8 (private test kits): put the test weapons in the inventory. A weapon that is already there is not given again.
@@ -445,6 +493,14 @@ impl Sfx {
             }
         }
         Some(v)
+    }
+}
+
+/// The set in use: the second one after F9 (when there is one), else the first.
+fn active_set<'a>(first: &'a mut SoundSet, second: &'a mut Option<SoundSet>, use_second: bool) -> &'a mut SoundSet {
+    match second {
+        Some(s) if use_second => s,
+        _ => first,
     }
 }
 
@@ -554,7 +610,7 @@ mod tests {
         let volumes: HashMap<String, f32> = sheet.iter().map(|s| (s.id.clone(), s.volume)).collect();
         let (audio, rx) = audio::Audio::test_pair();
         let log = Arc::new(Logger::open(&dir.join("sfx.txt"), "t"));
-        (Sfx::new(log, audio, sounds, volumes, input::Input::new(), dir.join("trace.csv"), false), rx, dir)
+        (Sfx::new(log, audio, sounds, None, volumes, input::Input::new(), dir.join("trace.csv"), false), rx, dir)
     }
 
     fn played(rx: &std::sync::mpsc::Receiver<audio::Msg>) -> Vec<String> {
@@ -715,6 +771,53 @@ mod tests {
         s.idle_on = true;
         s.change_volume(-3.0);
         assert_eq!(played(&rx), vec!["stop:", "loop:chainsword_idle"]);
+    }
+
+    /// A second set whose clips are twice as long as the first set's (so the test can tell which set played).
+    fn with_alt(s: &mut Sfx, dir: &Path) {
+        let alt_dir = dir.join("alt");
+        std::fs::create_dir_all(&alt_dir).unwrap();
+        let sheet = soundset::sheet_slots();
+        let mut slots = Vec::new();
+        for (i, sl) in sheet.iter().enumerate() {
+            let name = format!("{}_1.wav", sl.id);
+            std::fs::write(alt_dir.join(&name), ashen_common::wav::build(1, 44_100, &vec![1000i16; 441 * (i + 1) * 2])).unwrap();
+            slots.push(format!(r#"{{"slot":"{}","event":"{}","loop":{},"files":["{name}"]}}"#, sl.id, sl.sm2_event, sl.looped));
+        }
+        std::fs::write(alt_dir.join("index.json"), format!(r#"{{"format":1,"sounds":[{}]}}"#, slots.join(","))).unwrap();
+        s.alt = Some(SoundSet::load(&alt_dir).unwrap().set);
+    }
+
+    fn frames_of(msg: &audio::Msg) -> usize {
+        match msg {
+            audio::Msg::Play(c, _) | audio::Msg::Loop(_, c, _) => c.len_frames(),
+            audio::Msg::Stop(_) => 0,
+        }
+    }
+
+    #[test]
+    fn f9_switches_between_the_two_sets_and_previews_a_swing() {
+        let (mut s, rx, dir) = test_sfx("sets");
+        // without a second set F9 does nothing but say so
+        s.toggle_set();
+        assert!(rx.try_recv().is_err());
+        assert!(std::fs::read_to_string(dir.join("sfx.txt")).unwrap().contains("no second sound set"));
+        with_alt(&mut s, &dir);
+        let swing_1 = soundset::sheet_slots().iter().position(|x| x.id == "chainsword_swing_1").unwrap() + 1;
+        s.toggle_set();
+        let m = rx.try_recv().expect("a preview swing from the second set");
+        assert_eq!(frames_of(&m), 441 * swing_1 * 2, "the second set's clip");
+        s.play("chainsword_swing_1");
+        assert_eq!(frames_of(&rx.try_recv().unwrap()), 441 * swing_1 * 2);
+        s.toggle_set();
+        assert_eq!(frames_of(&rx.try_recv().unwrap()), 441 * swing_1, "back to the first set");
+        // a running idle loop is restarted from the set now in use
+        s.idle_on = true;
+        s.toggle_set();
+        let msgs: Vec<audio::Msg> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert!(matches!(msgs[0], audio::Msg::Stop(_)) && matches!(msgs[1], audio::Msg::Loop(..)), "{}", msgs.len());
+        let text = std::fs::read_to_string(dir.join("sfx.txt")).unwrap();
+        assert!(text.contains("now playing the EXACT set") && text.contains("now playing the CLASSIC set"), "{text}");
     }
 
     #[test]

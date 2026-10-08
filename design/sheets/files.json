@@ -265,6 +265,15 @@
       "system": "item_names",
       "guarded": false,
       "milestone": 3
+    },
+    {
+      "id": "assets_sounds_exact_dir",
+      "path": "{data}/assets/sounds-exact",
+      "purpose": "A second set of the same sounds made with the volumes and delays of the game's own sound bank (only when the bank can be read exactly); the in-game key F9 switches between it and the first set",
+      "access": "write",
+      "system": "asset_convert",
+      "guarded": false,
+      "milestone": 2
     }
   ]
 }
