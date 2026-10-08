@@ -221,6 +221,17 @@
       "risk": "low",
       "oracle": "harness",
       "milestone": 2
+    },
+    {
+      "id": "item_names",
+      "name": "Weapons are called what they are",
+      "game": "ds3",
+      "what": "The test weapons show the names Chainsword, Bolt Pistol and Bolt Rounds in the inventory instead of the Dark Souls III names they are built from.",
+      "mechanism": "ashenmarine-setup ds3-prepare, read-only on the Dark Souls III install: opens the game's own archives (Data*.bhd/.bdt; the header keys are the public RSA keys found in the player's own exe, or in {data}/cache/ds3-keys.pem), reads msg/<language>/item.msgbnd.dcx, changes only the weapon and ammunition name entries (and their descriptions) in a copy and writes that copy as a loose file into the ModEngine2 mod folder; every step is checked and nothing is written unless all checks pass (fail closed); the game's archives and files are never changed",
+      "owner": "setup_exe",
+      "risk": "medium",
+      "oracle": "pc_visual",
+      "milestone": 3
     }
   ]
 }

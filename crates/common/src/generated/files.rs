@@ -23,6 +23,11 @@ pub const ASSETS_SOUNDS_DIR: &str = "assets_sounds_dir";
 pub const ASSETS_READY: &str = "assets_ready";
 pub const PREPARE_REPORT: &str = "prepare_report";
 pub const SOUNDS_INDEX: &str = "sounds_index";
+pub const DS3_ARCHIVES: &str = "ds3_archives";
+pub const DS3_PREPARE_REPORT: &str = "ds3_prepare_report";
+pub const MSG_OVERRIDE_ITEM: &str = "msg_override_item";
+pub const MSG_OVERRIDE_MANIFEST: &str = "msg_override_manifest";
+pub const DS3_KEY_CACHE: &str = "ds3_key_cache";
 
 pub static FILES: &[FileRule] = &[
     FileRule {
@@ -211,6 +216,51 @@ pub static FILES: &[FileRule] = &[
         purpose: "Lists the sound slots and their WAV files; read by the hook DLL when the game starts",
         access: Access::Read,
         system: "weapon_sound",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "ds3_archives",
+        path: "{game}/Game",
+        purpose: "Dark Souls III's own archives (Data*.bhd, Data*.bdt, DLC*.bhd/.bdt), opened read-only by ds3-probe and ds3-prepare to read the item text; nothing in this folder is ever changed",
+        access: Access::Read,
+        system: "item_names",
+        guarded: true,
+        milestone: 3,
+    },
+    FileRule {
+        id: "ds3_prepare_report",
+        path: "{data}/ds3-prepare/ds3-report.txt",
+        purpose: "What ds3-probe / ds3-prepare found in the game's archives and what they wrote (private; key fingerprints only, no keys)",
+        access: Access::Write,
+        system: "item_names",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "msg_override_item",
+        path: "{data}/mod/msg/ENGLISH/item.msgbnd.dcx",
+        purpose: "Loose copy of the game's item text with the test weapons' names, picked up by ModEngine2 instead of the archived file",
+        access: Access::Write,
+        system: "item_names",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "msg_override_manifest",
+        path: "{data}/mod/ashenmarine-msg.json",
+        purpose: "Which source text the override was made from (hashes) and what it changed, so a stale override is noticed",
+        access: Access::Write,
+        system: "item_names",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "ds3_key_cache",
+        path: "{data}/cache/ds3-keys.pem",
+        purpose: "Only if the exe does not hold the archive keys as plain text: the public RSA keys the running game has in memory, written by the test kit's probe so ds3-prepare can use them",
+        access: Access::ReadWrite,
+        system: "item_names",
         guarded: false,
         milestone: 3,
     },
