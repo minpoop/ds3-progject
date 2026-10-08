@@ -1,6 +1,6 @@
 {
   "sheet": "weapons",
-  "doc": "The weapons the player gets. Moves and damage rules are Dark Souls III's. The first build repurposes an existing Dark Souls III weapon row (same moveset, same numbers) and gives it Space Marine 2's sounds; Space Marine 2's models and numbers are a later upgrade (milestone 5).",
+  "doc": "The weapons the player gets. Moves and damage rules are Dark Souls III's. The first build repurposes an existing Dark Souls III weapon row (same moveset, same numbers) and gives it Space Marine 2's sounds and, through the item text, its name; Space Marine 2's models and numbers are a later upgrade (milestone 5). The bolt pistol is Avelyn because it is the base-game crossbow that fires a burst of three bolts per trigger pull (the Light Crossbow it started from fires one and then reloads).",
   "columns": {
     "id": {
       "type": "id"
@@ -61,7 +61,7 @@
     },
     "ds3_base_name": {
       "type": "string",
-      "doc": "that row's name in Dark Souls III (English); the text is replaced by display_name in memory only"
+      "doc": "that row's name in Dark Souls III (English); the item-text file (msg/ENGLISH/item.msgbnd.dcx) is overridden so the player sees display_name instead"
     },
     "ammo_row": {
       "type": "int",
@@ -90,13 +90,13 @@
       "kind": "ranged",
       "hand": "left",
       "grant": "start_inventory",
-      "ds3_weapon_class": "crossbow",
+      "ds3_weapon_class": "crossbow with a three-bolt burst (Avelyn)",
       "model_source": null,
       "texture_source": null,
       "stats_source": null,
       "milestone": 3,
-      "ds3_base_row": 14040000,
-      "ds3_base_name": "Light Crossbow",
+      "ds3_base_row": 14090000,
+      "ds3_base_name": "Avelyn",
       "ammo_row": 404000
     }
   ]

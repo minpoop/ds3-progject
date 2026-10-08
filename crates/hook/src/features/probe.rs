@@ -36,6 +36,11 @@ fn dir_of(cfg: &HookConfig) -> PathBuf {
     Path::new(&cfg.log_file).parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// The mashup's own folder (`{data}`): the parent of the logs folder.
+fn data_dir_of(cfg: &HookConfig) -> PathBuf {
+    dir_of(cfg).parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
+}
+
 fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
     if let Some(s) = p.downcast_ref::<&str>() {
         (*s).to_string()
@@ -81,7 +86,9 @@ pub fn thread_body(cfg: HookConfig) {
     // what happens when: some relative to the start, some relative to "the player is in a world"
     let start = Instant::now();
     let mut world_since: Option<Instant> = None;
-    let mut scans = [false; 6];
+    let mut scans = [false; 2];
+    let mut key_scans = [false; 2];
+    let mut keys_found = 0usize;
     let mut beep_title = false;
     let mut beep_world = false;
     let mut last_frames = 0u64;
@@ -105,20 +112,28 @@ pub fn thread_body(cfg: HookConfig) {
             audio_check(&log, "in the world");
         }
 
-        // text-table scans: two by the clock, four after the world loaded (item names are loaded by then, if ever)
-        let due = [
-            t >= Duration::from_secs(25),
-            t >= Duration::from_secs(60),
-            w.is_some_and(|w| w >= Duration::from_secs(10)),
-            w.is_some_and(|w| w >= Duration::from_secs(45)),
-            w.is_some_and(|w| w >= Duration::from_secs(120)),
-            w.is_some_and(|w| w >= Duration::from_secs(240)),
-        ];
+        // the archive keys (public RSA keys the game carries as text) for the setup tool's item-name step: once early, and once
+        // more in the world if the first look found none
+        let key_due = [t >= Duration::from_secs(12), w.is_some_and(|w| w >= Duration::from_secs(20))];
+        for (i, d) in key_due.iter().enumerate() {
+            if *d && !key_scans[i] && (i == 0 || keys_found == 0) {
+                key_scans[i] = true;
+                let out = data_dir_of(&cfg).join("cache").join("ds3-keys.pem");
+                match catch_unwind(AssertUnwindSafe(|| super::keydump::run(&log, &out, Duration::from_secs(40)))) {
+                    Ok(n) => keys_found = keys_found.max(n),
+                    Err(p) => log.log(&format!("key scan crashed: {}", panic_text(&*p))),
+                }
+                break;
+            }
+        }
+
+        // text-table scans: two by the clock (the item names turned out to live in the game's archives, not in memory tables)
+        let due = [t >= Duration::from_secs(25), t >= Duration::from_secs(60)];
         for (i, d) in due.iter().enumerate() {
             if *d && !scans[i] {
                 scans[i] = true;
                 let round = i + 1;
-                if let Err(p) = catch_unwind(AssertUnwindSafe(|| scan_text_tables(&log, &dir, round, round >= 5))) {
+                if let Err(p) = catch_unwind(AssertUnwindSafe(|| scan_text_tables(&log, &dir, round, round >= 2))) {
                     log.log(&format!("text-table scan {round} crashed: {}", panic_text(&*p)));
                 }
                 break; // one scan per half second keeps the game smooth
@@ -697,10 +712,6 @@ fn scan_text_tables(log: &Logger, dir: &Path, round: usize, final_round: bool) {
                 log.log(&format!("    dumped to {name}"));
             }
         }
-    }
-    // the item names are not in an .fmg-shaped table (first real runs): look at how they are stored instead
-    if found.is_empty() && matches!(round, 3 | 6) {
-        super::textdiag::run(log, round);
     }
 }
 

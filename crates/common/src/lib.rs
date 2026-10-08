@@ -9,6 +9,7 @@ pub mod mixer;
 pub mod soundset;
 pub mod triggers;
 pub mod wav;
+pub mod weapons;
 pub mod netguard;
 pub mod paths;
 pub mod redirect;
