@@ -8,6 +8,7 @@
 #   E  prepare started from its own folder, game named in sm2-folder.txt (the double-click way)
 #   F  bad command line (exit code 64)
 #   G  an assets folder inside the game folder is refused (nothing is ever written there)
+#   O  sm2-mesh-probe (the model report) against the synthetic install, and without a game
 #
 # Then the same for Dark Souls III against a synthetic install (made by the example make_fake_ds3: a program file with two
 # throwaway test keys among junk, three encrypted archives with made-up item text and weapon model containers):
@@ -275,6 +276,16 @@ for args in "ds3-prepare --bogus" "ds3-probe --mod x" "ds3-prepare --sm2 x" "ds3
   wine_ds3 "$BIN/ashenmarine-setup.exe" n $args
   check "N '$args' gives exit code 64 and shows how to use it" '[ "$(cat "$D3/n.rc")" = "64" ] && grep -q "ashenmarine-setup ds3-prepare" "$D3/n.out"'
 done
+
+echo; echo "== O: sm2-mesh-probe under Wine against the synthetic Space Marine 2 =="
+(cd "$OUT" && WINEDEBUG=-all timeout 120 xvfb-run -a "$WINE" "$BIN/ashenmarine-setup.exe" sm2-mesh-probe --sm2 "$(winpath "$OUT/Space Marine 2")" --out "$(winpath "$OUT/out-o")" > "$OUT/run-o.out" 2>&1; echo $? > "$OUT/run-o.rc")
+sed 's/^/    /' "$OUT/run-o.out" | head -24
+check "O exit code 0" '[ "$(cat "$OUT/run-o.rc")" = "0" ]'
+check "O the report describes the chainsword template folder" 'grep -q "template folder  tpl/wpn_chainsword_01.tpl" "$OUT/out-o/mesh-report.txt" && grep -q "Model files of the bolt_pistol" "$OUT/out-o/mesh-report.txt"'
+check "O the report has no failed or crashed step" '! grep -q "STEP FAILED\|STEP CRASHED" "$OUT/out-o/mesh-report.txt"'
+check "O the install is byte-identical afterwards" '[ "$(treehash "$OUT/Space Marine 2")" = "$BEFORE" ]'
+(cd "$OUT" && WINEDEBUG=-all timeout 60 xvfb-run -a "$WINE" "$BIN/ashenmarine-setup.exe" sm2-mesh-probe --sm2 "$(winpath "$OUT/empty")" --out "$(winpath "$OUT/out-o2")" > "$OUT/run-o2.out" 2>&1; echo $? > "$OUT/run-o2.rc")
+check "O without a game: exit code 2 and a plain message" '[ "$(cat "$OUT/run-o2.rc")" = "2" ] && grep -q "PROBLEM" "$OUT/out-o2/mesh-report.txt"'
 
 echo; if [ "$FAILS" -eq 0 ]; then echo "ALL SETUP TESTS PASSED"; else echo "$FAILS CHECK(S) FAILED"; fi
 exit "$FAILS"
