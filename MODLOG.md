@@ -124,6 +124,34 @@ Anything not written here is lost at the next context compaction. Newest entries
   strings (kit 0.4 text diagnosis: neighbourhood + pointer scan) and, as a first experiment, overwrite name strings in place (same length, space padded).
 - The first launcher run lasted ~2 s before the second one: Steam was probably not running, so the game restarted itself through Steam (without our protection). The launcher now says so.
 
+## Kit 0.4 results (owner's PC, 2026-10-08) - what they showed
+
+- Owner: **"all sounds work as expected; the names of the weapons were default and the models are default; the crossbow only held 1 shot"**.
+- `prepare` produced 13 slots / 27 files from `wpn.bnk` (Steam build 25098992, bank v150, 12509 objects) but **the exact bank reading failed** (482 of 9544 sound/container objects read exactly; sounds
+  "parsed 44 of 45"), so the approximate walk ran (every sound at full volume). Cause found afterwards from the public Wwise format description (wwiser): in v150 a node has no "override attachment"
+  byte, **does** have a metadata-plug-in block, property ids differ (Volume 0x00, Pitch 0x01, MakeUpGain 0x05, InitialDelay 0x22 in seconds), ranged properties are ids-first, 3D bytes exist only when a node
+  overrides positioning, state chunks carry property bundles and use variable-size ints. A minimal sound is exactly 45 bytes in that layout. Kit 0.5 implements it (unit tests built byte by byte from the description).
+- Triggers: stamina drops of 17 per light attack, 26 per crossbow shot (stamina max 95); the mouse buttons were read as LMB / RMB only (no pad). **The crossbow was in the LEFT hand**: RMB fired it and, because RMB was
+  mapped to "strong attack", also played `chainsword_strong`. The game's default keyboard layout is LMB = right-hand attack, **Shift + LMB = strong attack**, RMB = left-hand weapon (public control lists).
+- Equipment slots (from the owner's log): `equipment_indexes` = [LH1, RH1, LH2, RH2, LH3, RH3, arrow1, bolt1, arrow2, bolt2, ...]; after F8 the bolts auto-equipped to slot 7, equipping the new sword changed entry 1
+  (right hand 1), the crossbow entry 0 (left hand 1). Empty hands point at inventory entries for "Fists" (row 110000). So `equipment_indexes[slot]` -> inventory entry -> item id works; the seven numbers in front of the table
+  (`EquipGameData + 0x08`: arm style, left/right weapon slot in use, arrow/bolt slots) are read as the ChrAsm record of other FromSoftware titles and are only trusted when they are in range (logged either way).
+- Names: the memory rename only reached transient copies of the strings ("Light Crossbow" 1 hit, "Standard Bolt" 1 hit, "Shortsword" 0 hits) and changed nothing on screen. The real source of item names is `msg/<language>/item.msgbnd.dcx`
+  inside the game's encrypted archives. Kit 0.5 reads those archives (own implementation of BHD5 / DCX / BND4 / FMG, read-only) and writes a patched copy as a **loose file for ModEngine2** (`mod/msg/ENGLISH/item.msgbnd.dcx`).
+- Single shot: the Light Crossbow fires one bolt and reloads (design). Weapon table facts: Light Crossbow 14040000, Avelyn 14090000 (same weapon category 11 / motion 46), Repeating Crossbow 14190000. **Avelyn sends three bolts per trigger
+  pull** (base game; 16 STR / 14 DEX; weight 7.5): the bolt pistol now repurposes it, each bolt of a burst plays a shot sound at least 110 ms apart.
+- Weapon table categories (this build): 1 straight sword ... 8 staff/flame/chime, 9 fists and claws, 10 bow, 11 crossbow, 12 shield, 13 arrow, 14 bolt; bolt rows 404000..404600.
+
+## Kit 0.5 (this window) - what changed and why
+
+- Hand-aware attacks: attack inputs map to hands (RB / LMB = right, Shift+LMB or RT = strong right, LB / RMB = left); the weapon class in that hand decides whether a swing sound plays (melee yes; crossbow, bow, shield, catalyst, unarmed no);
+  unreadable equipment = everything sounds (as in kit 4). Shots only count while a crossbow is in a hand and only for bolt stacks (category 14).
+- Bolt pistol = Avelyn; bursts are queued (`ShotQueue`): the first shot at once, further ones >= 110 ms apart. F8 is driven by `design/sheets/weapons.json` and does not give a weapon twice.
+- Two sound sets: `sounds/` (kit-4 style, the default) and `sounds-exact/` (the bank's own volumes and delays); F9 switches and plays a preview swing. The owner decides which is better; then the default flips.
+- Names via the archives (see above); public RSA keys for the archive headers are taken from the player's `DarkSoulsIII.exe` (PEM text) or, if the program file does not hold them as text, from `cache/ds3-keys.pem` which the in-game probe writes from memory.
+- Model groundwork: `ashenmarine-setup sm2-mesh-probe` writes a structural report on the chainsword / bolt pistol template files (hex heads, names, entropy, vertex/index buffer finder); `ds3-probe` also lists the BND4 contents of
+  the DS3 weapon model files. Models stay "DS3 default" in this kit.
+
 ## Space Marine 2 sound events found (kit 0.3 report)
 
 - `wpn.bnk` v150: 7186 sounds, 838 events; media in `wpn.zip` (3642 `.wem`). Names recovered by hashing words: chainsword (`chswd`) events - `wpn_melee_chswd_light_1hit..4hit` (12-16 sounds each),
@@ -152,13 +180,14 @@ and an archive reader to modify an existing weapon file). The in-game side (gran
 
 ## Open questions (waiting on the owner's PC)
 
-1. Kit 0.4: do the prepared sounds sound like a chainsword / bolt pistol (owner listens to the .wav files and in game)? Which container choices are wrong (see the trees in the prepare report)?
-2. Kit 0.4: stamina scale and button bindings (sfx-trace.csv), whether rolls stay silent, whether swings/shots fire at the right moments.
-3. Kit 0.4: weapon table with row names (probe-ds3-weapons.csv), goods names, the text-storage diagnosis (pointer neighbourhood), result of the F8 experiment (grant + in-memory rename).
-4. Which weapon rows to repurpose permanently (currently Shortsword -> Chainsword, Light Crossbow -> Bolt Pistol, Standard Bolt -> Bolt Rounds) and how to name them for good.
+1. Kit 0.5: do the weapons show the names Chainsword / Bolt Pistol / Bolt Rounds (and the new descriptions)? Did `ds3-prepare` find the archive keys in the exe (fingerprints in `ds3-report.txt`)? Which `msg` folders and FMG ids exist (the report lists them)?
+2. Kit 0.5: does the Avelyn burst play three shots; is the crossbow silent as a sword; did equipment reading work (log lines "equipment: ..." with the raw numbers)?
+3. Kit 0.5: which sound set is better (F9): the classic mix or the exact reading? Does the exact reading cover the bank now (report line "reading the bank exactly: N of M")?
+4. Kit 0.5: `mesh-report.txt` - how are the SM2 `.tpl` / `.tpl_data` files laid out; do the vertex/index finders hit; is `tpl_data` compressed?
+5. Which weapon rows to repurpose permanently and how to name them for good (currently Shortsword -> Chainsword, Avelyn -> Bolt Pistol, Standard Bolt -> Bolt Rounds).
 
 ## Next
 
-- Kit 0.4 -> owner -> logs. Then: fix triggers from the trace, make names/grants automatic (no hotkey), equip-aware idle loop, equip/unequip sounds, hit sounds; weapon models (Saber 1SER) remain a separate later upgrade.
-- M2 finish: `ashenmarine-setup prepare` (built, tested natively and under Wine on synthetic installs) as the Melty `setup` step (marker `assets/ready.json`), verify on the owner's PC, preflight milestone 2 clean (it is).
+- Kit 0.5 -> owner -> logs. Then: names verified -> make weapon grant automatic (no hotkey); models: read `mesh-report.txt`, write the SM2 mesh reader, FLVER2/TPF writer for the DS3 weapon model files (`parts/wp_a_*.partsbnd.dcx`), convert textures (BC7/BC5 -> DS3 TPF); equip-aware idle loop,
+  equip/unequip sounds, hit sounds.
 - M4: Melty listing, release, one-click check, real screenshot, publish only with the owner's OK.

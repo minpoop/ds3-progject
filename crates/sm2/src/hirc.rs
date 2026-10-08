@@ -3,8 +3,10 @@
 //! caller learns how many objects of a real bank were understood, and a wrong guess about the layout shows up as a
 //! failure count instead of as wrong audio.
 //!
-//! The field layout follows the public description of the Wwise soundbank format as implemented by rewwise
-//! (vswarte/rewwise, MIT OR Apache-2.0) for bank versions around 145-150, which is what Space Marine 2 uses (150).
+//! The field layout is that of bank version 150 (Wwise 2022.1, what Space Marine 2 uses), as described by the public
+//! documentation of the format: wwiser (bnnm/wwiser) for the per-version fields and rewwise (vswarte/rewwise, MIT OR
+//! Apache-2.0) for the general shape. Only facts about the layout are used; the code is our own. Checked against the
+//! sizes of real objects: a sound without effects, properties, 3D data or states is exactly 45 bytes.
 use crate::bnk::{kind, Bank, HircObject};
 use anyhow::{bail, ensure, Result};
 use std::collections::HashMap;
@@ -38,6 +40,18 @@ impl<'a> Reader<'a> {
     }
     fn f32(&mut self) -> Result<f32> {
         Ok(f32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+    /// Wwise's variable-size integer: seven bits per byte, most significant group first, the top bit says "more follows".
+    fn var(&mut self) -> Result<u32> {
+        let mut v = 0u32;
+        for _ in 0..5 {
+            let b = self.u8()?;
+            v = (v << 7) | u32::from(b & 0x7F);
+            if b & 0x80 == 0 {
+                return Ok(v);
+            }
+        }
+        bail!("variable-size integer longer than five bytes")
     }
     fn skip(&mut self, n: usize) -> Result<()> {
         self.take(n).map(|_| ())
@@ -96,19 +110,36 @@ impl Node {
 
 // ------------------------------------------------------------------------------------------------ node base params
 
+/// Property ids of bank version 150 (the ones that matter for how an event sounds).
+mod prop {
+    pub const VOLUME: u8 = 0x00;
+    pub const PITCH: u8 = 0x01;
+    pub const MAKE_UP_GAIN: u8 = 0x05;
+    pub const INITIAL_DELAY: u8 = 0x22;
+}
+
+/// Effects of the node: override flag, count, and for each effect an index, the effect id and a flags byte.
 fn fx_params(r: &mut Reader) -> Result<()> {
     let _override_parent_fx = r.u8()?;
     let n = r.u8()? as usize;
     if n > 0 {
-        let _bypass = r.u8()?;
-        r.count(n, 8, "effect")?;
-        for _ in 0..n {
-            r.skip(1 + 4 + 1 + 1)?; // index, id, share set, rendered
-        }
+        let _bypass_all = r.u8()?;
+        r.count(n, 32, "effect")?;
+        r.skip(n * (1 + 4 + 1))?; // index, effect id, bypass / share set / rendered bits
     }
     Ok(())
 }
 
+/// Metadata plug-ins of the node (since bank version 140): override flag, count, then index, id, share-set flag each.
+fn metadata_params(r: &mut Reader) -> Result<()> {
+    let _override_parent_metadata = r.u8()?;
+    let n = r.u8()? as usize;
+    r.count(n, 32, "metadata plug-in")?;
+    r.skip(n * (1 + 4 + 1))
+}
+
+/// The two property bundles of a node: plain values (ids first, then one 4-byte value each) and ranged ones (ids first,
+/// then a minimum and a maximum each).
 fn prop_bundle(r: &mut Reader, props: &mut Props) -> Result<()> {
     let n = r.u8()? as usize;
     let mut ids = Vec::with_capacity(n);
@@ -117,51 +148,55 @@ fn prop_bundle(r: &mut Reader, props: &mut Props) -> Result<()> {
     }
     for id in ids {
         match id {
-            0x00 => props.volume_db = r.f32()?,
-            0x02 => props.pitch_cents = r.f32()?,
-            0x06 => props.make_up_db = r.f32()?,
-            0x0F => props.delay_ms = r.i32()?,
+            prop::VOLUME => props.volume_db = r.f32()?,
+            prop::PITCH => props.pitch_cents = r.f32()?,
+            prop::MAKE_UP_GAIN => props.make_up_db = r.f32()?,
+            prop::INITIAL_DELAY => props.delay_ms = (r.f32()? * 1000.0).round() as i32, // seconds in the bank
             _ => r.skip(4)?, // every other property is one 4-byte value
         }
     }
     let m = r.u8()? as usize;
+    let mut range_ids = Vec::with_capacity(m);
     for _ in 0..m {
-        let id = r.u8()?;
+        range_ids.push(r.u8()?);
+    }
+    for id in range_ids {
         let (min, max) = (r.f32()?, r.f32()?);
-        if id == 0x00 {
+        if id == prop::VOLUME {
             props.volume_range = Some((min, max));
         }
     }
     Ok(())
 }
 
+/// Where the sound sits in space. Only a node that overrides its parent's positioning carries the rest; a node with
+/// listener-relative routing then has a 3D byte, and one with a position type other than "none" has a path.
 fn positioning(r: &mut Reader) -> Result<()> {
-    // first byte, most significant bit first: 1 unknown, 2 bits 3D position type, 3 bits speaker panning,
-    // 1 listener-relative routing, 1 override parent
+    // bits, least significant first: 1 override parent, 1 listener-relative routing, 2 panner type, 1 unused, 2 3D position type
     let b0 = r.u8()?;
-    let position_type = (b0 >> 5) & 0b11;
+    let override_parent = b0 & 1 != 0;
     let listener_relative = (b0 >> 1) & 1 != 0;
-    if listener_relative {
-        r.skip(1)?; // diffraction / attenuation / listener-orientation flags and the spatialization mode
-    }
-    if position_type != 0 {
-        // emitter with automation / listener with automation: a path
-        let _path_mode = r.u8()?;
-        let _transition = r.i32()?;
-        let vertices = r.u32()? as usize;
-        r.count(vertices, 4096, "path vertex")?;
-        r.skip(vertices * 16)?;
-        let items = r.u32()? as usize;
-        r.count(items, 4096, "path list item")?;
-        r.skip(items * 8)?;
-        r.skip(items * 12)?;
+    let position_type = (b0 >> 5) & 0b11;
+    if override_parent && listener_relative {
+        r.skip(1)?; // spatialization mode, attenuation, hold / loop / diffraction flags
+        if position_type != 0 {
+            let _path_mode = r.u8()?;
+            let _transition = r.i32()?;
+            let vertices = r.u32()? as usize;
+            r.count(vertices, 4096, "path vertex")?;
+            r.skip(vertices * 16)?;
+            let items = r.u32()? as usize;
+            r.count(items, 4096, "path list item")?;
+            r.skip(items * 8)?; // vertex offset and count per item
+            r.skip(items * 12)?; // x / y / z range per item
+        }
     }
     Ok(())
 }
 
 fn aux(r: &mut Reader) -> Result<()> {
     let b = r.u8()?;
-    let has_aux = (b >> 3) & 1 != 0; // bits, most significant first: 3 unknown, override reflections, has aux, override user sends, 2 unknown
+    let has_aux = (b >> 3) & 1 != 0; // bits, least significant first: 2 unknown, override user sends, has aux, override reflections
     if has_aux {
         r.skip(16)?;
     }
@@ -174,14 +209,26 @@ fn adv_settings(r: &mut Reader) -> Result<()> {
     r.skip(1 + 1 + 2 + 1 + 1)
 }
 
+/// States the node reacts to. Since bank version 146 each state carries a small property bundle instead of an instance id.
 fn state_chunk(r: &mut Reader) -> Result<()> {
-    let props = r.u8()? as usize;
-    r.skip(props * 3)?;
-    let groups = r.u8()? as usize;
+    let props = r.var()? as usize;
+    r.count(props, 256, "state property")?;
+    for _ in 0..props {
+        let _id = r.var()?;
+        r.skip(1 + 1)?; // accumulation type, in-dB flag
+    }
+    let groups = r.var()? as usize;
+    r.count(groups, 256, "state group")?;
     for _ in 0..groups {
         r.skip(4 + 1)?; // group id, sync type
-        let states = r.u8()? as usize;
-        r.skip(states * 8)?;
+        let states = r.var()? as usize;
+        r.count(states, 4096, "state")?;
+        for _ in 0..states {
+            r.skip(4)?; // state id
+            let n = r.u16()? as usize;
+            r.count(n, 256, "state property")?;
+            r.skip(n * (2 + 4))?; // property ids first, then one float each
+        }
     }
     Ok(())
 }
@@ -190,7 +237,9 @@ fn initial_rtpc(r: &mut Reader) -> Result<()> {
     let n = r.u16()? as usize;
     r.count(n, 512, "rtpc")?;
     for _ in 0..n {
-        r.skip(4 + 1 + 1 + 1 + 4 + 1)?; // id, type, accumulation, parameter id, curve id, scaling
+        r.skip(4 + 1 + 1)?; // id, type, accumulation
+        let _parameter = r.var()?;
+        r.skip(4 + 1)?; // curve id, scaling
         let points = r.u16()? as usize;
         r.count(points, 512, "graph point")?;
         r.skip(points * 12)?;
@@ -200,7 +249,7 @@ fn initial_rtpc(r: &mut Reader) -> Result<()> {
 
 fn node_base(r: &mut Reader) -> Result<Base> {
     fx_params(r)?;
-    let _override_attachment = r.u8()?;
+    metadata_params(r)?;
     let _override_bus = r.u32()?;
     let parent = r.u32()?;
     let _flags = r.u8()?;
@@ -348,8 +397,12 @@ impl Parsed {
             Ok(None) => {}
             Err(e) => {
                 self.failed += 1;
-                if self.failures.len() < 8 {
-                    self.failures.push((o.kind, o.id, format!("{e:#}")));
+                // a few of each kind, with the raw bytes, so a layout that differs between Wwise versions can be worked out from a report
+                let same_kind = self.failures.iter().filter(|f| f.0 == o.kind).count();
+                if self.failures.len() < 12 && same_kind < 3 {
+                    let body = bank.body(o);
+                    let hex: Vec<String> = body.iter().take(160).map(|b| format!("{b:02x}")).collect();
+                    self.failures.push((o.kind, o.id, format!("{e:#} [{} bytes: {}]", body.len(), hex.join(" "))));
                 }
             }
         }
@@ -472,16 +525,16 @@ pub fn resolve_event(bank: &Bank, nodes: &HashMap<u32, Node>, event_id: u32, rng
 pub mod testenc {
     //! Encoders for the objects above, written from the same layout description, so the tests can build banks.
     pub fn base(parent: u32, volume_db: f32, delay_ms: i32, volume_range: Option<(f32, f32)>) -> Vec<u8> {
-        let mut b = vec![0u8, 0]; // no effects
-        b.push(0); // override attachment
+        let mut b = vec![0u8, 0]; // no effects (override flag, count)
+        b.extend([0u8, 0]); // no metadata plug-ins (override flag, count)
         b.extend(0u32.to_le_bytes()); // override bus
         b.extend(parent.to_le_bytes());
         b.push(0); // flags
-        // property bundle: volume + delay
+        // property bundle: volume (dB) + initial delay (seconds)
         b.push(2);
-        b.extend([0x00, 0x0F]);
+        b.extend([0x00, 0x22]);
         b.extend(volume_db.to_le_bytes());
-        b.extend(delay_ms.to_le_bytes());
+        b.extend((delay_ms as f32 / 1000.0).to_le_bytes());
         match volume_range {
             Some((lo, hi)) => {
                 b.push(1);
@@ -491,7 +544,7 @@ pub mod testenc {
             }
             None => b.push(0),
         }
-        b.push(0b0000_0000); // positioning: emitter, not listener relative
+        b.push(0b0000_0000); // positioning: does not override the parent's
         b.push(0); // aux flags
         b.extend(0u32.to_le_bytes()); // reflections bus
         b.extend([0u8; 6]); // advanced settings
@@ -632,6 +685,139 @@ mod tests {
         assert!(parse_object(kind::SOUND, &more).unwrap_err().to_string().contains("left over"));
         assert!(parse_object(kind::SOUND, &body[..body.len() - 3]).unwrap_err().to_string().contains("past the end"));
         assert!(parse_object(kind::EVENT, &body).unwrap().is_none(), "kinds it does not cover are skipped");
+    }
+
+    /// A sound the way Wwise 2022.1 writes one with nothing special set, written out byte by byte from the format description
+    /// (not with the test encoder): the real banks of Space Marine 2 hold thousands of sounds that are exactly 45 bytes.
+    fn minimal_sound_bytes() -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend(0x0004_0001u32.to_le_bytes()); // plug-in: Vorbis
+        b.push(2); // stream type: streamed
+        b.extend(0x1234_5678u32.to_le_bytes()); // media id
+        b.extend(0u32.to_le_bytes()); // in-memory size
+        b.push(0); // source bits
+        b.extend([0, 0]); // effects: override flag, none
+        b.extend([0, 0]); // metadata: override flag, none
+        b.extend(0u32.to_le_bytes()); // override bus
+        b.extend(0x0A0B_0C0Du32.to_le_bytes()); // parent
+        b.push(0); // priority / midi bits
+        b.extend([0, 0]); // no properties, no ranged properties
+        b.push(0); // positioning bits
+        b.push(0); // aux bits
+        b.extend(0u32.to_le_bytes()); // reflections bus
+        b.extend([0, 0, 0, 0, 0, 0]); // advanced settings
+        b.extend([0, 0]); // state chunk: no properties, no groups
+        b.extend([0, 0]); // no rtpc curves
+        b
+    }
+
+    #[test]
+    fn the_smallest_sound_is_the_45_bytes_real_banks_show() {
+        let b = minimal_sound_bytes();
+        assert_eq!(b.len(), 45);
+        match parse_object(kind::SOUND, &b).unwrap().unwrap() {
+            Node::Sound { base, source } => {
+                assert_eq!((base.parent, source.media_id, source.stream_type), (0x0A0B_0C0D, 0x1234_5678, 2));
+                assert_eq!(base.props, Props::default());
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn effects_properties_3d_paths_states_and_curves_are_all_skipped_exactly() {
+        let mut b = Vec::new();
+        b.extend(0x0004_0001u32.to_le_bytes());
+        b.push(0);
+        b.extend(7u32.to_le_bytes());
+        b.extend(900u32.to_le_bytes());
+        b.push(1); // source bits
+        // effects: override, 2 of them, bypass-all byte, then (index, id, bits) each
+        b.extend([1, 2, 0]);
+        b.extend([0]);
+        b.extend(0xAAAA_0001u32.to_le_bytes());
+        b.push(2);
+        b.extend([1]);
+        b.extend(0xAAAA_0002u32.to_le_bytes());
+        b.push(0);
+        // metadata: override, 1 plug-in
+        b.extend([0, 1]);
+        b.extend([0]);
+        b.extend(0xBBBB_0001u32.to_le_bytes());
+        b.push(1);
+        b.extend(55u32.to_le_bytes()); // override bus
+        b.extend(66u32.to_le_bytes()); // parent
+        b.push(0x03);
+        // properties: volume -4.5 dB, pitch 120 cents, make-up gain 1.5 dB, initial delay 0.25 s, one other (priority)
+        b.push(5);
+        b.extend([0x00, 0x01, 0x05, 0x22, 0x06]);
+        for v in [-4.5f32, 120.0, 1.5, 0.25, 50.0] {
+            b.extend(v.to_le_bytes());
+        }
+        // ranged properties: volume +-2 dB and pitch +-30 cents, ids first and then the pairs
+        b.push(2);
+        b.extend([0x00, 0x01]);
+        for v in [-2.0f32, 2.0, -30.0, 30.0] {
+            b.extend(v.to_le_bytes());
+        }
+        // positioning: overrides, listener-relative, 3D position type 1 (emitter with automation)
+        b.push(0b0010_0011);
+        b.push(0x0F); // 3D bits
+        b.push(0); // path mode
+        b.extend(1000i32.to_le_bytes());
+        b.extend(2u32.to_le_bytes()); // vertices
+        for _ in 0..2 {
+            b.extend([0u8; 16]);
+        }
+        b.extend(1u32.to_le_bytes()); // list items
+        b.extend([0u8; 8]);
+        b.extend([0u8; 12]);
+        // aux: has aux (bit 3) -> four bus ids, then the reflections bus
+        b.push(0b0000_1000);
+        for i in 0..4u32 {
+            b.extend((100 + i).to_le_bytes());
+        }
+        b.extend(0u32.to_le_bytes());
+        b.extend([0u8; 6]); // advanced settings
+        // state chunk: one property (id 0x82 0x01 = a two-byte variable-size id), one group with two states (one with a property)
+        b.push(1);
+        b.extend([0x82, 0x01, 0, 0]);
+        b.push(1);
+        b.extend(777u32.to_le_bytes());
+        b.push(0); // sync type
+        b.push(2);
+        b.extend(1u32.to_le_bytes());
+        b.extend(0u16.to_le_bytes());
+        b.extend(2u32.to_le_bytes());
+        b.extend(1u16.to_le_bytes());
+        b.extend(0x0005u16.to_le_bytes());
+        b.extend(1.0f32.to_le_bytes());
+        // rtpc: one curve with three points
+        b.extend(1u16.to_le_bytes());
+        b.extend(9u32.to_le_bytes());
+        b.extend([0, 0]);
+        b.push(0x05); // parameter id
+        b.extend(10u32.to_le_bytes());
+        b.push(0);
+        b.extend(3u16.to_le_bytes());
+        b.extend([0u8; 36]);
+        match parse_object(kind::SOUND, &b).unwrap().unwrap() {
+            Node::Sound { base, source } => {
+                assert_eq!((base.parent, source.media_id), (66, 7));
+                let p = base.props;
+                assert_eq!((p.volume_db, p.pitch_cents, p.make_up_db, p.delay_ms), (-4.5, 120.0, 1.5, 250));
+                assert_eq!(p.volume_range, Some((-2.0, 2.0)));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_node_that_does_not_override_positioning_carries_no_3d_bytes() {
+        // the 3D bits are set but the override bit is not: nothing follows, as in real banks
+        let mut b = minimal_sound_bytes();
+        b[14 + 2 + 2 + 4 + 4 + 1 + 2] = 0b0010_0010;
+        assert!(parse_object(kind::SOUND, &b).unwrap().is_some());
     }
 
     #[test]

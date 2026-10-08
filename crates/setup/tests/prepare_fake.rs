@@ -43,7 +43,7 @@ impl Run {
         let sm2 = t.path().join("Space Marine 2");
         let out = t.path().join("ashenmarine").join("assets");
         fake_install(&sm2);
-        let outcome = prepare::run(&Opts { sm2: Some(sm2), out: out.clone(), normalize: false });
+        let outcome = prepare::run(&Opts { sm2: Some(sm2), out: out.clone(), normalize: false, ab: false });
         let run = Run { _t: t, out, outcome };
         if std::env::var_os("ASHEN_SHOW_REPORT").is_some() {
             println!("{}", run.report());
@@ -93,7 +93,7 @@ fn prepare_makes_the_sounds_and_leaves_the_install_untouched() {
     let sm2 = t.path().join("Space Marine 2");
     fake_install(&sm2);
     let before = tree(&sm2);
-    let outcome = prepare::run(&Opts { sm2: Some(sm2.clone()), out: t.path().join("assets"), normalize: false });
+    let outcome = prepare::run(&Opts { sm2: Some(sm2.clone()), out: t.path().join("assets"), normalize: false, ab: false });
     assert_eq!(tree(&sm2), before, "prepare must not change anything in the install");
     assert!(outcome.ok() && outcome.ready);
     assert_eq!((outcome.slots, outcome.prepared, outcome.files), (prepare::slots().unwrap().len(), 4, total_files()));
@@ -293,7 +293,7 @@ fn a_second_run_replaces_what_the_first_left_and_removes_what_is_stale() {
     let sm2 = t.path().join("Space Marine 2");
     let out = t.path().join("assets");
     fake_install(&sm2);
-    let opts = Opts { sm2: Some(sm2), out: out.clone(), normalize: false };
+    let opts = Opts { sm2: Some(sm2), out: out.clone(), normalize: false, ab: false };
     assert!(prepare::run(&opts).ok());
     let first = tree(&out);
     let sounds = out.join("sounds");
@@ -329,7 +329,7 @@ fn a_failed_rerun_never_looks_finished() {
     fs::write(sounds.join("chainsword_swing_1_1.wav"), b"old").unwrap();
     fs::write(sounds.join("notes.txt"), b"mine").unwrap();
 
-    let outcome = prepare::run(&Opts { sm2: Some(sm2), out: out.clone(), normalize: false });
+    let outcome = prepare::run(&Opts { sm2: Some(sm2), out: out.clone(), normalize: false, ab: false });
     assert!(!outcome.ok() && outcome.prepared == 0 && !outcome.ready);
     assert!(!out.join("ready.json").exists(), "an old ready.json must not stay when the new run made nothing");
     assert!(!sounds.join("index.json").exists() && !sounds.join("chainsword_swing_1_1.wav").exists());
@@ -344,7 +344,7 @@ fn without_space_marine_2_nothing_is_written_but_the_report() {
     let empty = t.path().join("nothing");
     fs::create_dir_all(&empty).unwrap();
     let out = t.path().join("assets");
-    let outcome = prepare::run(&Opts { sm2: Some(empty), out: out.clone(), normalize: false });
+    let outcome = prepare::run(&Opts { sm2: Some(empty), out: out.clone(), normalize: false, ab: false });
     assert!(!outcome.ok() && !outcome.ready && outcome.prepared == 0);
     assert!(!out.exists(), "no assets folder, no ready.json");
     let report = flat(&fs::read_to_string(prepare::report_path(&out)).unwrap());
@@ -354,7 +354,7 @@ fn without_space_marine_2_nothing_is_written_but_the_report() {
     // an install without the weapon bank
     let no_bank = t.path().join("no bank");
     common::make_zip(&no_bank.join("client_pc/root/paks/client/a.pak"), &[("ssl/x.cls", b"x".to_vec())], true);
-    let outcome = prepare::run(&Opts { sm2: Some(no_bank), out: out.clone(), normalize: false });
+    let outcome = prepare::run(&Opts { sm2: Some(no_bank), out: out.clone(), normalize: false, ab: false });
     assert!(!outcome.ok() && !out.exists());
     let report = flat(&fs::read_to_string(prepare::report_path(&out)).unwrap());
     assert!(report.contains("has no weapon sound bank (sounds/desktop/wpn.bnk)"), "{report}");
@@ -368,7 +368,7 @@ fn nothing_is_ever_written_inside_the_game_folder() {
     let before = tree(&sm2);
     // an assets folder (and with it the report folder) inside the game: refused before anything is created
     for out in [sm2.join("assets"), sm2.join("ashenmarine").join("assets"), sm2.clone()] {
-        let outcome = prepare::run(&Opts { sm2: Some(sm2.clone()), out: out.clone(), normalize: false });
+        let outcome = prepare::run(&Opts { sm2: Some(sm2.clone()), out: out.clone(), normalize: false, ab: false });
         assert!(!outcome.ok() && outcome.prepared == 0 && outcome.files == 0, "{}", out.display());
         assert_eq!(tree(&sm2), before, "{}", out.display());
     }
@@ -380,7 +380,7 @@ fn nothing_is_ever_written_inside_the_game_folder() {
     assert_eq!(tree(&sm2), before);
     // a folder next to the game whose name only starts the same is fine
     let beside = t.path().join("Space Marine 2 sounds");
-    assert!(prepare::run(&Opts { sm2: Some(sm2), out: beside.join("assets"), normalize: false }).ok());
+    assert!(prepare::run(&Opts { sm2: Some(sm2), out: beside.join("assets"), normalize: false, ab: false }).ok());
 }
 
 // ---- the program itself
@@ -488,7 +488,7 @@ fn the_exact_reading_and_the_loudness_step_work_through_the_whole_program() {
             ("7009.wem", common::pcm_wem(44100, &[2000, -2000], 8820)),
         ],
     );
-    let outcome = prepare::run(&Opts { sm2: Some(sm2), out: out.clone(), normalize: true });
+    let outcome = prepare::run(&Opts { sm2: Some(sm2), out: out.clone(), normalize: true, ab: false });
     assert!(outcome.ok(), "{outcome:?}");
     assert_eq!(outcome.prepared, 2, "only the two events this bank has: {outcome:?}");
     let report = flat(&fs::read_to_string(prepare::report_path(&out)).unwrap());
@@ -508,4 +508,66 @@ fn the_exact_reading_and_the_loudness_step_work_through_the_whole_program() {
     assert_eq!((shot.samples[0] > 0, shot.samples[1] < 0), (true, true), "the sides keep their signs");
     // no stale temp files, and ready.json says what was made
     assert!(out.join("ready.json").is_file() && !out.join("ready.json.tmp").exists());
+}
+
+/// With both sets wanted (what the program does), `sounds` is the way kit 4 made it - every sound at full volume - and
+/// `sounds-exact` has the volumes of the bank; both are indexed, `ready.json` names the second set.
+#[test]
+fn both_sets_are_made_and_the_first_stays_as_kit_4_made_it() {
+    use ashen_sm2::bnk::fnv1_lower;
+    use ashen_sm2::hirc::testenc as enc;
+    let t = tempfile::tempdir().unwrap();
+    let sm2 = t.path().join("Space Marine 2");
+    let out = t.path().join("ashenmarine").join("assets");
+    // one stereo sound at -6.02 dB under the bolt pistol event, one at 0 dB under a chainsword event
+    let bank = enc::bank(vec![
+        enc::obj(2, 5, &enc::sound(0, 7009, -6.0206, 0)),
+        enc::action(301, 0x0403, 5),
+        enc::event(fnv1_lower("wpn_firearm_shoot_2d_bolt_pistol"), &[301]),
+        enc::obj(2, 6, &enc::sound(0, 7010, 0.0, 0)),
+        enc::action(302, 0x0403, 6),
+        enc::event(fnv1_lower("wpn_melee_chswd_light_1hit"), &[302]),
+    ]);
+    common::sound_install(&sm2, bank, &[("7009.wem", common::pcm_wem(44100, &[2000, -2000], 8820)), ("7010.wem", common::pcm_wem(44100, &[2000], 8820))]);
+    let outcome = prepare::run(&Opts { sm2: Some(sm2), out: out.clone(), normalize: false, ab: true });
+    assert!(outcome.ok(), "{outcome:?}");
+    assert_eq!((outcome.prepared, outcome.alt_prepared), (2, 2), "{outcome:?}");
+
+    let wav = |dir: &str, name: &str| wem::decode(&fs::read(out.join(dir).join(name)).unwrap()).unwrap();
+    // the first set: every sound at full volume, as the approximate walk makes them
+    assert_eq!(wav("sounds", "boltpistol_fire_1.wav").peak(), 2000);
+    // the second set: the bank's -6 dB is applied to the bolt pistol
+    let exact = wav("sounds-exact", "boltpistol_fire_1.wav").peak() as f64;
+    assert!((exact - 1000.0).abs() <= 3.0, "{exact}");
+    assert_eq!(wav("sounds-exact", "chainsword_swing_1_1.wav").peak(), 2000);
+
+    assert!(out.join("sounds/index.json").is_file() && out.join("sounds-exact/index.json").is_file());
+    let ready = fs::read_to_string(out.join("ready.json")).unwrap();
+    assert!(ready.contains("\"alt_sets\":[\"sounds-exact\"]"), "{ready}");
+    let report = flat(&fs::read_to_string(prepare::report_path(&out)).unwrap());
+    assert!(report.contains("The second set") && report.contains("F9"), "{report}");
+
+    // asked for one set only, or with a bank that cannot be read exactly, there is no second folder
+    let t2 = tempfile::tempdir().unwrap();
+    let sm2b = t2.path().join("Space Marine 2");
+    let out2 = t2.path().join("assets");
+    fake_install(&sm2b);
+    let outcome = prepare::run(&Opts { sm2: Some(sm2b), out: out2.clone(), normalize: false, ab: true });
+    assert!(outcome.ok() && outcome.alt_prepared == 0, "{outcome:?}");
+    assert!(!out2.join("sounds-exact").exists());
+    assert!(!fs::read_to_string(out2.join("ready.json")).unwrap().contains("alt_sets"));
+}
+
+/// An older second set must not survive a run that makes none (a stale folder would be played by the game).
+#[test]
+fn a_stale_second_set_is_removed_when_this_run_makes_none() {
+    let t = tempfile::tempdir().unwrap();
+    let sm2 = t.path().join("Space Marine 2");
+    let out = t.path().join("assets");
+    fake_install(&sm2);
+    fs::create_dir_all(out.join("sounds-exact")).unwrap();
+    fs::write(out.join("sounds-exact/index.json"), b"{\"format\":1,\"sounds\":[]}").unwrap();
+    let outcome = prepare::run(&Opts { sm2: Some(sm2), out: out.clone(), normalize: false, ab: true });
+    assert!(outcome.ok(), "{outcome:?}");
+    assert!(!out.join("sounds-exact/index.json").exists(), "the old index of the second set is gone");
 }

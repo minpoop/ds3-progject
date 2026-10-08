@@ -1,12 +1,13 @@
 //! Optional in-game features. EVERYTHING here is optional: if anything is unexpected it logs why and stops, and the
 //! sandbox (save redirect + offline guard) keeps working. Nothing in this module may close the game.
 mod audio;
+mod equip;
 mod gametask;
 mod input;
+mod keydump;
 mod memscan;
 mod probe;
 mod sfx;
-mod textdiag;
 mod version;
 
 use crate::state;

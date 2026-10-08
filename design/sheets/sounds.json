@@ -61,7 +61,7 @@
       "sm2_event": "wpn_melee_chswd_light_1hit",
       "takes": 3,
       "looped": false,
-      "ds3_trigger": "an attack starts: stamina falls by 5 or more while an attack button went down in the last 0.35 s, and no other swing sound began in the last 1.4 s",
+      "ds3_trigger": "an attack starts: stamina falls by 5 or more while an attack button went down in the last 0.35 s and the weapon in that hand (read from the equipment slots) is a melee weapon, and no other swing sound began in the last 1.4 s",
       "volume": 0.9,
       "milestone": 3
     },
@@ -109,7 +109,7 @@
       "sm2_event": "wpn_melee_chswd_slash_1hit",
       "takes": 3,
       "looped": false,
-      "ds3_trigger": "an attack starts while the strong-attack button (gamepad right trigger, right mouse button) is down",
+      "ds3_trigger": "an attack starts with the strong-attack input (gamepad right trigger, or Shift + left mouse button) and the weapon in that hand is a melee weapon",
       "volume": 0.9,
       "milestone": 3
     },
@@ -169,7 +169,7 @@
       "sm2_event": "wpn_firearm_shoot_2d_bolt_pistol",
       "takes": 3,
       "looped": false,
-      "ds3_trigger": "the count of an ammunition stack in the inventory falls by one (a shot)",
+      "ds3_trigger": "the count of a bolt stack in the inventory falls (one shot per bolt; a burst of up to three bolts is played 110 ms apart) while a crossbow is the weapon in a hand",
       "volume": 0.9,
       "milestone": 3
     },
