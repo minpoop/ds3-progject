@@ -1,13 +1,15 @@
-//! Ashen Marine setup step: reads the player's own Space Marine 2 install (read-only).
-//! `probe` looks around and writes a report; `prepare` turns the game's sound events into plain `.wav` files.
-//! The parts both need (finding the game, opening its archives) live here.
+//! Ashen Marine setup step: reads the player's own Space Marine 2 and Dark Souls III installs (read-only).
+//! `probe` looks around and writes a report; `prepare` turns the game's sound events into plain `.wav` files;
+//! `ds3-probe` and `ds3-prepare` read Dark Souls III's archives and make the item-name override (see `ds3`).
+//! The parts they need (finding the game, opening its archives) live here.
+pub mod ds3;
 pub mod prepare;
 pub mod probe;
 pub mod report;
 
 use crate::report::Report;
 use anyhow::{anyhow, bail, Result};
-use ashen_common::{steam, SM2_APP_ID};
+use ashen_common::{steam, DS3_APP_ID, SM2_APP_ID};
 use ashen_sm2::pak::{self, PakSet};
 use std::path::{Path, PathBuf};
 
@@ -41,6 +43,36 @@ pub fn find_sm2(given: Option<&Path>) -> Result<(PathBuf, Option<String>)> {
             )
         }),
     }
+}
+
+/// The folder on the first line of `game-folder.txt` in `dir` (quotes around it are fine), if there is such a file. The
+/// launcher reads the same file for Dark Souls III.
+pub fn ds3_hint(dir: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(dir.join("game-folder.txt")).ok()?;
+    let line = text.lines().next().unwrap_or("").trim_start_matches('\u{feff}').trim().trim_matches('"').trim();
+    (!line.is_empty()).then(|| PathBuf::from(line))
+}
+
+/// Where Dark Souls III is: the folder the player gave, else the one Steam reports, else the usual place inside a Steam
+/// library (`steamapps/common/DARK SOULS III`). The result is the Steam folder (the one that holds `Game`), or whatever
+/// the player gave.
+pub fn find_ds3(given: Option<&Path>) -> Result<PathBuf> {
+    if let Some(p) = given {
+        return Ok(p.to_path_buf());
+    }
+    if let Some((path, _)) = steam::locate(DS3_APP_ID) {
+        return Ok(path);
+    }
+    for root in steam::candidate_roots(steam::registry_root()) {
+        let guess = root.join("steamapps").join("common").join("DARK SOULS III");
+        if guess.join("Game").join("DarkSoulsIII.exe").is_file() {
+            return Ok(guess);
+        }
+    }
+    bail!(
+        "Dark Souls III was not found through Steam. If it is installed somewhere else, put its folder (the one that contains Game\\DarkSoulsIII.exe) on the first line of the text file  game-folder.txt  next to this program \
+         (for example D:\\Games\\DARK SOULS III) and start this again. Or start this program with  --ds3 \"<its folder>\""
+    )
 }
 
 /// Steam's build id from `steamapps/appmanifest_<id>.acf`, when the game folder is `steamapps/common/<name>`.
@@ -114,6 +146,20 @@ mod tests {
         assert_eq!(sm2_hint(t.path()), Some(PathBuf::from("/games/sm2")), "a byte order mark and spaces are fine");
         std::fs::write(&f, "\n/games/sm2\n").unwrap();
         assert_eq!(sm2_hint(t.path()), None, "only the first line counts");
+    }
+
+    #[test]
+    fn the_dark_souls_hint_file_works_like_the_launchers() {
+        let t = tempfile::tempdir().unwrap();
+        assert_eq!(ds3_hint(t.path()), None, "no file");
+        let f = t.path().join("game-folder.txt");
+        std::fs::write(&f, "\"D:\\Games\\DARK SOULS III\"\r\nsecond line\r\n").unwrap();
+        assert_eq!(ds3_hint(t.path()), Some(PathBuf::from("D:\\Games\\DARK SOULS III")));
+        std::fs::write(&f, "\u{feff} /games/ds3 \n").unwrap();
+        assert_eq!(ds3_hint(t.path()), Some(PathBuf::from("/games/ds3")));
+        std::fs::write(&f, "\n/games/ds3\n").unwrap();
+        assert_eq!(ds3_hint(t.path()), None, "only the first line counts");
+        assert_eq!(find_ds3(Some(Path::new("/x/y"))).unwrap(), PathBuf::from("/x/y"), "a given folder is used as it is");
     }
 
     #[test]

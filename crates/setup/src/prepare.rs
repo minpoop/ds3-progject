@@ -557,7 +557,7 @@ fn stage<T>(rep: &mut Report, title: &str, f: impl FnOnce(&mut Report) -> Result
 }
 
 /// Is `path` (which may not exist yet) the same as `folder` or below it? The nearest folder that exists decides.
-fn is_inside(path: &Path, folder: &Path) -> bool {
+pub(crate) fn is_inside(path: &Path, folder: &Path) -> bool {
     let Ok(folder) = folder.canonicalize() else { return false };
     let mut p = path.to_path_buf();
     loop {

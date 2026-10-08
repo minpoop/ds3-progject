@@ -88,6 +88,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "ashen-common",
+ "ashen-ds3data",
  "ashen-sm2",
  "serde_json",
  "tempfile",

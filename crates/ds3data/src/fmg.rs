@@ -136,6 +136,24 @@ impl FmgFile {
         Ok(FmgFile { entries })
     }
 
+    /// The header numbers of a table, for a report when it does not parse: structure only, no text. Never fails.
+    pub fn describe_header(bytes: &[u8]) -> String {
+        use crate::util::{i64_le, u32_le};
+        let word = |at: usize| u32_le(bytes, at).map_or("n/a".to_string(), |v| format!("{v:#x}"));
+        format!(
+            "{} bytes; first bytes {:02x?}; declared size {}; word at 8 {}; groups {}; strings {}; word at 0x14 {}; string table at {}; word at 0x20 {}",
+            bytes.len(),
+            bytes.get(..4).unwrap_or(&[]),
+            word(4),
+            word(8),
+            word(0x0C),
+            word(0x10),
+            word(0x14),
+            i64_le(bytes, 0x18).map_or("n/a".to_string(), |v| format!("{v:#x}")),
+            i64_le(bytes, 0x20).map_or("n/a".to_string(), |v| format!("{v:#x}"))
+        )
+    }
+
     /// The text of `id`; `None` if the id is absent or its string is null.
     pub fn get(&self, id: u32) -> Option<&str> {
         self.entries.get(&id)?.as_deref()

@@ -29,7 +29,8 @@ pub enum ArchiveError {
     /// The file is bigger than this program will read.
     TooBig { what: &'static str, size: u64 },
     Rsa(RsaError),
-    Header(Bhd5Error),
+    /// The header decrypted but does not parse; `summary` has its structural numbers (no file contents).
+    Header { error: Bhd5Error, summary: String },
     /// A file lies (partly) outside the `.bdt`.
     OutOfRange { offset: u64, size: u32, bdt_size: u64 },
     /// An AES range of a file is not usable.
@@ -44,7 +45,7 @@ impl fmt::Display for ArchiveError {
             ArchiveError::HeaderTooShort => write!(f, "the .bhd is too short to hold an encrypted header"),
             ArchiveError::TooBig { what, size } => write!(f, "the {what} is too big to read ({size} bytes)"),
             ArchiveError::Rsa(e) => write!(f, "{e}"),
-            ArchiveError::Header(e) => write!(f, "{e}"),
+            ArchiveError::Header { error, summary } => write!(f, "{error} [{summary}]"),
             ArchiveError::OutOfRange { offset, size, bdt_size } => write!(f, "the file ({size} bytes at {offset}) lies outside the .bdt ({bdt_size} bytes)"),
             ArchiveError::BadRange { start, end, size } => write!(f, "an encrypted range ({start}..{end}) does not fit the file ({size} bytes)"),
         }
@@ -56,12 +57,6 @@ impl std::error::Error for ArchiveError {}
 impl From<RsaError> for ArchiveError {
     fn from(e: RsaError) -> Self {
         ArchiveError::Rsa(e)
-    }
-}
-
-impl From<Bhd5Error> for ArchiveError {
-    fn from(e: Bhd5Error) -> Self {
-        ArchiveError::Header(e)
     }
 }
 
@@ -110,7 +105,8 @@ impl Archive {
     /// Like [`Archive::open`] with the key known and the `.bhd` bytes already read.
     pub fn from_header_bytes(name: String, bhd_bytes: &[u8], key: &RsaPublicKey, bdt: &Path) -> Result<Archive, ArchiveError> {
         let (plain, trailing) = decrypt_complete_blocks(key, bhd_bytes)?;
-        let header = Bhd5::parse(plain)?;
+        let summary = Bhd5::describe(&plain);
+        let header = Bhd5::parse(plain).map_err(|error| ArchiveError::Header { error, summary })?;
         let meta = std::fs::metadata(bdt).map_err(|e| ArchiveError::Io { what: ".bdt file", reason: io_reason(&e) })?;
         let mut bdt_magic = [0u8; 4];
         if let Ok(mut f) = std::fs::File::open(bdt) {
@@ -197,7 +193,7 @@ impl Archive {
             Some(end) if end <= self.bdt_size => {}
             _ => return Err(ArchiveError::OutOfRange { offset: entry.offset, size: entry.padded_size, bdt_size: self.bdt_size }),
         }
-        let aes = self.header.aes_record(entry)?;
+        let aes = self.header.aes_record(entry).map_err(|error| ArchiveError::Header { error, summary: format!("the AES record of the file at {}", entry.offset) })?;
         let mut file = std::fs::File::open(&self.bdt_path).map_err(|e| ArchiveError::Io { what: ".bdt file", reason: io_reason(&e) })?;
         file.seek(SeekFrom::Start(entry.offset)).map_err(|e| ArchiveError::Io { what: ".bdt file", reason: io_reason(&e) })?;
         let mut bytes = vec![0u8; entry.padded_size as usize];
@@ -332,7 +328,9 @@ mod tests {
         // cut into the last block: the header needs it
         std::fs::write(dir.join("Cut.bhd"), &bhd[..bhd.len() - 10]).unwrap();
         std::fs::copy(dir.join("Data0.bdt"), dir.join("Cut.bdt")).unwrap();
-        assert!(matches!(Archive::open(&dir.join("Cut.bhd"), &dir.join("Cut.bdt"), &[key]), Err(ArchiveError::Header(Bhd5Error::Truncated { .. }))));
+        let err = Archive::open(&dir.join("Cut.bhd"), &dir.join("Cut.bdt"), &[key]).unwrap_err();
+        assert!(matches!(&err, ArchiveError::Header { error: Bhd5Error::Truncated { .. }, .. }), "{err}");
+        assert!(err.to_string().contains("declared size"), "the message carries the header numbers: {err}");
     }
 
     #[test]

@@ -3,5 +3,6 @@
 //! the other modules of this crate.
 pub mod archive;
 pub mod bnd4;
+pub mod install;
 pub mod items;
 pub mod keys;

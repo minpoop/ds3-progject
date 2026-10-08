@@ -23,12 +23,13 @@ pub mod bnd4;
 pub mod dcx;
 pub mod fmg;
 pub mod hash;
+pub mod install;
 pub mod keys;
 pub mod msgpatch;
 pub mod rsa;
 mod util;
 
-pub use util::{hex, snippet};
+pub use util::{hex, sha256_hex, snippet};
 
 /// Builders of synthetic keys, archives and files for tests (no game data).
 #[cfg(any(test, feature = "testing"))]

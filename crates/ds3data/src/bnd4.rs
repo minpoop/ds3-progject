@@ -345,6 +345,33 @@ impl Bnd4 {
         Ok(Bnd4 { unk04: src[4], unk05: src[5], bit_big_endian, version, version_raw, format_raw, format, unicode, extended, headers_end, hash_table, files, layout, src_len: src.len() })
     }
 
+    /// The header numbers of a BND4, for a report when it does not parse: structure only, no file contents. Never fails.
+    pub fn describe_header(src: &[u8]) -> String {
+        let num = |v: Option<i64>| v.map_or("n/a".to_string(), |v| format!("{v:#x}"));
+        let byte = |at: usize| src.get(at).map_or("n/a".to_string(), |b| format!("{b:#04x}"));
+        format!(
+            "{} bytes; magic {:?}; bytes 4-11 {} {} {} {} {} {} {} {}; file count {}; header size {}; file header size {}; headers end {}; unicode {}; format byte {}; extended {}; hash table at {}",
+            src.len(),
+            String::from_utf8_lossy(src.get(..4).unwrap_or(&[])),
+            byte(4),
+            byte(5),
+            byte(6),
+            byte(7),
+            byte(8),
+            byte(9),
+            byte(10),
+            byte(11),
+            i32_le(src, 0x0C).map_or("n/a".to_string(), |v| v.to_string()),
+            num(i64_le(src, 0x10)),
+            num(i64_le(src, 0x20)),
+            num(i64_le(src, 0x28)),
+            byte(0x30),
+            byte(0x31),
+            byte(0x32),
+            num(i64_le(src, 0x38))
+        )
+    }
+
     /// The bytes of file `index` as stored (compressed on its own if its flag says so).
     pub fn file_bytes<'a>(&self, src: &'a [u8], index: usize) -> Option<&'a [u8]> {
         let f = self.files.get(index)?;

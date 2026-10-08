@@ -29,7 +29,7 @@ pub enum DcxError {
     /// The data ends too early.
     Truncated { what: &'static str },
     /// A constant of the header has another value than in the files this reader knows.
-    BadHeader { at: usize },
+    BadHeader { at: usize, found: u32 },
     /// A compression variant this crate does not read (`KRAK`, `ZSTD`, `EDGE`, ...).
     Unsupported { variant: String },
     /// The declared size is over the limit.
@@ -49,7 +49,7 @@ impl fmt::Display for DcxError {
         match self {
             DcxError::NotDcx => write!(f, "not a DCX file"),
             DcxError::Truncated { what } => write!(f, "the DCX file is cut off ({what})"),
-            DcxError::BadHeader { at } => write!(f, "unexpected value in the DCX header at offset {at:#x}"),
+            DcxError::BadHeader { at, found } => write!(f, "unexpected value {found:#x} in the DCX header at offset {at:#x}"),
             DcxError::Unsupported { variant } => write!(f, "unsupported DCX compression \"{variant}\""),
             DcxError::TooLarge { declared } => write!(f, "the DCX file says it holds {declared} bytes, which is too much"),
             DcxError::Inflate(why) => write!(f, "the compressed data is damaged ({why})"),
@@ -160,7 +160,7 @@ pub fn decode_limited(bytes: &[u8], max_out: u64) -> Result<(Vec<u8>, DcxInfo), 
     let unk10 = word(0x10)?;
     let level = bytes[0x30];
     let unk38 = bytes[0x38];
-    let bad = |at: usize| DcxError::BadHeader { at };
+    let bad = |at: usize| DcxError::BadHeader { at, found: u32_be(bytes, at).unwrap_or(0) };
     if unk04 != 0x10000 && unk04 != 0x11000 {
         return Err(bad(0x04));
     }

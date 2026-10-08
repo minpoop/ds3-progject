@@ -219,6 +219,24 @@ impl Bhd5 {
         Ok(Bhd5 { data, unk05, salt, bucket_count, entries })
     }
 
+    /// The header numbers of a decrypted header, for a report when it does not parse: structure only, no file contents.
+    pub fn describe(plain: &[u8]) -> String {
+        let num = |v: Option<i32>| v.map_or("n/a".to_string(), |v| v.to_string());
+        format!(
+            "{} bytes; byte order mark {}; unknown byte {}; fixed words {} {} {}; declared size {}; buckets {}; bucket table at {}; salt length {}",
+            plain.len(),
+            plain.get(4).map_or("n/a".to_string(), |b| format!("{b:#04x}")),
+            plain.get(5).map_or("n/a".to_string(), |b| b.to_string()),
+            plain.get(6).map_or("n/a".to_string(), |b| b.to_string()),
+            plain.get(7).map_or("n/a".to_string(), |b| b.to_string()),
+            num(i32_le(plain, 8)),
+            num(i32_le(plain, 0x0C)),
+            num(i32_le(plain, 0x10)),
+            num(i32_le(plain, 0x14)),
+            num(i32_le(plain, 0x18))
+        )
+    }
+
     /// The salt (ASCII) the SHA hashes of the files are made with.
     pub fn salt(&self) -> &[u8] {
         &self.salt

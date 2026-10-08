@@ -44,6 +44,12 @@ pub(crate) fn align_up(v: u64, align: u64) -> Option<u64> {
     v.checked_add(align - 1).map(|x| x & !(align - 1))
 }
 
+/// The SHA-256 of `data` as lower-case hexadecimal.
+pub fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex(&Sha256::digest(data))
+}
+
 /// Lower-case hexadecimal.
 pub fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -114,6 +120,7 @@ mod tests {
     #[test]
     fn hex_and_snippets() {
         assert_eq!(hex(&[0, 1, 0xab, 0xff]), "0001abff");
+        assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         assert_eq!(snippet("short", 10), "short");
         assert_eq!(snippet("exactly ten", 11), "exactly ten");
         assert_eq!(snippet("a longer text than allowed", 8), "a longer...");
