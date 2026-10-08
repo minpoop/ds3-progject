@@ -59,6 +59,18 @@ pub const LANGUAGES: [&str; 16] = [
     "TURKISH",
     "ARABIC",
 ];
+/// Other names the English item text might have, tried when the expected one is not in the archives.
+const ALTERNATIVE_ITEM_PATHS: [&str; 9] = [
+    "/msg/engUS/item.msgbnd.dcx",
+    "/msg/engGB/item.msgbnd.dcx",
+    "/msg/ENG/item.msgbnd.dcx",
+    "/msg/EN/item.msgbnd.dcx",
+    "/msg/ENGLISH/item.msgbnd",
+    "/msg/ENGLISH/Item.msgbnd.dcx.bak",
+    "/msg/item.msgbnd.dcx",
+    "/msg/ENGLISH/item_patch.msgbnd.dcx",
+    "/msg/ENGLISH/itemname.msgbnd.dcx",
+];
 const EXTRA_PATHS: [&str; 3] = ["/msg/ENGLISH/item_dlc1.msgbnd.dcx", "/msg/ENGLISH/item_dlc2.msgbnd.dcx", "/regulation.bin"];
 /// The weapon models the mod will want to swap later.
 const MODEL_PATHS: [&str; 5] = [
@@ -239,6 +251,7 @@ impl Out<'_> {
 fn find_step(rep: &mut Report, given: Option<&Path>) -> Result<PathBuf> {
     let root = find_ds3(given)?;
     rep.say(format!("  Dark Souls III folder: {}", name_of(&root)));
+    rep.say(format!("  Steam build id: {}", crate::ds3_build_id(&root).as_deref().unwrap_or("(unknown)")));
     Ok(root)
 }
 
@@ -326,6 +339,19 @@ fn archives_step(rep: &mut Report, game_dir: PathBuf, exe: ExeInfo, extra: &[Rsa
             Err(ArchiveError::NoKeyMatched { tried }) => rep.say(format!("  {:<8} {} .bhd, no key matched ({tried} tried); {bdt}", slot.name, human(slot.bhd_size))),
             Err(e) => rep.say(format!("  {:<8} {} .bhd, cannot be opened: {e}; {bdt}", slot.name, human(slot.bhd_size))),
         }
+    }
+    // what else is in the folder (names and sizes only): tells at a glance whether this is the game and which parts it has
+    if let Ok(listing) = std::fs::read_dir(install.game_dir()) {
+        let mut files: Vec<(String, u64)> = listing
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let meta = e.metadata().ok()?;
+                Some((e.file_name().to_string_lossy().to_string(), if meta.is_dir() { 0 } else { meta.len() }))
+            })
+            .collect();
+        files.sort();
+        let shown: Vec<String> = files.iter().take(60).map(|(name, size)| if *size == 0 { format!("{name}/") } else { format!("{name} ({})", human(*size)) }).collect();
+        rep.detail_wrapped("  ", &format!("files in the {} folder: {}{}", name_of(install.game_dir()), shown.join(", "), if files.len() > 60 { ", ..." } else { "" }));
     }
     let opened = install.open_archives().count();
     if opened == 0 {
@@ -746,6 +772,15 @@ fn path_table(rep: &mut Report, install: &Ds3Install) {
     rep.say(format!("  {found} of {} paths exist in the archives (the others are listed in the report as not found)", paths.len()));
     if found == 0 {
         rep.say_wrapped("  ", "None of the paths exist. The folder names or the hash may differ from what this program assumes; the report has the hash of every path it tried.");
+    }
+    if install.lookup(ENGLISH_ITEM_PATH).is_empty() {
+        // the language folder may be called something else: try a few other spellings
+        rep.say("  The English item text was not found under the expected name. Other spellings:");
+        for alt in ALTERNATIVE_ITEM_PATHS {
+            let hits = install.lookup(alt);
+            let state = if hits.is_empty() { "not found".to_string() } else { format!("FOUND in {}", hits.iter().map(|h| h.archive_name().to_string()).collect::<Vec<_>>().join(", ")) };
+            rep.say(format!("    {alt:<40} hash {:08x}  {state}", path_hash(alt)));
+        }
     }
 }
 

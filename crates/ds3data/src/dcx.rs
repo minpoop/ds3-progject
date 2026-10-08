@@ -145,70 +145,64 @@ pub fn decode_limited(bytes: &[u8], max_out: u64) -> Result<(Vec<u8>, DcxInfo), 
     if !bytes.starts_with(b"DCX\0") {
         return Err(DcxError::NotDcx);
     }
-    let word = |at: usize| u32_be(bytes, at).ok_or(DcxError::Truncated { what: "header" });
-    if bytes.len() < 0x2C {
-        return Err(DcxError::Truncated { what: "header" });
-    }
-    let method = get(bytes, 0x28, 4).ok_or(DcxError::Truncated { what: "header" })?;
+    let truncated_header = DcxError::Truncated { what: "header" };
+    let method = get(bytes, 0x28, 4).ok_or(truncated_header.clone())?;
     if method != b"DFLT" {
         return Err(DcxError::Unsupported { variant: printable(method) });
     }
-    if bytes.len() < HEADER_LEN {
-        return Err(DcxError::Truncated { what: "header" });
-    }
-    let unk04 = word(0x04)?;
-    let unk10 = word(0x10)?;
-    let level = bytes[0x30];
-    let unk38 = bytes[0x38];
-    let bad = |at: usize| DcxError::BadHeader { at, found: u32_be(bytes, at).unwrap_or(0) };
+    // all the offsets below are inside this array, so nothing here can run past the data
+    let header: &[u8; HEADER_LEN] = bytes.get(..HEADER_LEN).and_then(|h| h.try_into().ok()).ok_or(truncated_header)?;
+    let word = |at: usize| u32_be(header, at).unwrap_or(0);
+    let bad = |at: usize| DcxError::BadHeader { at, found: word(at) };
+    let (unk04, unk10, level, unk38) = (word(0x04), word(0x10), header[0x30], header[0x38]);
     if unk04 != 0x10000 && unk04 != 0x11000 {
         return Err(bad(0x04));
     }
-    if word(0x08)? != 0x18 {
+    if word(0x08) != 0x18 {
         return Err(bad(0x08));
     }
-    if word(0x0C)? != 0x24 {
+    if word(0x0C) != 0x24 {
         return Err(bad(0x0C));
     }
     if unk10 != 0x24 && unk10 != 0x44 {
         return Err(bad(0x10));
     }
-    if word(0x14)? != if unk10 == 0x24 { 0x2C } else { 0x4C } {
+    if word(0x14) != if unk10 == 0x24 { 0x2C } else { 0x4C } {
         return Err(bad(0x14));
     }
-    if &bytes[0x18..0x1C] != b"DCS\0" {
+    if &header[0x18..0x1C] != b"DCS\0" {
         return Err(bad(0x18));
     }
-    if &bytes[0x24..0x28] != b"DCP\0" {
+    if &header[0x24..0x28] != b"DCP\0" {
         return Err(bad(0x24));
     }
-    if word(0x2C)? != 0x20 {
+    if word(0x2C) != 0x20 {
         return Err(bad(0x2C));
     }
-    if !(level == 8 || level == 9) || bytes[0x31..0x34] != [0, 0, 0] {
+    if !(level == 8 || level == 9) || header[0x31..0x34] != [0, 0, 0] {
         return Err(bad(0x30));
     }
-    if word(0x34)? != 0 {
+    if word(0x34) != 0 {
         return Err(bad(0x34));
     }
-    if !(unk38 == 0 || unk38 == 15) || bytes[0x39..0x3C] != [0, 0, 0] {
+    if !(unk38 == 0 || unk38 == 15) || header[0x39..0x3C] != [0, 0, 0] {
         return Err(bad(0x38));
     }
-    if word(0x3C)? != 0 {
+    if word(0x3C) != 0 {
         return Err(bad(0x3C));
     }
-    if word(0x40)? != 0x0001_0100 {
+    if word(0x40) != 0x0001_0100 {
         return Err(bad(0x40));
     }
-    if &bytes[0x44..0x48] != b"DCA\0" {
+    if &header[0x44..0x48] != b"DCA\0" {
         return Err(bad(0x44));
     }
-    if word(0x48)? != 8 {
+    if word(0x48) != 8 {
         return Err(bad(0x48));
     }
 
-    let uncompressed = word(0x1C)?;
-    let compressed = word(0x20)?;
+    let uncompressed = word(0x1C);
+    let compressed = word(0x20);
     if u64::from(uncompressed) > max_out {
         return Err(DcxError::TooLarge { declared: u64::from(uncompressed) });
     }
@@ -216,17 +210,18 @@ pub fn decode_limited(bytes: &[u8], max_out: u64) -> Result<(Vec<u8>, DcxInfo), 
         return Err(DcxError::Truncated { what: "zlib stream" });
     }
     let stream = get(bytes, HEADER_LEN, compressed as usize).ok_or(DcxError::Truncated { what: "compressed data" })?;
-    let trailing = bytes.len() - HEADER_LEN - compressed as usize;
+    let trailing = bytes.len().saturating_sub(HEADER_LEN).saturating_sub(compressed as usize);
     // zlib: CMF = deflate with a window of at most 32 KiB, a multiple of 31 with FLG, no preset dictionary
-    let (cmf, flg) = (stream[0], stream[1]);
+    let (Some(&cmf), Some(&flg)) = (stream.first(), stream.get(1)) else { return Err(DcxError::Truncated { what: "zlib stream" }) };
     if cmf & 0x0F != 8 || cmf >> 4 > 7 || (u16::from(cmf) << 8 | u16::from(flg)) % 31 != 0 {
         return Err(DcxError::Inflate("not a zlib stream"));
     }
     if flg & 0x20 != 0 {
         return Err(DcxError::Inflate("the zlib stream wants a preset dictionary"));
     }
-    let body = &stream[2..stream.len() - 4];
-    let stored_adler = u32_be(stream, stream.len() - 4).ok_or(DcxError::Truncated { what: "zlib stream" })?;
+    let adler_at = stream.len().saturating_sub(4);
+    let body = stream.get(2..adler_at).ok_or(DcxError::Truncated { what: "zlib stream" })?;
+    let stored_adler = u32_be(stream, adler_at).ok_or(DcxError::Truncated { what: "zlib stream" })?;
     let out = miniz_oxide::inflate::decompress_to_vec_with_limit(body, uncompressed as usize).map_err(|e| match e.status {
         miniz_oxide::inflate::TINFLStatus::HasMoreOutput => DcxError::TooMuchData { declared: u64::from(uncompressed) },
         miniz_oxide::inflate::TINFLStatus::NeedsMoreInput | miniz_oxide::inflate::TINFLStatus::FailedCannotMakeProgress => DcxError::Inflate("the compressed data ends early"),

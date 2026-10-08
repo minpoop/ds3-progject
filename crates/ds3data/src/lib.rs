@@ -34,3 +34,7 @@ pub use util::{hex, sha256_hex, snippet};
 /// Builders of synthetic keys, archives and files for tests (no game data).
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+
+/// Damaged and hostile input for every parser.
+#[cfg(test)]
+mod robustness;

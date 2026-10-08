@@ -77,6 +77,13 @@ pub fn find_ds3(given: Option<&Path>) -> Result<PathBuf> {
     )
 }
 
+/// Steam's build id of Dark Souls III, from `steamapps/appmanifest_374320.acf` above `folder` (the Steam folder of the game,
+/// or its `Game` folder), if the game is in a Steam library.
+pub fn ds3_build_id(folder: &Path) -> Option<String> {
+    let manifest = format!("appmanifest_{DS3_APP_ID}.acf");
+    folder.ancestors().take(5).find_map(|dir| std::fs::read_to_string(dir.join(&manifest)).ok()).and_then(|text| steam::buildid_from_acf(&text))
+}
+
 /// Steam's build id from `steamapps/appmanifest_<id>.acf`, when the game folder is `steamapps/common/<name>`.
 fn build_id_beside(folder: &Path) -> Option<String> {
     let steamapps = folder.parent()?.parent()?;
@@ -162,6 +169,22 @@ mod tests {
         std::fs::write(&f, "\n/games/ds3\n").unwrap();
         assert_eq!(ds3_hint(t.path()), None, "only the first line counts");
         assert_eq!(find_ds3(Some(Path::new("/x/y"))).unwrap(), PathBuf::from("/x/y"), "a given folder is used as it is");
+    }
+
+    #[test]
+    fn the_dark_souls_build_id_comes_from_the_steam_manifest_above_the_game_folder() {
+        let t = tempfile::tempdir().unwrap();
+        let game = t.path().join("steamapps/common/DARK SOULS III");
+        std::fs::create_dir_all(game.join("Game")).unwrap();
+        assert_eq!(ds3_build_id(&game), None, "no manifest");
+        std::fs::write(t.path().join(format!("steamapps/appmanifest_{DS3_APP_ID}.acf")), "\"AppState\"\n{\n\"installdir\"\t\"DARK SOULS III\"\n\"buildid\"\t\"7654321\"\n}").unwrap();
+        assert_eq!(ds3_build_id(&game).as_deref(), Some("7654321"));
+        assert_eq!(ds3_build_id(&game.join("Game")).as_deref(), Some("7654321"), "the Game folder itself works, too");
+        // the Space Marine 2 manifest is not mistaken for it
+        let other = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(other.path().join("steamapps/common/x")).unwrap();
+        std::fs::write(other.path().join(format!("steamapps/appmanifest_{SM2_APP_ID}.acf")), "\"buildid\"\t\"1\"").unwrap();
+        assert_eq!(ds3_build_id(&other.path().join("steamapps/common/x")), None);
     }
 
     #[test]

@@ -143,7 +143,7 @@ fn the_report_shows_fingerprints_and_not_keys_or_folder_names() {
     let env = Env::new(&FakeOptions::default());
     assert!(env.probe(Some(env.keys_file())));
     let report = env.report();
-    let key_text = test_key(0).public.n().to_bytes_be();
+    let key_text = test_key(0).public.n.to_bytes_be();
     let b64 = ashen_ds3data::keys::base64_encode(&key_text);
     assert!(!report.contains(&b64[..40]) && !report.contains("BEGIN RSA PUBLIC KEY"), "no key material in the report");
     for dir in [env.fake.root.parent().unwrap(), env._t.path()] {
@@ -371,6 +371,63 @@ fn a_game_that_is_not_found_is_a_clear_failure() {
     assert!(!outcome.ok());
     assert!(outcome.reason.unwrap().contains("nothing-here does not contain Game\\DarkSoulsIII.exe"));
     assert!(!ds3::probe(&ProbeOpts { ds3: Some(nothing), keys: None, data, out }));
+}
+
+/// Files of the install with a few bytes changed (or cut short): `prepare` and `probe` must not crash, and whenever
+/// `prepare` does write an override it must be a right one - the new names in the name table, the new descriptions, every
+/// other table as the game has it - and when it does not, no override may be there.
+#[test]
+fn a_damaged_install_never_leads_to_a_crash_or_to_a_wrong_override() {
+    let mut x = 0x2545_F491_4F6C_DD1Du64;
+    let mut next = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let files = ["DarkSoulsIII.exe", "Data0.bhd", "Data0.bdt", "Data1.bhd", "Data1.bdt", "DLC1.bhd", "DLC1.bdt"];
+    let (mut written, mut refused) = (0, 0);
+    let original = item_bnd4();
+    let original = Bnd4::parse(&original).unwrap();
+    for round in 0..40 {
+        let env = Env::new(&FakeOptions::default());
+        let path = env.fake.game.join(files[(next() % files.len() as u64) as usize]);
+        let mut bytes = fs::read(&path).unwrap();
+        match next() % 4 {
+            0 => bytes.truncate((next() % bytes.len() as u64) as usize),
+            1 => {
+                let at = (next() % bytes.len() as u64) as usize;
+                let end = (at + 8 + (next() % 56) as usize).min(bytes.len());
+                bytes[at..end].fill(0);
+            }
+            _ => {
+                for _ in 0..1 + next() % 3 {
+                    let at = (next() % bytes.len() as u64) as usize;
+                    bytes[at] ^= 1 << (next() % 8);
+                }
+            }
+        }
+        fs::write(&path, &bytes).unwrap();
+        let outcome = env.prepare(None);
+        let _ = env.probe(None);
+        if outcome.written {
+            written += 1;
+            let t = texts_of(&env.override_path());
+            assert_eq!((t[&11].get(2_000_000), t[&11].get(14_090_000), t[&11].get(404_000)), (Some("Chainsword"), Some("Bolt Pistol"), Some("Bolt Rounds")), "round {round}");
+            assert_eq!(t[&31].get(2_000_000), Some(EDITS[0].long), "round {round}");
+            let (inner, _) = dcx::decode(&fs::read(env.override_path()).unwrap()).unwrap();
+            let made = Bnd4::parse(&inner).unwrap();
+            let source = item_bnd4();
+            for i in [0usize, 4, 5] {
+                assert_eq!(made.file_bytes(&inner, i), original.file_bytes(&source, i), "round {round}: file {i} is as the game has it");
+            }
+            assert!(env.mod_dir().join(MANIFEST_FILE).is_file());
+        } else {
+            refused += 1;
+            assert!(outcome.reason.is_some() && !env.override_path().exists() && !env.mod_dir().join(MANIFEST_FILE).exists(), "round {round}: {outcome:?}");
+        }
+    }
+    assert!(written > 5 && refused > 5, "the damage should sometimes matter and sometimes not: {written} written, {refused} refused");
 }
 
 // ---- the program itself

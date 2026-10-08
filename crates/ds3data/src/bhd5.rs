@@ -112,15 +112,15 @@ impl fmt::Debug for Bhd5 {
 
 /// `count` ranges at `at`: `(start, end)` pairs of i64.
 fn ranges_at(data: &[u8], at: usize, count: usize) -> Result<Vec<(i64, i64)>, Bhd5Error> {
-    let bytes = get(data, at, count.checked_mul(16).ok_or(Bhd5Error::Malformed("range count"))?).ok_or(Bhd5Error::Malformed("ranges outside the header"))?;
-    Ok(bytes
-        .chunks_exact(16)
-        .map(|c| {
-            let start = i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]);
-            let end = i64::from_le_bytes([c[8], c[9], c[10], c[11], c[12], c[13], c[14], c[15]]);
-            (start, end)
-        })
-        .collect())
+    let outside = Bhd5Error::Malformed("ranges outside the header");
+    get(data, at, count.checked_mul(16).ok_or(Bhd5Error::Malformed("range count"))?).ok_or(outside.clone())?;
+    let mut ranges = Vec::with_capacity(count);
+    for i in 0..count {
+        let base = at + i * 16;
+        let (Some(start), Some(end)) = (i64_le(data, base), i64_le(data, base + 8)) else { return Err(outside) };
+        ranges.push((start, end));
+    }
+    Ok(ranges)
 }
 
 /// A record of `fixed` bytes followed by an i32 count and `count` ranges: where it is, how many ranges.
@@ -148,17 +148,18 @@ impl Bhd5 {
         if plain.len() < FIXED_LEN {
             return Err(Bhd5Error::Truncated { declared: FIXED_LEN as u64, available: plain.len() as u64 });
         }
-        let endian = plain[4];
+        let (Some(&endian), Some(&unk05), Some(&zero1), Some(&zero2)) = (plain.get(4), plain.get(5), plain.get(6), plain.get(7)) else {
+            return Err(Bhd5Error::Truncated { declared: FIXED_LEN as u64, available: plain.len() as u64 });
+        };
         if endian == 0 {
             return Err(Bhd5Error::BigEndian);
         }
         if endian != 0xFF {
             return Err(Bhd5Error::Malformed("the byte order mark is neither 0 nor -1"));
         }
-        if plain[6] != 0 || plain[7] != 0 || i32_le(&plain, 8) != Some(1) {
+        if zero1 != 0 || zero2 != 0 || i32_le(&plain, 8) != Some(1) {
             return Err(Bhd5Error::Malformed("the fixed fields of the header are wrong"));
         }
-        let unk05 = plain[5];
         let declared = i32_le(&plain, 0x0C).unwrap_or(-1);
         let declared = usize::try_from(declared).ok().filter(|d| *d >= FIXED_LEN).ok_or(Bhd5Error::Malformed("the declared size is impossible"))?;
         if declared > plain.len() {

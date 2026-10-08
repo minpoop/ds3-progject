@@ -82,6 +82,13 @@ pub struct Hit<'a> {
     pub entry: &'a Entry,
 }
 
+impl Hit<'_> {
+    /// The name of the archive the file is in, e.g. `Data0`.
+    pub fn archive_name(&self) -> &str {
+        self.archive.name()
+    }
+}
+
 /// The folder that holds the program file: `<root>/Game` for the Steam folder, or `root` itself.
 pub fn find_game_dir(root: &Path) -> Result<PathBuf, InstallError> {
     let game = find_child(root, "Game");
@@ -109,7 +116,7 @@ fn stem_with_ext<'a>(name: &'a str, ext: &str) -> Option<&'a str> {
         return None;
     }
     let (stem, dot_ext) = name.split_at(split);
-    (dot_ext.starts_with('.') && dot_ext[1..].eq_ignore_ascii_case(ext)).then_some(stem)
+    dot_ext.strip_prefix('.').is_some_and(|e| e.eq_ignore_ascii_case(ext)).then_some(stem)
 }
 
 /// The program file of an install.

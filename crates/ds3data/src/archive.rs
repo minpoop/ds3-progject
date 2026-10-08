@@ -175,7 +175,7 @@ impl Archive {
     /// searched, not just the bucket `hash % buckets` would suggest.
     pub fn find(&self, hash: u32) -> impl Iterator<Item = &Entry> + '_ {
         let start = self.index.partition_point(|(h, _)| *h < hash);
-        self.index[start..].iter().take_while(move |(h, _)| *h == hash).filter_map(|(_, i)| self.header.entries().get(*i as usize))
+        self.index.get(start..).unwrap_or_default().iter().take_while(move |(h, _)| *h == hash).filter_map(|(_, i)| self.header.entries().get(*i as usize))
     }
 
     /// The file's bytes: read from the `.bdt`, decrypted, cut to the unpadded size. At most [`MAX_FILE`] bytes.

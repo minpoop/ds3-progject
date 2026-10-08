@@ -43,11 +43,14 @@ impl fmt::Display for KeyError {
 
 impl std::error::Error for KeyError {}
 
-/// An RSA public key: modulus and exponent.
+/// An RSA public key: modulus and exponent. Build one with [`RsaPublicKey::new`] (which checks the numbers) or by reading
+/// PEM/DER; `Debug` shows only the size and the fingerprint.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RsaPublicKey {
-    n: BigUint,
-    e: BigUint,
+    /// The modulus.
+    pub n: BigUint,
+    /// The public exponent.
+    pub e: BigUint,
 }
 
 impl fmt::Debug for RsaPublicKey {
@@ -77,14 +80,6 @@ impl RsaPublicKey {
     /// A key from big-endian modulus and exponent bytes.
     pub fn from_be_bytes(n: &[u8], e: &[u8]) -> Result<RsaPublicKey, KeyError> {
         RsaPublicKey::new(BigUint::from_bytes_be(n), BigUint::from_bytes_be(e))
-    }
-
-    pub fn n(&self) -> &BigUint {
-        &self.n
-    }
-
-    pub fn e(&self) -> &BigUint {
-        &self.e
     }
 
     /// Size of the modulus in bits.
@@ -205,23 +200,21 @@ impl<'a> Der<'a> {
 
     /// The content of the next element, which must have the given tag.
     fn read(&mut self, tag: u8) -> Result<&'a [u8], KeyError> {
-        let rest = &self.b[self.pos..];
-        let (&t, rest) = rest.split_first().ok_or(KeyError::Der("the data ends early"))?;
+        let ends_early = KeyError::Der("the data ends early");
+        let rest = self.b.get(self.pos..).ok_or_else(|| ends_early.clone())?;
+        let (&t, rest) = rest.split_first().ok_or_else(|| ends_early.clone())?;
         if t != tag {
             return Err(KeyError::Der("an unexpected element"));
         }
-        let (&first, rest) = rest.split_first().ok_or(KeyError::Der("the data ends early"))?;
+        let (&first, rest) = rest.split_first().ok_or_else(|| ends_early.clone())?;
         let (len, rest) = if first < 0x80 {
             (first as usize, rest)
         } else if first == 0x80 {
             return Err(KeyError::Der("an indefinite length"));
         } else {
             let count = (first & 0x7F) as usize;
-            if count > 4 || rest.len() < count {
-                return Err(KeyError::Der("an unusable length"));
-            }
-            let (len_bytes, rest) = rest.split_at(count);
-            if len_bytes[0] == 0 {
+            let (len_bytes, rest) = rest.split_at_checked(count).filter(|_| count <= 4).ok_or(KeyError::Der("an unusable length"))?;
+            if len_bytes.first() == Some(&0) {
                 return Err(KeyError::Der("a length that is not minimal"));
             }
             let len = len_bytes.iter().fold(0usize, |acc, b| (acc << 8) | *b as usize);
@@ -230,11 +223,9 @@ impl<'a> Der<'a> {
             }
             (len, rest)
         };
-        if rest.len() < len {
-            return Err(KeyError::Der("the data ends early"));
-        }
+        let content = rest.get(..len).ok_or(ends_early)?;
         self.pos = self.b.len() - rest.len() + len;
-        Ok(&rest[..len])
+        Ok(content)
     }
 
     /// The next element must be a non-negative INTEGER in its shortest form.
@@ -286,7 +277,7 @@ pub fn base64_decode(text: &[u8]) -> Result<Vec<u8>, KeyError> {
             return Err(KeyError::Base64("misplaced padding"));
         }
         let mut v = [0u8; 4];
-        for (slot, c) in v.iter_mut().zip(&quad[..4 - pad]) {
+        for (slot, c) in v.iter_mut().zip(quad.iter().take(4 - pad)) {
             *slot = base64_value(*c).ok_or(KeyError::Base64("a character that is not base64"))?;
         }
         let n = (u32::from(v[0]) << 18) | (u32::from(v[1]) << 12) | (u32::from(v[2]) << 6) | u32::from(v[3]);
@@ -308,12 +299,14 @@ pub fn base64_decode(text: &[u8]) -> Result<Vec<u8>, KeyError> {
 pub fn base64_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let letter = |n: u32| ALPHABET.get(n as usize & 63).map_or('?', |c| *c as char);
     for chunk in bytes.chunks(3) {
-        let n = (u32::from(chunk[0]) << 16) | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8) | u32::from(*chunk.get(2).unwrap_or(&0));
-        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
-        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { ALPHABET[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { ALPHABET[n as usize & 63] as char } else { '=' });
+        let byte = |i: usize| u32::from(chunk.get(i).copied().unwrap_or(0));
+        let n = (byte(0) << 16) | (byte(1) << 8) | byte(2);
+        out.push(letter(n >> 18));
+        out.push(letter(n >> 12));
+        out.push(if chunk.len() > 1 { letter(n >> 6) } else { '=' });
+        out.push(if chunk.len() > 2 { letter(n) } else { '=' });
     }
     out
 }
@@ -325,7 +318,7 @@ fn find_marker(buf: &[u8], from: usize) -> Option<usize> {
     let mut at = from;
     while let Some(p) = buf.get(at..)?.iter().position(|b| *b == b'-') {
         let candidate = at + p;
-        if buf[candidate..].starts_with(MARKER) {
+        if buf.get(candidate..).is_some_and(|rest| rest.starts_with(MARKER)) {
             return Some(candidate);
         }
         at = candidate + 1;
@@ -390,16 +383,17 @@ impl PemScanner {
                 Block::Next(next) => pos = next,
             }
         }
-        self.buf.drain(..pos);
+        let keep_from = pos.min(self.buf.len());
+        self.buf.drain(..keep_from);
     }
 
     fn block_at(&mut self, at: usize, last: bool) -> Block {
         let label_start = at + MARKER.len();
-        let window = &self.buf[label_start..self.buf.len().min(label_start + 32)];
+        let Some(window) = self.buf.get(label_start..self.buf.len().min(label_start + 32)) else { return Block::Next(label_start) };
         let Some(label_len) = window.windows(5).position(|w| w == b"-----") else {
             return if !last && window.len() < 32 { Block::Incomplete } else { Block::Next(label_start) };
         };
-        let label = window[..label_len].to_vec();
+        let label = window.get(..label_len).unwrap_or_default().to_vec();
         let spki = match label.as_slice() {
             b"RSA PUBLIC KEY" => false,
             b"PUBLIC KEY" => true,
@@ -410,7 +404,8 @@ impl PemScanner {
         end_marker.extend(&label);
         end_marker.extend(b"-----");
         let limit = self.buf.len().min(at + MAX_PEM_BLOCK);
-        let Some(rel) = self.buf[body_start..limit].windows(end_marker.len()).position(|w| w == end_marker.as_slice()) else {
+        let found = self.buf.get(body_start..limit).and_then(|body| body.windows(end_marker.len()).position(|w| w == end_marker.as_slice()));
+        let Some(rel) = found else {
             if !last && self.buf.len() < at + MAX_PEM_BLOCK {
                 return Block::Incomplete;
             }
@@ -420,7 +415,8 @@ impl PemScanner {
         };
         let end = body_start + rel;
         self.scan.blocks += 1;
-        let parsed = base64_decode(&self.buf[body_start..end]).and_then(|der| if spki { RsaPublicKey::from_spki_der(&der) } else { RsaPublicKey::from_pkcs1_der(&der) });
+        let body = self.buf.get(body_start..end).unwrap_or_default();
+        let parsed = base64_decode(body).and_then(|der| if spki { RsaPublicKey::from_spki_der(&der) } else { RsaPublicKey::from_pkcs1_der(&der) });
         match parsed {
             Ok(key) => {
                 if !self.scan.keys.contains(&key) {
@@ -498,8 +494,9 @@ pub fn scan_reader_chunked<R: Read>(mut r: R, chunk: usize) -> std::io::Result<R
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e),
         };
-        sha.update(&buf[..n]);
-        scanner.feed(&buf[..n]);
+        let Some(data) = buf.get(..n) else { return Err(std::io::Error::other("a read returned more bytes than the buffer holds")) };
+        sha.update(data);
+        scanner.feed(data);
         size += n as u64;
     }
     Ok(ReaderScan { size, sha256: sha.finalize().into(), pem: scanner.finish() })
@@ -563,8 +560,8 @@ uQIDAQAB
         assert_eq!(a, b);
         assert_eq!(a.bits(), 2048);
         assert_eq!(a.modulus_len(), 256);
-        assert_eq!(a.e(), &BigUint::from(65537u32));
-        assert!(crate::util::hex(&a.n().to_bytes_be()).starts_with(N1_PREFIX));
+        assert_eq!(a.e, BigUint::from(65537u32));
+        assert!(crate::util::hex(&a.n.to_bytes_be()).starts_with(N1_PREFIX));
         assert_eq!(a.fingerprint(), "87febfc8", "sha256 of the modulus bytes, first 4 bytes (checked with python)");
         assert_eq!(RsaPublicKey::from_der(&der_of(PKCS1_PEM)).unwrap(), a);
         assert_eq!(RsaPublicKey::from_der(&der_of(SPKI_PEM)).unwrap(), a);

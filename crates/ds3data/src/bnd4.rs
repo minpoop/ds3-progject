@@ -221,7 +221,7 @@ fn read_name(b: &[u8], at: usize, unicode: bool) -> Result<String, Bnd4Error> {
             return Err(Bnd4Error::Malformed("a name is too long"));
         }
         // Shift JIS is not decoded here; the names this crate cares about are plain ASCII
-        Ok(rest[..len].iter().map(|c| if c.is_ascii() { *c as char } else { '\u{FFFD}' }).collect())
+        Ok(rest.iter().take(len).map(|c| if c.is_ascii() { *c as char } else { '\u{FFFD}' }).collect())
     }
 }
 
@@ -231,41 +231,40 @@ impl Bnd4 {
         if !src.starts_with(b"BND4") {
             return Err(Bnd4Error::NotBnd4);
         }
-        if src.len() < HEADER_LEN {
-            return Err(Bnd4Error::Truncated { what: "header" });
-        }
-        let flag = |at: usize| -> Result<bool, Bnd4Error> {
-            match src[at] {
+        // every fixed offset below is inside this array, so nothing here can run past the data
+        let head: &[u8; HEADER_LEN] = src.get(..HEADER_LEN).and_then(|h| h.try_into().ok()).ok_or(Bnd4Error::Truncated { what: "header" })?;
+        let flag = |value: u8| -> Result<bool, Bnd4Error> {
+            match value {
                 0 => Ok(false),
                 1 => Ok(true),
                 _ => Err(Bnd4Error::Malformed("a flag byte of the header is neither 0 nor 1")),
             }
         };
-        if src[6] != 0 || src[7] != 0 || src[8] != 0 || src[11] != 0 || src[0x33] != 0 || i32_le(src, 0x34) != Some(0) {
+        if head[6] != 0 || head[7] != 0 || head[8] != 0 || head[11] != 0 || head[0x33] != 0 || i32_le(head, 0x34) != Some(0) {
             return Err(Bnd4Error::Malformed("a reserved field of the header is not zero"));
         }
-        if flag(9)? {
+        if flag(head[9])? {
             return Err(Bnd4Error::BigEndian);
         }
-        let bit_big_endian = !flag(10)?;
-        let file_count = i32_le(src, 0x0C).and_then(|c| usize::try_from(c).ok()).filter(|c| *c <= MAX_FILES).ok_or(Bnd4Error::Malformed("the file count is impossible"))?;
-        if i64_le(src, 0x10) != Some(0x40) {
+        let bit_big_endian = !flag(head[10])?;
+        let file_count = i32_le(head, 0x0C).and_then(|c| usize::try_from(c).ok()).filter(|c| *c <= MAX_FILES).ok_or(Bnd4Error::Malformed("the file count is impossible"))?;
+        if i64_le(head, 0x10) != Some(0x40) {
             return Err(Bnd4Error::Malformed("the header size is not 0x40"));
         }
         let mut version_raw = [0u8; 8];
-        version_raw.copy_from_slice(&src[0x18..0x20]);
+        version_raw.copy_from_slice(&head[0x18..0x20]);
         let version_len = version_raw.iter().position(|b| *b == 0).unwrap_or(8);
-        let version = version_raw[..version_len].iter().map(|b| if b.is_ascii() { *b as char } else { '?' }).collect();
-        let file_header_len = i64_le(src, 0x20).and_then(|v| usize::try_from(v).ok()).ok_or(Bnd4Error::Malformed("the file header size is impossible"))?;
-        let headers_end = i64_le(src, 0x28).and_then(|v| u64::try_from(v).ok()).ok_or(Bnd4Error::Malformed("the end of the headers is impossible"))?;
-        let unicode = flag(0x30)?;
-        let format_raw = src[0x31];
+        let version = version_raw.iter().take(version_len).map(|b| if b.is_ascii() { *b as char } else { '?' }).collect();
+        let file_header_len = i64_le(head, 0x20).and_then(|v| usize::try_from(v).ok()).ok_or(Bnd4Error::Malformed("the file header size is impossible"))?;
+        let headers_end = i64_le(head, 0x28).and_then(|v| u64::try_from(v).ok()).ok_or(Bnd4Error::Malformed("the end of the headers is impossible"))?;
+        let unicode = flag(head[0x30])?;
+        let format_raw = head[0x31];
         let format = Format::from_raw(format_raw, bit_big_endian);
-        let extended = src[0x32];
+        let extended = head[0x32];
         if !matches!(extended, 0 | 1 | 4 | 0x80) {
             return Err(Bnd4Error::Malformed("the extended byte has an unknown value"));
         }
-        let hash_table_offset = i64_le(src, 0x38).and_then(|v| u64::try_from(v).ok()).ok_or(Bnd4Error::Malformed("the hash table offset is impossible"))?;
+        let hash_table_offset = i64_le(head, 0x38).and_then(|v| u64::try_from(v).ok()).ok_or(Bnd4Error::Malformed("the hash table offset is impossible"))?;
         if extended == 4 {
             if hash_table_offset < HEADER_LEN as u64 || hash_table_offset >= headers_end {
                 return Err(Bnd4Error::Malformed("the hash table is outside the headers"));
@@ -290,16 +289,19 @@ impl Bnd4 {
         let mut files = Vec::with_capacity(file_count);
         for index in 0..file_count {
             let at = HEADER_LEN + index * file_header_len;
-            let flags_raw = src[at];
+            let cut_off = Bnd4Error::Malformed("a file header is cut off");
+            // this file's header, read with offsets relative to its start
+            let fh = get(src, at, file_header_len).ok_or(cut_off.clone())?;
+            let flags_raw = *fh.first().ok_or(cut_off.clone())?;
             let flags = if bit_big_endian { flags_raw } else { flags_raw.reverse_bits() };
-            if src[at + 1..at + 4] != [0, 0, 0] || i32_le(src, at + 4) != Some(-1) {
+            if fh.get(1..4) != Some(&[0, 0, 0][..]) || i32_le(fh, 4) != Some(-1) {
                 return Err(Bnd4Error::Malformed("a reserved field of a file header is wrong"));
             }
-            let stored_size = i64_le(src, at + 8).and_then(|v| u64::try_from(v).ok()).ok_or(Bnd4Error::Malformed("a file has a negative size"))?;
-            let mut cursor = at + 16;
+            let stored_size = i64_le(fh, 8).and_then(|v| u64::try_from(v).ok()).ok_or(Bnd4Error::Malformed("a file has a negative size"))?;
+            let mut cursor = 16;
             let mut uncompressed_size = None;
             if format.has_compression_field() {
-                let v = i64_le(src, cursor).ok_or(Bnd4Error::Malformed("a file header is cut off"))?;
+                let v = i64_le(fh, cursor).ok_or(cut_off.clone())?;
                 if v < -1 {
                     return Err(Bnd4Error::Malformed("a file has an impossible uncompressed size"));
                 }
@@ -307,29 +309,29 @@ impl Bnd4 {
                 cursor += 8;
             }
             let data_offset = if format.long_offsets() {
-                let v = i64_le(src, cursor).and_then(|v| u64::try_from(v).ok()).ok_or(Bnd4Error::Malformed("a file has a negative offset"))?;
+                let v = i64_le(fh, cursor).and_then(|v| u64::try_from(v).ok()).ok_or(Bnd4Error::Malformed("a file has a negative offset"))?;
                 cursor += 8;
                 v
             } else {
-                let v = u32_le(src, cursor).ok_or(Bnd4Error::Malformed("a file header is cut off"))?;
+                let v = u32_le(fh, cursor).ok_or(cut_off.clone())?;
                 cursor += 4;
                 u64::from(v)
             };
             let mut id = None;
             if format.has_ids() {
-                id = Some(i32_le(src, cursor).ok_or(Bnd4Error::Malformed("a file header is cut off"))?);
+                id = Some(i32_le(fh, cursor).ok_or(cut_off.clone())?);
                 cursor += 4;
             }
             let mut name = None;
             if format.has_names() {
-                let name_offset = u32_le(src, cursor).ok_or(Bnd4Error::Malformed("a file header is cut off"))?;
+                let name_offset = u32_le(fh, cursor).ok_or(cut_off.clone())?;
                 cursor += 4;
                 name = Some(read_name(src, name_offset as usize, unicode)?);
             }
             if format.0 == Format::NAMES1 {
                 // the layout of PC save files: an "id" after the name, then a zero
-                id = Some(i32_le(src, cursor).ok_or(Bnd4Error::Malformed("a file header is cut off"))?);
-                if i32_le(src, cursor + 4) != Some(0) {
+                id = Some(i32_le(fh, cursor).ok_or(cut_off.clone())?);
+                if i32_le(fh, cursor + 4) != Some(0) {
                     return Err(Bnd4Error::Malformed("a reserved field of a file header is wrong"));
                 }
             }
@@ -342,7 +344,7 @@ impl Bnd4 {
 
         let hash_table = (extended == 4).then(|| hash_table_info(src, hash_table_offset, headers_end, file_count));
         let layout = check_layout(src, &files, headers_end);
-        Ok(Bnd4 { unk04: src[4], unk05: src[5], bit_big_endian, version, version_raw, format_raw, format, unicode, extended, headers_end, hash_table, files, layout, src_len: src.len() })
+        Ok(Bnd4 { unk04: head[4], unk05: head[5], bit_big_endian, version, version_raw, format_raw, format, unicode, extended, headers_end, hash_table, files, layout, src_len: src.len() })
     }
 
     /// The header numbers of a BND4, for a report when it does not parse: structure only, no file contents. Never fails.

@@ -44,7 +44,7 @@ impl TestKey {
         let k = self.public.modulus_len();
         assert!(plain.len() < k, "a block holds at most {} plain bytes", k - 1);
         let m = BigUint::from_bytes_be(plain);
-        let c = m.modpow(&self.d, self.public.n());
+        let c = m.modpow(&self.d, &self.public.n);
         let bytes = c.to_bytes_be();
         let mut out = vec![0u8; k - bytes.len()];
         out.extend(bytes);

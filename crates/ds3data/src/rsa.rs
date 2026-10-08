@@ -37,15 +37,15 @@ impl std::error::Error for RsaError {}
 
 fn decrypt_into(key: &RsaPublicKey, block: &[u8], out: &mut [u8], index: usize) -> Result<(), RsaError> {
     let c = num_bigint::BigUint::from_bytes_be(block);
-    if &c >= key.n() {
+    if c >= key.n {
         return Err(RsaError::BlockTooLarge { block: index });
     }
-    let bytes = c.modpow(key.e(), key.n()).to_bytes_be();
+    let bytes = c.modpow(&key.e, &key.n).to_bytes_be();
     let Some(start) = out.len().checked_sub(bytes.len()) else {
         return Err(RsaError::ResultTooLarge { block: index });
     };
     out.fill(0);
-    out[start..].copy_from_slice(&bytes);
+    out.get_mut(start..).ok_or(RsaError::ResultTooLarge { block: index })?.copy_from_slice(&bytes);
     Ok(())
 }
 
@@ -88,7 +88,7 @@ fn decrypt_with_threads(key: &RsaPublicKey, data: &[u8], threads: usize) -> Resu
     }
     let threads = threads.clamp(1, blocks);
     let per_thread = blocks.div_ceil(threads);
-    let input = &data[..blocks * k];
+    let input = data.get(..blocks * k).unwrap_or_default();
     if threads == 1 {
         for (i, (block, plain)) in input.chunks_exact(k).zip(out.chunks_exact_mut(k - 1)).enumerate() {
             decrypt_into(key, block, plain, i)?;

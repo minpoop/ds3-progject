@@ -61,7 +61,7 @@ impl FmgFile {
     /// Reads a table. Strings that are absent in the file stay absent; every other string must be valid UTF-16.
     pub fn parse(bytes: &[u8]) -> Result<FmgFile, FmgError> {
         use crate::util::{get, i64_le, u32_le};
-        if bytes.len() < 4 || bytes[..4] != [0, 0, 2, 0] {
+        if bytes.get(..4) != Some(&[0, 0, 2, 0][..]) {
             return Err(FmgError::NotFmg);
         }
         if bytes.len() < HEADER_LEN {
@@ -71,7 +71,7 @@ impl FmgFile {
         if size < HEADER_LEN || size > bytes.len() {
             return Err(FmgError::Truncated("file size"));
         }
-        let b = &bytes[..size];
+        let b = bytes.get(..size).ok_or(FmgError::Truncated("file size"))?;
         if u32_le(b, 8) != Some(1) || u32_le(b, 0x14) != Some(0xFF) || i64_le(b, 0x20) != Some(0) {
             return Err(FmgError::Malformed("a fixed field of the header is wrong"));
         }
