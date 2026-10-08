@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/common", "crates/hook", "crates/launcher", "crates/harness", "crates/sm2", "crates/setup"]
+members = ["crates/common", "crates/hook", "crates/launcher", "crates/harness", "crates/sm2", "crates/setup", "crates/ds3data"]
 resolver = "2"
 
 [workspace.package]
@@ -21,3 +21,16 @@ opt-level = "s"
 lto = true
 codegen-units = 1
 strip = true
+
+# The tests of the archive reader do 2048-bit RSA with a private exponent (to make fake archive headers) and AES; the
+# big-number code is unusably slow without optimisation.
+[profile.dev.package.num-bigint]
+opt-level = 3
+[profile.dev.package.num-integer]
+opt-level = 3
+[profile.dev.package.num-traits]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3

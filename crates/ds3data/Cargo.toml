@@ -1,0 +1,24 @@
+[package]
+name = "ashen-ds3data"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Ashen Marine: a small read-only reader for Dark Souls III's own archives (BHD5/BDT), DCX, BND4 and FMG files, plus a patcher for the item text (testable on any OS)"
+
+[lib]
+name = "ashen_ds3data"
+path = "src/lib.rs"
+
+[features]
+# Builders for synthetic archives, DCX/BND4/FMG files and whole fake installs (test keys, no game data). Used by this
+# crate's own tests and by the tests of the setup program.
+testing = []
+
+[dependencies]
+sha2.workspace = true
+num-bigint = "0.4"
+aes = "0.8"
+miniz_oxide = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
