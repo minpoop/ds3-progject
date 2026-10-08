@@ -152,6 +152,19 @@ Anything not written here is lost at the next context compaction. Newest entries
 - Model groundwork: `ashenmarine-setup sm2-mesh-probe` writes a structural report on the chainsword / bolt pistol template files (hex heads, names, entropy, vertex/index buffer finder); `ds3-probe` also lists the BND4 contents of
   the DS3 weapon model files. Models stay "DS3 default" in this kit.
 
+
+## Kit 0.5: the Dark Souls III archive reader - what is verified and what is only assumed
+
+Own implementation in `crates/ds3data` (no code from SoulsFormats, which is GPL-3.0; its sources were read for format facts only) plus `ashenmarine-setup ds3-probe` / `ds3-prepare`. Verified with synthetic installs (native and under Wine): every parser/writer
+round-trips, `replace_file` with identical data gives identical bytes, garbage and truncated input never panics, nothing is ever written inside the game folder, a failed check writes nothing new and removes an override written earlier.
+**Never run against a real Dark Souls III yet.** Assumptions the first real `ds3-report.txt` will confirm or refute (the report names each one in plain words when it fails):
+
+1. The program file `DarkSoulsIII.exe` holds the archive keys as plain PEM text (else `cache/ds3-keys.pem`, written by the in-game probe from memory) and the right key for each `Data*.bhd` is among them (key chosen by decrypting the first block and finding `BHD5`).
+2. Header = raw RSA public operation per 256-byte block, 255 output bytes each; BHD5 layout (0x1C header + salt, buckets, 40-byte DS3 file headers with u32 name hash, SHA/AES records, AES-128-ECB ranges); `.bdt` starts `BDF4`.
+3. Path hash = trim, `\` to `/`, lower case, leading `/`, `h*37 + c` as u32; English item text is `/msg/ENGLISH/item.msgbnd.dcx` (the report also tries alternative spellings and lists what each hashes to).
+4. `item.msgbnd.dcx` is DCX DFLT 10000_44_9 holding a BND4 (raw format 0x74, files in header order at one alignment, no per-file compression) whose FMG tables use version 2; the weapon names are exactly "Shortsword" (2000000), "Avelyn" (14090000), "Standard Bolt" (404000).
+5. ModEngine2 prefers `<mod>/msg/ENGLISH/item.msgbnd.dcx` over the archived file and the game accepts the rewritten FMG layout (the report says whether the writer reproduces the game's own FMGs byte for byte; informational).
+
 ## Space Marine 2 sound events found (kit 0.3 report)
 
 - `wpn.bnk` v150: 7186 sounds, 838 events; media in `wpn.zip` (3642 `.wem`). Names recovered by hashing words: chainsword (`chswd`) events - `wpn_melee_chswd_light_1hit..4hit` (12-16 sounds each),
