@@ -449,7 +449,7 @@ fn describe_container(out: &mut Out, found: &Found, show_snippets: bool) {
         if b.layout.verified { "as expected".to_string() } else { format!("NOT AS EXPECTED ({})", b.layout.issues.join("; ")) }
     ));
     if let Some(first) = b.files.iter().find_map(|f| f.name.as_deref()) {
-        let prefix = &first[..first.len() - leaf(first).len()];
+        let prefix = first.strip_suffix(leaf(first)).unwrap_or("");
         if !prefix.is_empty() {
             out.line(format!("  file names look like  {prefix}<file>"));
         }
@@ -489,7 +489,7 @@ fn describe_container(out: &mut Out, found: &Found, show_snippets: bool) {
         for id in SNIPPET_IDS {
             let found_in: Vec<String> = tables
                 .iter()
-                .filter_map(|(index, t)| t.get(id).map(|text| format!("{} \"{}\"", b.files[*index].name.as_deref().map_or("?", leaf), snippet(text, 40))))
+                .filter_map(|(index, t)| t.get(id).map(|text| format!("{} \"{}\"", b.files.get(*index).and_then(|f| f.name.as_deref()).map_or("?", leaf), snippet(text, 40))))
                 .collect();
             out.line(format!("    id {id}: {}", if found_in.is_empty() { "no table has a text here".to_string() } else { found_in.join("; ") }));
         }
@@ -632,8 +632,10 @@ fn verify_patched(found: &Found, patched: &[u8], changed: &[usize], edits: &[Ite
     }
     for f in &found.bnd.files {
         let (old, new) = (found.bnd.file_bytes(&found.decoded, f.index), after.file_bytes(patched, f.index));
-        let (old_f, new_f) = (&f, &after.files[f.index]);
-        if (old_f.id, &old_f.name, old_f.flags) != (new_f.id, &new_f.name, new_f.flags) {
+        let Some(new_f) = after.files.get(f.index) else {
+            return Err(format!("file {} is missing from the result", f.index));
+        };
+        if (f.id, &f.name, f.flags) != (new_f.id, &new_f.name, new_f.flags) {
             return Err(format!("file {} changed its id, name or flags", f.index));
         }
         if !changed.contains(&f.index) {
