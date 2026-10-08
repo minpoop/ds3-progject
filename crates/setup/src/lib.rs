@@ -1,6 +1,7 @@
 //! Ashen Marine setup step: reads the player's own Space Marine 2 install (read-only).
 //! `probe` looks around and writes a report; `prepare` turns the game's sound events into plain `.wav` files.
 //! The parts both need (finding the game, opening its archives) live here.
+pub mod meshprobe;
 pub mod prepare;
 pub mod probe;
 pub mod report;

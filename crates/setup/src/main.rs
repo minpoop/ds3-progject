@@ -3,11 +3,12 @@
 //! ```text
 //! ashenmarine-setup probe   [--sm2 "<folder>"] [--out "<folder>"]
 //! ashenmarine-setup prepare [--sm2 "<folder>"] [--out "<assets folder>"]
+//! ashenmarine-setup sm2-mesh-probe [--sm2 "<folder>"] [--out "<folder>"]
 //! ```
 //!
 //! `probe` is the default when no command is given (so a double-click works). Exit codes: 0 done, 2 nothing could be
 //! done (the message says why), 64 the command line was not understood.
-use ashen_setup::{exe_dir, prepare, probe, sm2_hint};
+use ashen_setup::{exe_dir, meshprobe, prepare, probe, sm2_hint};
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -19,12 +20,16 @@ fn usage() {
     println!("  Turns the Space Marine 2 weapon sounds the mod needs into plain .wav files below <assets folder>\\sounds");
     println!("  (default: the folder \"assets\" next to this program) and writes prepare-sm2\\prepare-report.txt next to it.");
     println!("  Space Marine 2 is only read. If it is not found, put its folder on the first line of sm2-folder.txt next to this program.");
+    println!("ashenmarine-setup sm2-mesh-probe [--sm2 \"<Space Marine 2 folder>\"] [--out \"<report folder>\"]");
+    println!("  Looks at the chainsword and bolt pistol model files of your Space Marine 2 (read-only) and writes mesh-report.txt:");
+    println!("  numbers and names about the files, no copies of them (default folder: probe-sm2-mesh next to this program).");
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
     Probe,
     Prepare,
+    MeshProbe,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -43,6 +48,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         parsed.command = match args.next().unwrap().as_str() {
             "probe" => Command::Probe,
             "prepare" => Command::Prepare,
+            "sm2-mesh-probe" => Command::MeshProbe,
             other => return Err(format!("unknown command {other:?}")),
         };
     }
@@ -76,6 +82,7 @@ fn main() -> ExitCode {
     let done = match args.command {
         Command::Probe => probe::run(&probe::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("probe-out")) }),
         Command::Prepare => prepare::run(&prepare::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("assets")), normalize: true }).ok(),
+        Command::MeshProbe => meshprobe::run(&meshprobe::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("probe-sm2-mesh")) }),
     };
     if done {
         ExitCode::SUCCESS
@@ -106,6 +113,12 @@ mod tests {
         assert_eq!(a, Args { command: Command::Prepare, sm2: Some(PathBuf::from("D:\\Games\\Space Marine 2")), out: Some(PathBuf::from("assets")), help: false });
         assert_eq!(parse(&["--out", "a", "prepare"]), Err("unknown option \"prepare\"".to_string()), "the command comes first");
         assert!(parse(&["prepare", "--help"]).unwrap().help);
+    }
+
+    #[test]
+    fn the_mesh_probe_is_a_command_of_its_own() {
+        let a = parse(&["sm2-mesh-probe", "--out", "x"]).unwrap();
+        assert_eq!((a.command, a.out), (Command::MeshProbe, Some(PathBuf::from("x"))));
     }
 
     #[test]
