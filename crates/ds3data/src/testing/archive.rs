@@ -6,6 +6,11 @@ use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
 use aes::Aes128;
 use std::path::Path;
 
+/// An AES key and the ranges it is used on.
+pub type AesSpec = ([u8; 16], Vec<(i64, i64)>);
+/// A SHA-256 hash and the ranges it covers.
+pub type ShaSpec = ([u8; 32], Vec<(i64, i64)>);
+
 /// One file header of a synthetic `BHD5`.
 #[derive(Clone, Debug)]
 pub struct FileSpec {
@@ -13,8 +18,8 @@ pub struct FileSpec {
     pub padded: u32,
     pub offset: u64,
     pub unpadded: i64,
-    pub aes: Option<([u8; 16], Vec<(i64, i64)>)>,
-    pub sha: Option<([u8; 32], Vec<(i64, i64)>)>,
+    pub aes: Option<AesSpec>,
+    pub sha: Option<ShaSpec>,
 }
 
 impl FileSpec {
@@ -136,7 +141,7 @@ struct Stored {
     hash: u32,
     stored: Vec<u8>,
     unpadded: i64,
-    aes: Option<([u8; 16], Vec<(i64, i64)>)>,
+    aes: Option<AesSpec>,
     sha: bool,
 }
 
@@ -180,7 +185,7 @@ impl ArchiveBuilder {
         bdt[8] = 1;
         let mut specs = Vec::new();
         for f in &self.files {
-            while bdt.len() % 16 != 0 {
+            while !bdt.len().is_multiple_of(16) {
                 bdt.push(0);
             }
             let offset = bdt.len() as u64;

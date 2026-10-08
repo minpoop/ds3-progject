@@ -293,14 +293,15 @@ mod tests {
         let dir = t.path();
         sample(dir);
         let key = test_key(0).public;
-        assert!(matches!(Archive::open(&dir.join("None.bhd"), &dir.join("None.bdt"), &[key.clone()]), Err(ArchiveError::Io { .. })));
-        assert!(matches!(Archive::open(&dir.join("Data0.bhd"), &dir.join("None.bdt"), &[key.clone()]), Err(ArchiveError::Io { .. })));
-        let msg = Archive::open(&dir.join("None.bhd"), &dir.join("None.bdt"), &[key.clone()]).unwrap_err().to_string();
+        let keys = std::slice::from_ref(&key);
+        assert!(matches!(Archive::open(&dir.join("None.bhd"), &dir.join("None.bdt"), keys), Err(ArchiveError::Io { .. })));
+        assert!(matches!(Archive::open(&dir.join("Data0.bhd"), &dir.join("None.bdt"), keys), Err(ArchiveError::Io { .. })));
+        let msg = Archive::open(&dir.join("None.bhd"), &dir.join("None.bdt"), keys).unwrap_err().to_string();
         assert!(!msg.contains(dir.to_string_lossy().as_ref()), "{msg}");
         // a .bhd shorter than a block
         std::fs::write(dir.join("Short.bhd"), [1u8; 100]).unwrap();
         std::fs::write(dir.join("Short.bdt"), b"BDF4").unwrap();
-        assert_eq!(Archive::open(&dir.join("Short.bhd"), &dir.join("Short.bdt"), &[key.clone()]).unwrap_err(), ArchiveError::HeaderTooShort);
+        assert_eq!(Archive::open(&dir.join("Short.bhd"), &dir.join("Short.bdt"), keys).unwrap_err(), ArchiveError::HeaderTooShort);
         // a truncated .bdt: files beyond its end are counted and refused
         let bdt = std::fs::read(dir.join("Data0.bdt")).unwrap();
         std::fs::write(dir.join("Cut.bhd"), std::fs::read(dir.join("Data0.bhd")).unwrap()).unwrap();
@@ -323,7 +324,7 @@ mod tests {
         longer.extend([0xEE; 17]);
         std::fs::write(dir.join("Tail.bhd"), &longer).unwrap();
         std::fs::copy(dir.join("Data0.bdt"), dir.join("Tail.bdt")).unwrap();
-        let a = Archive::open(&dir.join("Tail.bhd"), &dir.join("Tail.bdt"), &[key.clone()]).unwrap();
+        let a = Archive::open(&dir.join("Tail.bhd"), &dir.join("Tail.bdt"), std::slice::from_ref(&key)).unwrap();
         assert_eq!(a.trailing_bhd_bytes(), 17);
         // cut into the last block: the header needs it
         std::fs::write(dir.join("Cut.bhd"), &bhd[..bhd.len() - 10]).unwrap();
@@ -341,7 +342,7 @@ mod tests {
         let mut b = ArchiveBuilder::new(3);
         b.add_encrypted("/x.bin", &[7u8; 64], [9; 16], &[(0, 64)]);
         b.write(dir, "A", &key);
-        let a = Archive::open(&dir.join("A.bhd"), &dir.join("A.bdt"), &[key.public.clone()]).unwrap();
+        let a = Archive::open(&dir.join("A.bhd"), &dir.join("A.bdt"), std::slice::from_ref(&key.public)).unwrap();
         assert_eq!(a.read(&a.entries()[0]).unwrap(), vec![7u8; 64]);
         // headers whose ranges do not fit a 64-byte file (or are not whole blocks)
         let mut bdt = b"BDF4".to_vec();
@@ -351,7 +352,7 @@ mod tests {
         for ranges in [vec![(0i64, 80i64)], vec![(8, 20)], vec![(32, 16)], vec![(-5, 16)], vec![(0, 16), (60, 64)], vec![(i64::MAX - 8, i64::MAX)]] {
             let spec = Bhd5Spec { salt: "s".into(), buckets: 3, files: vec![FileSpec::plain(path_hash("/x.bin"), 64, 16).aes([1; 16], &ranges)] };
             std::fs::write(dir.join("B.bhd"), key.encrypt_header(&spec.build())).unwrap();
-            let a = Archive::open(&dir.join("B.bhd"), &dir.join("B.bdt"), &[key.public.clone()]).unwrap();
+            let a = Archive::open(&dir.join("B.bhd"), &dir.join("B.bdt"), std::slice::from_ref(&key.public)).unwrap();
             assert!(matches!(a.read(&a.entries()[0]), Err(ArchiveError::BadRange { .. })), "{ranges:?}");
         }
     }

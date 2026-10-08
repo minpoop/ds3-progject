@@ -19,6 +19,9 @@ with the notices below.
 | `lewton` | decoding the Vorbis audio of Space Marine 2 sound files on the player's PC | MIT OR Apache-2.0 | https://github.com/RustAudio/lewton |
 | rewwise (format description only; no code copied) | the layout of Wwise sound-bank objects read by crates/sm2/src/hirc.rs | MIT OR Apache-2.0 | https://github.com/vswarte/rewwise |
 | ww2ogg (algorithm ported to Rust) and its `packed_codebooks_aoTuV_603.bin` codebook library | rebuilding Wwise's stripped Vorbis streams into standard Vorbis (crates/sm2/src/wwvorbis.rs, crates/sm2/data) | BSD-3-Clause (Xiph.org Foundation; Adam Gashlin); codebooks derived from aoTuV/libvorbis (BSD-3-Clause) | https://github.com/hcs64/ww2ogg |
+| `num-bigint`, `num-integer`, `num-traits`, `autocfg` | the raw RSA operation that unlocks the table of contents of the player's own Dark Souls III archives (crates/ds3data/src/rsa.rs) | MIT OR Apache-2.0 (autocfg: Apache-2.0 OR MIT) | https://github.com/rust-num/num-bigint |
+| `aes`, `cipher`, `inout` | decrypting the AES-128 protected parts of files read from the player's own Dark Souls III archives (crates/ds3data/src/archive.rs) | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-ciphers |
+| `miniz_oxide`, `adler2` | inflating and deflating the zlib data inside Dark Souls III's DCX files (crates/ds3data/src/dcx.rs); also used by `png` and `zip` | MIT OR Zlib OR Apache-2.0 (adler2: 0BSD OR MIT OR Apache-2.0) | https://github.com/Frommi/miniz_oxide |
 
 ## MinHook
 
@@ -79,6 +82,11 @@ private test kits as `modengine2/LICENSE-MIT.txt`).
 - Saber's official Space Marine 2 modding documentation (spacemarine2-modding.prismray.io).
 - Wwise sound banks: [vswarte/rewwise](https://github.com/vswarte/rewwise) (MIT OR Apache-2.0), vgmstream (ISC).
 - Dark Souls III in-process structures: [vswarte/fromsoftware-rs](https://github.com/vswarte/fromsoftware-rs) `darksouls3` crate (MIT).
+- Dark Souls III file formats read by crates/ds3data (the `BHD5`/`BDT` archive pair with its RSA-protected table of contents and
+  path hash, `DCX`, `BND4`, `FMG`): the layouts as documented by the Souls modding community, consulted for field order, sizes and
+  constants only - [JKAnderson/SoulsFormats](https://github.com/JKAnderson/SoulsFormats) (GPL-3.0) and
+  [soulsmods/SoulsFormatsNEXT](https://github.com/soulsmods/SoulsFormatsNEXT). No code, comments or structure of either was copied;
+  our readers and writers are written independently, and the test data is synthetic (throwaway test keys, made-up files).
 
 ## Not included
 

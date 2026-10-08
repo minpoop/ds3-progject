@@ -844,7 +844,7 @@ mod tests {
         let mut bytes = sample(0x74, true);
         let b = Bnd4::parse(&bytes).unwrap();
         let t = b.hash_table.clone().unwrap();
-        assert!(t.consistent && t.bucket_count >= 2 && t.offset % 8 == 0 && t.hashes_offset > t.offset);
+        assert!(t.consistent && t.bucket_count >= 2 && t.offset.is_multiple_of(8) && t.hashes_offset > t.offset);
         // damage the constants of the table: still parses, but is reported as not consistent
         let at = t.offset as usize + 12;
         bytes[at] = 0x11;

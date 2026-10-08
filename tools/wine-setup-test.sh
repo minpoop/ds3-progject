@@ -9,6 +9,17 @@
 #   F  bad command line (exit code 64)
 #   G  an assets folder inside the game folder is refused (nothing is ever written there)
 #
+# Then the same for Dark Souls III against a synthetic install (made by the example make_fake_ds3: a program file with two
+# throwaway test keys among junk, three encrypted archives with made-up item text and weapon model containers):
+#
+#   H  ds3-probe: report with key fingerprints (no keys), archives, path table, DCX/BND4 listing and a dry run
+#   I  ds3-prepare: writes mod/msg/ENGLISH/item.msgbnd.dcx (a DCX holding the new names) and ashenmarine-msg.json
+#   J  a game that renamed the item (ds3-prepare after I): exit code 2, nothing written, the override of I is removed
+#   K  no archive key in the program file: exit code 2 and the plain-words message; the same install with --keys: exit code 0
+#   L  ds3-prepare started from its own folder, game named in game-folder.txt (the double-click way)
+#   M  a mod folder inside the game folder is refused (nothing is ever written there)
+#   N  bad command lines for the Dark Souls III commands (exit code 64)
+#
 #   tools/wine-setup-test.sh            # needs: wine64, xvfb-run, mingw-w64, rust target x86_64-pc-windows-gnu, python3
 set -u
 cd "$(dirname "$0")/.."
@@ -137,6 +148,133 @@ sed 's/^/    /' "$OUT/run-g.out" | head -12
 check "G exit code 2" '[ "$(cat "$OUT/run-g.rc")" = "2" ]'
 check "G says why" 'tr "\n" " " < "$OUT/run-g.out" | tr -s " " | grep -q "is inside your Space Marine 2 folder"'
 check "G the install is still byte-identical (nothing was created in it)" '[ "$(treehash "$OUT/Space Marine 2")" = "$BEFORE" ]'
+
+# ======================================================================================================================
+# Dark Souls III
+# ======================================================================================================================
+cargo build -p ashen-setup --example make_fake_ds3 2>&1 | grep -E "^(warning|error)" -A5
+FAKE_DS3="$ROOT/target/debug/examples/make_fake_ds3"
+D3="$OUT/ds3"
+rm -rf "$D3"; mkdir -p "$D3/cwd"
+GAME="$D3/DARK SOULS III"
+"$FAKE_DS3" "$GAME" --write-keys "$D3/keys.pem" > /dev/null || { echo "cannot build the fake Dark Souls III install"; exit 1; }
+"$FAKE_DS3" "$D3/no-key/DARK SOULS III" --no-exe-keys > /dev/null || { echo "cannot build the fake Dark Souls III install (no keys)"; exit 1; }
+"$FAKE_DS3" "$D3/renamed/DARK SOULS III" --variant wrong-name > /dev/null || { echo "cannot build the fake Dark Souls III install (renamed)"; exit 1; }
+D3_BEFORE="$(treehash "$GAME")"
+D3_NOKEY_BEFORE="$(treehash "$D3/no-key/DARK SOULS III")"
+D3_RENAMED_BEFORE="$(treehash "$D3/renamed/DARK SOULS III")"
+mkdir -p "$D3/kit"; cp "$BIN/ashenmarine-setup.exe" "$D3/kit/"
+# wine_ds3 <exe> <name> <args...>: runs the Windows program from the folder $D3/cwd; output in $D3/<name>.out, exit code in $D3/<name>.rc
+wine_ds3() {
+  local exe="$1" name="$2"; shift 2
+  (cd "$D3/cwd" && WINEDEBUG=-all timeout 180 xvfb-run -a "$WINE" "$exe" "$@" > "$D3/$name.out" 2>&1; echo $? > "$D3/$name.rc")
+}
+# the output of a run with the line breaks of the console taken out, to look for a phrase
+flat_out() { tr '\n' ' ' < "$1" | tr -s ' '; }
+# ds3_manifest_ok <mod folder>: ashenmarine-msg.json has the documented shape and keys in the documented order
+ds3_manifest_ok() {
+  python3 -I - "$1" <<'PY'
+import json, os, sys
+mod = sys.argv[1]
+m = json.load(open(os.path.join(mod, "ashenmarine-msg.json")))
+assert list(m) == ["format", "tool", "source", "edits", "written"], list(m)
+assert m["format"] == 1 and m["tool"].startswith("ashenmarine-setup "), m
+assert list(m["source"]) == ["archive", "sha256_of_decoded_original"], m["source"]
+assert m["source"]["archive"] == "Data0.bhd" and len(m["source"]["sha256_of_decoded_original"]) == 64, m["source"]
+assert [(e["id"], e["old"], e["new"]) for e in m["edits"]] == [(2000000, "Shortsword", "Chainsword"), (14090000, "Avelyn", "Bolt Pistol"), (404000, "Standard Bolt", "Bolt Rounds")], m["edits"]
+assert m["written"] == "msg/ENGLISH/item.msgbnd.dcx" and os.path.isfile(os.path.join(mod, m["written"])), m["written"]
+PY
+}
+# ds3_override_ok <file>: a DCX (zlib, checksum verified here by python) holding a BND4 with the new names and without the old ones
+ds3_override_ok() {
+  python3 -I - "$1" <<'PY'
+import struct, sys, zlib
+b = open(sys.argv[1], "rb").read()
+assert b[:4] == b"DCX\0" and b[0x28:0x2C] == b"DFLT" and b[0x44:0x48] == b"DCA\0", b[:8]
+usize, csize = struct.unpack(">II", b[0x1C:0x24])
+assert len(b) == 0x4C + csize and b[0x4C] == 0x78, (len(b), csize)
+data = zlib.decompress(b[0x4C:0x4C + csize])
+assert len(data) == usize and data[:4] == b"BND4", (len(data), usize)
+u16 = lambda s: s.encode("utf-16-le")
+for new in ("Chainsword", "Bolt Pistol", "Bolt Rounds", "A roaring chain-toothed blade of the Adeptus Astartes."):
+    assert u16(new) in data, new
+for old in ("Shortsword", "Avelyn", "Standard Bolt"):
+    assert u16(old) not in data, old
+assert u16("Light Crossbow") in data and u16("Repeating Crossbow") in data, "the other test weapons keep their names"
+PY
+}
+
+echo; echo "== H: ds3-probe under Wine against the synthetic Dark Souls III install =="
+wine_ds3 "$BIN/ashenmarine-setup.exe" h ds3-probe --ds3 "$(winpath "$GAME")" --out "$(winpath "$D3/out-h")"
+sed 's/^/    /' "$D3/h.out" | head -40
+check "H exit code 0" '[ "$(cat "$D3/h.rc")" = "0" ]'
+check "H the install is byte-identical afterwards" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
+check "H the report lists the keys by fingerprint and the archives" 'grep -q "archive keys found in the program file as plain text: 2 (87febfc8, b2969406)" "$D3/out-h/ds3-report.txt" && grep -q "key 87febfc8" "$D3/out-h/ds3-report.txt" && grep -q "key b2969406" "$D3/out-h/ds3-report.txt"'
+check "H the report has the path table with the item text" 'grep -q "^  /msg/ENGLISH/item.msgbnd.dcx .*hash 50b424bf" "$D3/out-h/ds3-report.txt" && grep -q "9 of 40 paths exist" "$D3/out-h/ds3-report.txt"'
+check "H the report lists the item text container and the texts at the test ids" 'grep -q "DCX variant DCX_DFLT_10000_44_9" "$D3/out-h/ds3-report.txt" && grep -q "id 2000000: WeaponName.fmg \"Shortsword\"" "$D3/out-h/ds3-report.txt"'
+check "H the dry run passed" 'grep -q "\[ok\] the edits: 3 edits" "$D3/out-h/ds3-report.txt" && ! grep -q "FAILED\|PROBLEM\|CRASHED" "$D3/out-h/ds3-report.txt"'
+check "H the report lists the weapon model containers" 'grep -q "wp_a_0200.flver" "$D3/out-h/ds3-report.txt" && grep -q "wp_a_1409.hkx" "$D3/out-h/ds3-report.txt"'
+check "H the report has no key and no folder name" '! grep -q "BEGIN RSA\|BEGIN PUBLIC" "$D3/out-h/ds3-report.txt" && ! grep -qi "wine-test\|/home/\|Z:" "$D3/out-h/ds3-report.txt"'
+check "H only the report was written" '[ "$(find "$D3/out-h" -type f | wc -l)" = "1" ] && [ -f "$D3/out-h/ds3-report.txt" ]'
+
+echo; echo "== I: ds3-prepare under Wine against the synthetic Dark Souls III install =="
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" i ds3-prepare --ds3 "$(winpath "$GAME")" --mod "$(winpath "$D3/mod")" --out "$(winpath "$D3/out-i")"
+sed 's/^/    /' "$D3/i.out" | tail -22
+check "I exit code 0" '[ "$(cat "$D3/i.rc")" = "0" ]'
+check "I the install is byte-identical afterwards" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
+check "I exactly the override and the manifest are in the mod folder" '[ "$(find "$D3/mod" -type f | wc -l)" = "2" ] && [ -f "$D3/mod/msg/ENGLISH/item.msgbnd.dcx" ] && [ -f "$D3/mod/ashenmarine-msg.json" ]'
+check "I the manifest has the documented shape" 'ds3_manifest_ok "$D3/mod"'
+check "I the override is a DCX holding the new names and not the old ones" 'ds3_override_ok "$D3/mod/msg/ENGLISH/item.msgbnd.dcx"'
+check "I the console says it only reads the game" 'grep -q "only READS your Dark Souls III files" "$D3/i.out"'
+check "I the report is in the report folder" 'grep -q "wrote msg.ENGLISH.item.msgbnd.dcx" "$D3/out-i/ds3-report.txt"'
+
+echo; echo "== J: the game renamed an item -> exit code 2, nothing written, the override of I is removed =="
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" j ds3-prepare --ds3 "$(winpath "$D3/renamed/DARK SOULS III")" --mod "$(winpath "$D3/mod")" --out "$(winpath "$D3/out-j")"
+sed 's/^/    /' "$D3/j.out" | tail -14
+check "J exit code 2" '[ "$(cat "$D3/j.rc")" = "2" ]'
+check "J the stale override and its manifest are gone" '[ ! -e "$D3/mod/msg/ENGLISH/item.msgbnd.dcx" ] && [ ! -e "$D3/mod/ashenmarine-msg.json" ]'
+check "J says why in plain words" 'flat_out "$D3/j.out" | grep -q "no longer has \"Shortsword\" at id 2000000"'
+check "J says nothing was changed" 'flat_out "$D3/j.out" | grep -q "Nothing was changed: the item names in the game stay as Dark Souls III has them"'
+check "J the renamed install is untouched" '[ "$(treehash "$D3/renamed/DARK SOULS III")" = "$D3_RENAMED_BEFORE" ]'
+
+echo; echo "== K: no archive key in the program file -> exit code 2; with --keys -> exit code 0 =="
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" k ds3-prepare --ds3 "$(winpath "$D3/no-key/DARK SOULS III")" --mod "$(winpath "$D3/mod-k")" --out "$(winpath "$D3/out-k")"
+sed 's/^/    /' "$D3/k.out" | tail -10
+check "K exit code 2" '[ "$(cat "$D3/k.rc")" = "2" ]'
+check "K says what to do" 'flat_out "$D3/k.out" | grep -q "no archive key was found in your Dark Souls III program file; start the game once with the test kit (Play-AshenMarine.bat), close it, and run this again"'
+check "K nothing was written (no mod folder at all)" '[ ! -e "$D3/mod-k" ]'
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" k2 ds3-prepare --ds3 "$(winpath "$D3/no-key/DARK SOULS III")" --keys "$(winpath "$D3/keys.pem")" --mod "$(winpath "$D3/mod-k")" --out "$(winpath "$D3/out-k2")"
+check "K2 with --keys: exit code 0" '[ "$(cat "$D3/k2.rc")" = "0" ]'
+check "K2 with --keys: the override is right" 'ds3_manifest_ok "$D3/mod-k" && ds3_override_ok "$D3/mod-k/msg/ENGLISH/item.msgbnd.dcx"'
+check "K2 the report names the key file and not the keys" 'grep -q "keys from the key file keys.pem: 2 (87febfc8, b2969406)" "$D3/out-k2/ds3-report.txt" && ! grep -q "BEGIN RSA" "$D3/out-k2/ds3-report.txt"'
+check "K the install without keys in its program file is untouched" '[ "$(treehash "$D3/no-key/DARK SOULS III")" = "$D3_NOKEY_BEFORE" ]'
+
+echo; echo "== L: ds3-prepare started from its own folder, game named in game-folder.txt =="
+mkdir -p "$D3/kit-l" "$D3/cwd-l"
+cp "$BIN/ashenmarine-setup.exe" "$D3/kit-l/"
+printf '"%s"\r\nthis second line is ignored\r\n' "$(winpath "$GAME")" > "$D3/kit-l/game-folder.txt"
+(cd "$D3/cwd-l" && WINEDEBUG=-all timeout 180 xvfb-run -a "$WINE" "$(winpath "$D3/kit-l/ashenmarine-setup.exe")" ds3-prepare > "$D3/l.out" 2>&1; echo $? > "$D3/l.rc")
+sed 's/^/    /' "$D3/l.out" | tail -8
+check "L exit code 0" '[ "$(cat "$D3/l.rc")" = "0" ]'
+check "L the override, the manifest and the report are written next to the program" 'ds3_manifest_ok "$D3/kit-l/mod" && ds3_override_ok "$D3/kit-l/mod/msg/ENGLISH/item.msgbnd.dcx" && [ -f "$D3/kit-l/ds3-prepare/ds3-report.txt" ]'
+check "L nothing is written in the working folder" '[ -z "$(ls -A "$D3/cwd-l")" ]'
+check "L the install is still byte-identical" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
+check "L the override is the same as the one K2 made from the same archives" 'cmp -s "$D3/kit-l/mod/msg/ENGLISH/item.msgbnd.dcx" "$D3/mod-k/msg/ENGLISH/item.msgbnd.dcx"'
+
+echo; echo "== M: a mod folder inside the game folder is refused =="
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" m ds3-prepare --ds3 "$(winpath "$GAME")" --mod "$(winpath "$GAME/Game/mod")" --out "$(winpath "$D3/out-m")"
+sed 's/^/    /' "$D3/m.out" | head -8
+check "M exit code 2" '[ "$(cat "$D3/m.rc")" = "2" ]'
+check "M says why" 'flat_out "$D3/m.out" | grep -q "is inside your Dark Souls III folder"'
+check "M the install is still byte-identical (nothing was created in it)" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
+check "M no report was written either" '[ ! -e "$D3/out-m" ]'
+
+echo; echo "== N: bad command lines for the Dark Souls III commands -> exit code 64 =="
+for args in "ds3-prepare --bogus" "ds3-probe --mod x" "ds3-prepare --sm2 x" "ds3-prepare --keys"; do
+  # shellcheck disable=SC2086
+  wine_ds3 "$BIN/ashenmarine-setup.exe" n $args
+  check "N '$args' gives exit code 64 and shows how to use it" '[ "$(cat "$D3/n.rc")" = "64" ] && grep -q "ashenmarine-setup ds3-prepare" "$D3/n.out"'
+done
 
 echo; if [ "$FAILS" -eq 0 ]; then echo "ALL SETUP TESTS PASSED"; else echo "$FAILS CHECK(S) FAILED"; fi
 exit "$FAILS"

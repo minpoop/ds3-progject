@@ -275,7 +275,7 @@ pub fn base64_decode(text: &[u8]) -> Result<Vec<u8>, KeyError> {
     if clean.is_empty() {
         return Err(KeyError::Base64("nothing between the markers"));
     }
-    if clean.len() % 4 != 0 {
+    if !clean.len().is_multiple_of(4) {
         return Err(KeyError::Base64("the length is not a multiple of 4"));
     }
     let quads = clean.len() / 4;

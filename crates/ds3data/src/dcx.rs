@@ -422,7 +422,7 @@ mod tests {
         }
         // every header byte matters
         for at in 0..HEADER_LEN {
-            if matches!(at, 0x1C..=0x1F | 0x20..=0x23) {
+            if matches!(at, 0x1C..=0x23) {
                 continue; // the sizes are tested below
             }
             let mut x = good.clone();

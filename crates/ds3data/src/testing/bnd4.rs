@@ -40,7 +40,7 @@ impl Bnd4Spec {
     }
 
     fn pad(out: &mut Vec<u8>, align: u64) {
-        while out.len() as u64 % align != 0 {
+        while !(out.len() as u64).is_multiple_of(align) {
             out.push(0);
         }
     }
@@ -171,7 +171,7 @@ impl Bnd4Spec {
 }
 
 fn is_prime(p: u32) -> bool {
-    p >= 2 && (2..p).take_while(|d| d * d <= p).all(|d| p % d != 0)
+    p >= 2 && (2..p).take_while(|d| d * d <= p).all(|d| !p.is_multiple_of(d))
 }
 
 /// A small sample: five files with names like the game's (`N:\...\x.fmg`), different sizes, one of them empty.

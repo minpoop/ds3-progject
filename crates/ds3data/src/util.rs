@@ -19,10 +19,6 @@ pub(crate) fn i32_le(b: &[u8], at: usize) -> Option<i32> {
     Some(i32::from_le_bytes(get(b, at, 4)?.try_into().ok()?))
 }
 
-pub(crate) fn u64_le(b: &[u8], at: usize) -> Option<u64> {
-    Some(u64::from_le_bytes(get(b, at, 8)?.try_into().ok()?))
-}
-
 pub(crate) fn i64_le(b: &[u8], at: usize) -> Option<i64> {
     Some(i64::from_le_bytes(get(b, at, 8)?.try_into().ok()?))
 }
@@ -91,8 +87,8 @@ mod tests {
         assert_eq!(u32_le(&b, 0), Some(0x04030201));
         assert_eq!(u32_le(&b, 5), Some(0x09080706));
         assert_eq!(u32_le(&b, 6), None);
-        assert_eq!(u64_le(&b, 1), Some(0x0908070605040302));
-        assert_eq!(u64_le(&b, 2), None);
+        assert_eq!(i64_le(&b, 1), Some(0x0908070605040302));
+        assert_eq!(i64_le(&b, 2), None);
         assert_eq!(u32_le(&b, usize::MAX), None, "no overflow panic");
         assert_eq!(get(&b, usize::MAX - 1, 4), None);
         assert_eq!(u32_be(&b, 0), Some(0x01020304));
