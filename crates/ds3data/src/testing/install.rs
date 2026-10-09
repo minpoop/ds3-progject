@@ -42,11 +42,13 @@ pub struct FakeOptions {
     pub broken_archives: bool,
     /// `Data0.bhd` is a plain (not encrypted) table of contents, as in the real game.
     pub plain_data0: bool,
+    /// The weapon containers hold files named `.flver` and `.tpf` that are not models or textures (noise).
+    pub junk_models: bool,
 }
 
 impl Default for FakeOptions {
     fn default() -> Self {
-        FakeOptions { exe_keys: vec![0, 1], item_msg: ItemMsg::Good, collide: true, broken_archives: false, plain_data0: false }
+        FakeOptions { exe_keys: vec![0, 1], item_msg: ItemMsg::Good, collide: true, broken_archives: false, plain_data0: false, junk_models: false }
     }
 }
 
@@ -101,10 +103,23 @@ fn add_encrypted(b: &mut ArchiveBuilder, path: &str, data: &[u8], key: u8) {
 
 /// A small weapon container (the kind `*.partsbnd.dcx` is), DCX-compressed.
 pub fn model_dcx(model: &str) -> Vec<u8> {
+    model_dcx_of(model, false)
+}
+
+/// [`model_dcx`], or with files named like a model and a texture container that are noise (`junk`).
+pub fn model_dcx_of(model: &str, junk: bool) -> Vec<u8> {
     let mut spec = Bnd4Spec::new(0x74);
     let base = format!("N:\\FDP\\data\\INTERROOT_win64\\parts\\weapon\\{model}");
-    spec = spec.file(100, &format!("{base}\\{model}.flver"), &noise(model.len() as u64 * 7919, 700));
-    spec = spec.file(101, &format!("{base}\\{model}.tpf"), &noise(model.len() as u64 * 104729, 333));
+    if junk {
+        spec = spec.file(100, &format!("{base}\\{model}.flver"), &noise(model.len() as u64 * 31, 700));
+        spec = spec.file(101, &format!("{base}\\{model}.tpf"), &noise(model.len() as u64 * 37, 400));
+    } else {
+        // a model and a texture container that really parse (made up), so the model report can be tried on them
+        let mut flver = super::flver::sample_flver();
+        flver.header.bounding_box_max[0] += model.len() as f32;
+        spec = spec.file(100, &format!("{base}\\{model}.flver"), &flver.write().expect("write the made-up model"));
+        spec = spec.file(101, &format!("{base}\\{model}.tpf"), &super::flver::sample_tpf().write());
+    }
     spec = spec.file(102, &format!("{base}\\{model}.hkx"), &noise(model.len() as u64 * 1299709, 120));
     dcx::encode(&spec.build(), &DcxInfo::ds3_default()).expect("encode")
 }
@@ -210,9 +225,9 @@ pub fn build(root: &Path, opts: &FakeOptions) -> FakeDs3 {
     for (i, path) in MODEL_PATHS.iter().enumerate() {
         let model = path.trim_start_matches("/parts/").trim_end_matches(".partsbnd.dcx");
         if i % 2 == 0 {
-            add_encrypted(&mut data1, path, &model_dcx(model), 0x30 + i as u8);
+            add_encrypted(&mut data1, path, &model_dcx_of(model, opts.junk_models), 0x30 + i as u8);
         } else {
-            data1.add(path, &model_dcx(model));
+            data1.add(path, &model_dcx_of(model, opts.junk_models));
         }
     }
     data1.write(&game, "Data1", &k1);

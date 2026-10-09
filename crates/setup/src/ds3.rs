@@ -23,11 +23,13 @@ use ashen_ds3data::bhd5::Entry;
 use ashen_ds3data::bnd4::{self, Bnd4};
 use ashen_ds3data::dcx::{self, DcxInfo};
 use ashen_ds3data::discover::{self, Bundle, Limits, Search};
+use ashen_ds3data::flver::Flver;
 use ashen_ds3data::fmg::{FmgError, FmgFile};
 use ashen_ds3data::hash::path_hash;
 use ashen_ds3data::install::{exe_path, find_game_dir, Ds3Install, ExeInfo, PlainHeader};
 use ashen_ds3data::keys::{load_pem_file, RsaPublicKey};
 use ashen_ds3data::msgpatch::{patch_item_msgbnd_detailed, ItemEdit, PatchError};
+use ashen_ds3data::tpf::Tpf;
 use ashen_ds3data::{sha256_hex, snippet};
 use serde_json::Value;
 use std::io::Write;
@@ -970,7 +972,67 @@ fn item_text_probe(rep: &mut Report, install: &Ds3Install) {
     }
 }
 
-/// Step "weapon models": DCX variant and the BND4 listing of two of them.
+/// Where two byte strings first differ, for a report.
+fn first_difference(a: &[u8], b: &[u8]) -> String {
+    match a.iter().zip(b.iter()).position(|(x, y)| x != y) {
+        Some(i) => {
+            let lo = i.saturating_sub(8);
+            let show = |s: &[u8]| ashen_ds3data::hex(s.get(lo..(i + 8).min(s.len())).unwrap_or(&[]));
+            format!("offset {i:#x}: ours {} / the game's {}", show(a), show(b))
+        }
+        None => format!("the shorter one ends at {:#x}", a.len().min(b.len())),
+    }
+}
+
+/// The model and texture files inside a weapon's container: the structure of the FLVER (bones, materials, meshes, how the
+/// vertices are stored, with raw samples) and of the TPF, and whether writing them again gives the very same bytes - the check
+/// that the writer can be trusted with this game's files. The details go to the report only; a summary line is shown.
+fn describe_model_files(rep: &mut Report, found: &Found) {
+    for f in &found.bnd.files {
+        let Some(name) = f.name.as_deref() else { continue };
+        let lower = name.to_lowercase();
+        let Some(bytes) = found.bnd.file_bytes(&found.decoded, f.index) else { continue };
+        if lower.ends_with(".flver") {
+            let mut summary = format!("    {}: {} bytes", leaf(name), bytes.len());
+            match Flver::parse(bytes) {
+                Err(e) => summary.push_str(&format!("; NOT READABLE as a model: {e}")),
+                Ok(model) => {
+                    rep.detail(format!("    {} ({} bytes):", leaf(name), bytes.len()));
+                    for line in model.describe() {
+                        rep.detail(format!("      {line}"));
+                    }
+                    for i in 0..model.meshes.len() {
+                        for line in model.vertex_stats(i) {
+                            rep.detail(format!("    {line}"));
+                        }
+                    }
+                    let verdict = match model.write() {
+                        Ok(again) if again == bytes => "written again it is byte-identical to the game's file".to_string(),
+                        Ok(again) => format!("written again it DIFFERS ({} bytes instead of {}; first difference at {})", again.len(), bytes.len(), first_difference(&again, bytes)),
+                        Err(e) => format!("cannot be written again ({e})"),
+                    };
+                    summary.push_str(&format!("; model with {} meshes, {} materials, {} bones, {} dummies; {verdict}", model.meshes.len(), model.materials.len(), model.nodes.len(), model.dummies.len()));
+                }
+            }
+            rep.say(summary);
+        } else if lower.ends_with(".tpf") {
+            let mut summary = format!("    {}: {} bytes", leaf(name), bytes.len());
+            match Tpf::parse(bytes) {
+                Err(e) => summary.push_str(&format!("; NOT READABLE as a texture container: {e}")),
+                Ok(tpf) => {
+                    for line in tpf.describe() {
+                        rep.detail(format!("      {line}"));
+                    }
+                    let verdict = if tpf.write() == bytes { "written again it is byte-identical".to_string() } else { format!("written again it DIFFERS ({} bytes instead of {}; first difference at {})", tpf.write().len(), bytes.len(), first_difference(&tpf.write(), bytes)) };
+                    summary.push_str(&format!("; {} textures [{}]; {verdict}", tpf.textures.len(), tpf.textures.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", ")));
+                }
+            }
+            rep.say(summary);
+        }
+    }
+}
+
+/// Step "weapon models": DCX variant, the BND4 listing, and the structure of the model and texture files of two of them.
 fn models_probe(rep: &mut Report, install: &Ds3Install) {
     for path in MODELS_TO_LIST {
         let mut out = Out { rep: &mut *rep, loud: true };
@@ -980,6 +1042,7 @@ fn models_probe(rep: &mut Report, install: &Ds3Install) {
             Ok(found) => {
                 out.line(format!("  {}", dcx_line(&found)));
                 describe_container(&mut out, &found, false);
+                describe_model_files(rep, &found);
             }
         }
     }

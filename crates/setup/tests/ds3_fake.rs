@@ -99,6 +99,42 @@ fn the_probe_lists_the_text_containers_it_found_by_content() {
     assert!(!report.contains("recognised by its text"), "{report}");
 }
 
+#[test]
+fn the_probe_describes_the_models_and_textures_inside_the_weapon_containers() {
+    let env = Env::new(&FakeOptions::default());
+    assert!(env.probe(None));
+    let report = env.report();
+    let flat = flat(&report);
+    for needle in [
+        // the summary line of each file, with the verdict of writing it again
+        "wp_a_0200.flver: 2160 bytes; model with 2 meshes, 2 materials, 3 bones, 1 dummies; written again it is byte-identical to the game's file",
+        "wp_a_1409.flver: 2160 bytes; model with 2 meshes, 2 materials, 3 bones, 1 dummies; written again it is byte-identical to the game's file",
+        "wp_a_0200.tpf: 5969 bytes; 2 textures [wp_a_9999_a, wp_a_9999_n]; written again it is byte-identical",
+        // the structure, for the details of the report
+        "FLVER version 0x20014",
+        "layout 0: 28 bytes per vertex: Position Float3, Normal Byte4C, Tangent Byte4C, BoneIndices Byte4B, UV Short2toFloat2",
+        "material 0: \"blade\" mtd \"N:\\FDP\\mtd\\Wp\\Wp_Metal[DSB].mtd\"",
+        "bone 1: \"bone1\" parent 0 child 2",
+        "mesh 0 buffer 0: 8 vertices of 28 bytes; first two: ",
+        "Position Float3: [1.000 .. 6.250]",
+        "TPF with 2 textures",
+        "wp_a_9999_a: format 1 type 0 mip maps 3 flags 0 float struct None; 5589 bytes; DDS 64x64, 3 mip levels, DXT5",
+    ] {
+        assert!(flat.contains(&self::flat(needle)), "report is missing {needle:?}:\n{report}");
+    }
+    assert!(!report.contains("NOT READABLE") && !report.contains("DIFFERS") && !report.contains("cannot be written"), "{report}");
+}
+
+#[test]
+fn files_in_the_weapon_containers_that_are_not_models_or_textures_are_reported_not_trusted() {
+    let env = Env::new(&FakeOptions { junk_models: true, ..FakeOptions::default() });
+    assert!(env.probe(None), "unreadable models are a finding of the probe, not a failure of it");
+    let report = env.report();
+    assert!(report.contains("wp_a_0200.flver: 700 bytes; NOT READABLE as a model:"), "{report}");
+    assert!(report.contains("wp_a_0200.tpf: 400 bytes; NOT READABLE as a texture container:"), "{report}");
+    assert!(!report.contains("byte-identical to the game's file") && !report.contains("CRASHED"), "{report}");
+}
+
 /// A fake install, the folder of the "program" (where the report and the mod folder go) and what a run needs.
 struct Env {
     _t: tempfile::TempDir,

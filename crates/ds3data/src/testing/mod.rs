@@ -4,5 +4,6 @@
 pub mod archive;
 pub mod bnd4;
 pub mod install;
+pub mod flver;
 pub mod items;
 pub mod keys;
