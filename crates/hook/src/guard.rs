@@ -1,7 +1,7 @@
 //! The logic the generated detours call (see `generated.rs`). Kept small and allocation-light: these run on
 //! the game's own threads, inside file and network calls.
 
-use crate::state::{self, DENIED_ADDR, DENIED_NAME, REDIRECTED};
+use crate::state::{self, ARCHIVE_OPENS, DENIED_ADDR, DENIED_NAME, REDIRECTED};
 use ashen_common::netguard;
 use core::sync::atomic::Ordering::Relaxed;
 use std::cell::Cell;
@@ -47,6 +47,38 @@ unsafe fn read_ansi(p: *const u8) -> String {
 
 // ---------------------------------------------------------------------------------------- file redirect
 
+/// The file name of a path that ends in `.bhd` or `.bdt` (any case), else `None`. No allocation unless it is one: this runs
+/// for every file the game opens.
+pub fn archive_leaf(units: &[u16]) -> Option<String> {
+    const BHD: [u16; 4] = [b'.' as u16, b'b' as u16, b'h' as u16, b'd' as u16];
+    const BDT: [u16; 4] = [b'.' as u16, b'b' as u16, b'd' as u16, b't' as u16];
+    let lower = |u: u16| if (b'A' as u16..=b'Z' as u16).contains(&u) { u + 32 } else { u };
+    let last = units.get(units.len().checked_sub(4)?..)?;
+    let tail = [lower(*last.first()?), lower(*last.get(1)?), lower(*last.get(2)?), lower(*last.get(3)?)];
+    if tail != BHD && tail != BDT {
+        return None;
+    }
+    let start = units.iter().rposition(|u| *u == b'\\' as u16 || *u == b'/' as u16).map_or(0, |i| i + 1);
+    Some(String::from_utf16_lossy(units.get(start..)?))
+}
+
+/// The first time the game opens an archive file, say when (relative to the hook loading): it tells whether the keys and
+/// tables of contents the collector looks for can still be in memory by then.
+fn note_archive_open(st: &state::State, units: &[u16], id: &'static str) {
+    use std::sync::Mutex;
+    static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let Some(leaf) = archive_leaf(units) else { return };
+    let Ok(mut seen) = SEEN.lock() else { return };
+    let lower = leaf.to_lowercase();
+    if seen.contains(&lower) {
+        return;
+    }
+    seen.push(lower);
+    ARCHIVE_OPENS.fetch_add(1, Relaxed);
+    let t = state::T0.get().map_or(0, |t| t.elapsed().as_millis());
+    st.logger.log(&format!("ARCHIVE opened by the game [{id}]: {leaf} (+{t} ms after the hook loaded; {} different archive files so far)", seen.len()));
+}
+
 /// If the path points into the game's real save folder, returns the NUL-terminated path inside the private copy.
 pub unsafe fn redirect_wide(p: *const u16, id: &'static str) -> Option<Vec<u16>> {
     if p.is_null() {
@@ -61,6 +93,7 @@ pub unsafe fn redirect_wide(p: *const u16, id: &'static str) -> Option<Vec<u16>>
         None
     } else {
         let units = core::slice::from_raw_parts(p, n);
+        note_archive_open(st, units, id);
         st.redirector.redirect(units).map(|mut out| {
             let k = REDIRECTED.fetch_add(1, Relaxed) + 1;
             if k <= 60 || k % 500 == 0 {
@@ -160,4 +193,23 @@ pub unsafe fn name_denied_ansi(id: &'static str, p: *const u8) -> bool {
         return false;
     }
     name_denied(id, read_ansi(p))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn w(s: &str) -> Vec<u16> {
+        s.encode_utf16().collect()
+    }
+
+    #[test]
+    fn only_archive_files_are_recognised_and_by_their_last_part() {
+        assert_eq!(archive_leaf(&w(r"I:\SteamLibrary\steamapps\common\DARK SOULS III\Game\Data1.bhd")).as_deref(), Some("Data1.bhd"));
+        assert_eq!(archive_leaf(&w("C:/Games/DS3/Game/DLC2.BDT")).as_deref(), Some("DLC2.BDT"));
+        assert_eq!(archive_leaf(&w("Data0.bhd")).as_deref(), Some("Data0.bhd"));
+        for other in ["", "bhd", ".bhd.", r"C:\x\Data0.bhd.bak", r"C:\x\DarkSoulsIII.exe", r"C:\Users\me\AppData\Roaming\DarkSoulsIII\DS30000.sl2", "bdt"] {
+            assert_eq!(archive_leaf(&w(other)), None, "{other:?}");
+        }
+    }
 }

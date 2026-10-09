@@ -27,7 +27,7 @@ How to do it (about 25 minutes)
      running.
   2. Double-click  Prepare-AshenMarine.bat  and wait for "Done". It does three things, one after the other:
        - makes the sound files from your Space Marine 2 (a minute or two),
-       - tries to make the item-name file from your Dark Souls III. THE FIRST TIME THIS SAYS IT CANNOT YET: that is
+       - tries to make the item-name file from your Dark Souls III. THE FIRST TIME THIS SAYS "NOT READY YET": that is
          expected (the game has not been started with kit 6 yet). Nothing is wrong, go on,
        - writes the model reports (a minute).
   3. Double-click  Play-AshenMarine.bat . Dark Souls III starts; the title bar reads
@@ -49,6 +49,15 @@ How to do it (about 25 minutes)
        - what did the Play window say at the end of step 4 (and, after the second Play, what are the three items called)?
        - did the sounds still work as before, and did the game feel the same as kit 5 (no new stutter at the start)?
        - set A or set B (F9)? (only if you have a favourite)
+
+Optional: the model files (only if you are happy to)
+  To build the converter that will one day show the real Space Marine 2 chainsword and bolt pistol, I need to see how
+  Space Marine 2 stores them, and the numbers-only report (probe-sm2-mesh) is not enough. If you are willing, double-click
+  Send-Model-Files.bat. It asks first (Y/N), then copies the chainsword and bolt pistol model files of YOUR Space Marine 2
+  (about 3 MB, from the game's own files, which are only read) into ONE zip on your Desktop,
+  AshenMarine-model-files.zip. Nothing is uploaded: I only get it if you attach it to the chat yourself, I only use it
+  to write the converter that runs on your own PC, and the finished mashup will never contain any Space Marine 2 file.
+  Skipping this is fine; everything else in this kit works without it.
 
 What it records (you can read every file yourself)
   ashenmarine\logs\harvest.txt                 what the helper looked for in the game's memory and what it found

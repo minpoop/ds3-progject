@@ -4,13 +4,14 @@
 //! ashenmarine-setup probe          [--sm2 "<folder>"] [--out "<folder>"]
 //! ashenmarine-setup prepare        [--sm2 "<folder>"] [--out "<assets folder>"]
 //! ashenmarine-setup sm2-mesh-probe [--sm2 "<folder>"] [--out "<folder>"]
+//! ashenmarine-setup sm2-export-models [--sm2 "<folder>"] [--out "<folder>"]
 //! ashenmarine-setup ds3-probe      [--ds3 "<folder>"] [--keys "<pem file>"] [--out "<report folder>"]
 //! ashenmarine-setup ds3-prepare    [--ds3 "<folder>"] [--keys "<pem file>"] [--mod "<mod folder>"] [--out "<report folder>"]
 //! ```
 //!
 //! `probe` is the default when no command is given (so a double-click works). Exit codes: 0 done, 2 nothing could be
 //! done (the message says why), 64 the command line was not understood.
-use ashen_setup::{ds3, ds3_hint, exe_dir, meshprobe, prepare, probe, sm2_hint};
+use ashen_setup::{ds3, ds3_hint, exe_dir, meshprobe, modelexport, prepare, probe, sm2_hint};
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -25,6 +26,9 @@ fn usage() {
     println!("ashenmarine-setup sm2-mesh-probe [--sm2 \"<Space Marine 2 folder>\"] [--out \"<report folder>\"]");
     println!("  Looks at the chainsword and bolt pistol model files of your Space Marine 2 (read-only) and writes mesh-report.txt:");
     println!("  numbers and names about the files, no copies of them (default folder: probe-sm2-mesh next to this program).");
+    println!("ashenmarine-setup sm2-export-models [--sm2 \"<Space Marine 2 folder>\"] [--out \"<folder>\"]");
+    println!("  OPTIONAL. Copies the chainsword and bolt pistol model files of your Space Marine 2 (read-only on the game) into a folder");
+    println!("  (default: model-files next to this program) that you can choose to send me. Nothing is uploaded by this program.");
     println!("ashenmarine-setup ds3-probe   [--ds3 \"<Dark Souls III folder>\"] [--keys \"<key file>\"] [--out \"<report folder>\"]");
     println!("  Looks into your Dark Souls III archives (read-only) and writes ds3-prepare\\ds3-report.txt next to this program.");
     println!("ashenmarine-setup ds3-prepare [--ds3 \"<Dark Souls III folder>\"] [--keys \"<key file>\"] [--mod \"<mod folder>\"] [--out \"<report folder>\"]");
@@ -39,6 +43,7 @@ enum Command {
     Probe,
     Prepare,
     MeshProbe,
+    ExportModels,
     Ds3Probe,
     Ds3Prepare,
 }
@@ -49,6 +54,7 @@ impl Command {
             Command::Probe => "probe",
             Command::Prepare => "prepare",
             Command::MeshProbe => "sm2-mesh-probe",
+            Command::ExportModels => "sm2-export-models",
             Command::Ds3Probe => "ds3-probe",
             Command::Ds3Prepare => "ds3-prepare",
         }
@@ -79,6 +85,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             "probe" => Command::Probe,
             "prepare" => Command::Prepare,
             "sm2-mesh-probe" => Command::MeshProbe,
+            "sm2-export-models" => Command::ExportModels,
             "ds3-probe" => Command::Ds3Probe,
             "ds3-prepare" => Command::Ds3Prepare,
             other => return Err(format!("unknown command {other:?}")),
@@ -125,12 +132,13 @@ fn main() -> ExitCode {
     }
     let dir = exe_dir();
     let done = match args.command {
-        Command::Probe | Command::Prepare | Command::MeshProbe => {
+        Command::Probe | Command::Prepare | Command::MeshProbe | Command::ExportModels => {
             // optional hint for a game that is not in a normal Steam library: first line of sm2-folder.txt next to the exe
             let sm2 = args.sm2.or_else(|| sm2_hint(&dir));
             match args.command {
                 Command::Probe => probe::run(&probe::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("probe-out")) }),
                 Command::Prepare => prepare::run(&prepare::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("assets")), normalize: true, ab: true }).ok(),
+                Command::ExportModels => modelexport::run(&modelexport::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("model-files")) }),
                 _ => meshprobe::run(&meshprobe::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("probe-sm2-mesh")) }),
             }
         }
@@ -187,6 +195,14 @@ mod tests {
         assert_eq!((a.command, a.out), (Command::MeshProbe, Some(PathBuf::from("x"))));
         assert_eq!(parse(&["sm2-mesh-probe", "--sm2", "y"]).unwrap().sm2, Some(PathBuf::from("y")));
         assert!(parse(&["sm2-mesh-probe", "--ds3", "y"]).unwrap_err().contains("--ds3 is for the Dark Souls III commands"));
+    }
+
+    #[test]
+    fn exporting_the_model_files_is_a_command_of_its_own() {
+        let a = parse(&["sm2-export-models", "--out", "x", "--sm2", "y"]).unwrap();
+        assert_eq!((a.command, a.out, a.sm2), (Command::ExportModels, Some(PathBuf::from("x")), Some(PathBuf::from("y"))));
+        assert!(parse(&["sm2-export-models", "--ds3", "y"]).unwrap_err().contains("--ds3 is for the Dark Souls III commands"));
+        assert!(!Command::ExportModels.is_ds3() && Command::ExportModels.name() == "sm2-export-models");
     }
 
     #[test]

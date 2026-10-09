@@ -203,6 +203,19 @@ fn leaf(name: &str) -> &str {
     name.rsplit(['\\', '/']).next().unwrap_or(name)
 }
 
+/// Not an error: the test kit has not collected what it needs yet (the very first Prepare, before the game ever ran with the
+/// kit). Told as "NOT READY YET" instead of "PROBLEM".
+#[derive(Debug)]
+struct NotYet(String);
+
+impl std::fmt::Display for NotYet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NotYet {}
+
 /// Runs one stage of a run. A problem (an error or a crash) is told in plain words and returned as text.
 fn stage<T>(rep: &mut Report, title: &str, f: impl FnOnce(&mut Report) -> Result<T>) -> Result<T, String> {
     rep.section(title);
@@ -210,7 +223,8 @@ fn stage<T>(rep: &mut Report, title: &str, f: impl FnOnce(&mut Report) -> Result
         Ok(Ok(v)) => Ok(v),
         Ok(Err(e)) => {
             let why = format!("{e:#}");
-            rep.say_wrapped("  ", &format!("PROBLEM: {why}"));
+            let label = if e.downcast_ref::<NotYet>().is_some() { "NOT READY YET" } else { "PROBLEM" };
+            rep.say_wrapped("  ", &format!("{label}: {why}"));
             Err(why)
         }
         Err(p) => {
@@ -375,7 +389,11 @@ fn archives_step(rep: &mut Report, src: Sources) -> Result<Ds3Install> {
     }
     let opened = install.open_archives().count();
     if opened == 0 {
-        bail!("{}", no_archive_opened(&install, saved));
+        let why = no_archive_opened(&install, saved);
+        if install.keys().is_empty() && saved == 0 {
+            return Err(NotYet(why).into());
+        }
+        bail!("{why}");
     }
     if opened < install.archives().len() {
         rep.say_wrapped("  ", &format!("NOTE: {} of {} archives could not be opened; files inside them cannot be found.", install.archives().len() - opened, install.archives().len()));

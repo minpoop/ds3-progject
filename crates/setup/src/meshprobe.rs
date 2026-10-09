@@ -37,12 +37,22 @@ fn looks_like_text(bytes: &[u8]) -> bool {
 
 /// Returns true when the probe could run.
 pub fn run(opts: &Opts) -> bool {
+    let found = find_sm2(opts.sm2.as_deref());
+    // nothing may ever be written inside the game's folder: not even the report
+    if let Ok(f) = &found {
+        if crate::prepare::is_inside(&opts.out, &f.0) {
+            println!("Ashen Marine - Space Marine 2 model probe v{VERSION} (read-only)");
+            println!("  The report folder is inside your Space Marine 2 folder. This program never writes anything into the game folder, so nothing was done.");
+            println!("  Please start it again with  --out \"<a folder somewhere else>\"  or move this program out of the game folder.");
+            return false;
+        }
+    }
     let mut rep = Report::create(&report_path(&opts.out));
     rep.say(format!("Ashen Marine - Space Marine 2 model probe v{VERSION} (read-only)"));
     rep.say("  This READS the weapon model files of your Space Marine 2 and writes numbers and names about them (no pictures, no copies of the files).");
     rep.say_wrapped("  ", &format!("The report is written to:  {}", report_path(&opts.out).display()));
 
-    let found = match find_sm2(opts.sm2.as_deref()) {
+    let found = match found {
         Ok(f) => f,
         Err(e) => {
             rep.say_wrapped("  ", &format!("PROBLEM: {e:#}"));

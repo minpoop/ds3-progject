@@ -20,6 +20,7 @@
 #   L  ds3-prepare started from its own folder, game named in game-folder.txt (the double-click way)
 #   M  a mod folder inside the game folder is refused (nothing is ever written there)
 #   N  bad command lines for the Dark Souls III commands (exit code 64)
+#   Q  sm2-export-models (the optional model-file copy): exact copies of the two weapons' template files, nothing in the game
 #   P  no key anywhere, but the plain tables of contents the running game held were saved (ashenmarine/cache/bhd5): exit code 0
 #
 #   tools/wine-setup-test.sh            # needs: wine64, xvfb-run, mingw-w64, rust target x86_64-pc-windows-gnu, python3
@@ -302,6 +303,16 @@ check "O the report has no failed or crashed step" '! grep -q "STEP FAILED\|STEP
 check "O the install is byte-identical afterwards" '[ "$(treehash "$OUT/Space Marine 2")" = "$BEFORE" ]'
 (cd "$OUT" && WINEDEBUG=-all timeout 60 xvfb-run -a "$WINE" "$BIN/ashenmarine-setup.exe" sm2-mesh-probe --sm2 "$(winpath "$OUT/empty")" --out "$(winpath "$OUT/out-o2")" > "$OUT/run-o2.out" 2>&1; echo $? > "$OUT/run-o2.rc")
 check "O without a game: exit code 2 and a plain message" '[ "$(cat "$OUT/run-o2.rc")" = "2" ] && grep -q "PROBLEM" "$OUT/out-o2/mesh-report.txt"'
+
+echo; echo "== Q: sm2-export-models under Wine against the synthetic Space Marine 2 =="
+(cd "$OUT" && WINEDEBUG=-all timeout 120 xvfb-run -a "$WINE" "$BIN/ashenmarine-setup.exe" sm2-export-models --sm2 "$(winpath "$OUT/Space Marine 2")" --out "$(winpath "$OUT/out-q")" > "$OUT/run-q.out" 2>&1; echo $? > "$OUT/run-q.rc")
+sed 's/^/    /' "$OUT/run-q.out" | head -16
+check "Q exit code 0" '[ "$(cat "$OUT/run-q.rc")" = "0" ]'
+check "Q the template files of both weapons were copied" 'ls "$OUT"/out-q/wpn_chainsword_01.tpl/* >/dev/null 2>&1 && ls "$OUT"/out-q/wpn_bolt_pistol_01.tpl/* >/dev/null 2>&1 && [ -f "$OUT/out-q/export-report.txt" ]'
+check "Q the report lists them with hashes and has no failed step" 'grep -q "template folder  tpl/wpn_chainsword_01.tpl" "$OUT/out-q/export-report.txt" && grep -q "sha256 " "$OUT/out-q/export-report.txt" && ! grep -q "STEP FAILED\|STEP CRASHED\|PROBLEM" "$OUT/out-q/export-report.txt"'
+check "Q the install is byte-identical afterwards" '[ "$(treehash "$OUT/Space Marine 2")" = "$BEFORE" ]'
+(cd "$OUT" && WINEDEBUG=-all timeout 60 xvfb-run -a "$WINE" "$BIN/ashenmarine-setup.exe" sm2-export-models --sm2 "$(winpath "$OUT/Space Marine 2")" --out "$(winpath "$OUT/Space Marine 2/client_pc/copies")" > "$OUT/run-q2.out" 2>&1; echo $? > "$OUT/run-q2.rc")
+check "Q2 an output folder inside the game is refused (exit code 2) and nothing is created there" '[ "$(cat "$OUT/run-q2.rc")" = "2" ] && grep -q "is inside your Space Marine 2 folder" "$OUT/run-q2.out" && [ ! -e "$OUT/Space Marine 2/client_pc/copies" ] && [ "$(treehash "$OUT/Space Marine 2")" = "$BEFORE" ]'
 
 echo; if [ "$FAILS" -eq 0 ]; then echo "ALL SETUP TESTS PASSED"; else echo "$FAILS CHECK(S) FAILED"; fi
 exit "$FAILS"

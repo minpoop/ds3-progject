@@ -93,3 +93,15 @@ fn without_space_marine_2_it_says_so_and_returns_false() {
     let report = fs::read_to_string(report_path(&out)).unwrap();
     assert!(report.contains("PROBLEM"), "{report}");
 }
+
+#[test]
+fn a_report_folder_inside_the_game_is_refused_and_nothing_is_created_there() {
+    let t = tempfile::tempdir().unwrap();
+    let sm2 = t.path().join("Space Marine 2");
+    fake_install(&sm2);
+    let before = tree(&sm2);
+    let inside = sm2.join("client_pc").join("reports");
+    assert!(!run(&Opts { sm2: Some(sm2.clone()), out: inside.clone() }));
+    assert_eq!(tree(&sm2), before);
+    assert!(!inside.exists());
+}

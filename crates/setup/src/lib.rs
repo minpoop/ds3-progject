@@ -5,6 +5,7 @@
 //! The parts they need (finding the game, opening its archives) live here.
 pub mod ds3;
 pub mod meshprobe;
+pub mod modelexport;
 pub mod prepare;
 pub mod probe;
 pub mod report;

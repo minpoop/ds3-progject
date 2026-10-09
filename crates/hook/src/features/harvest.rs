@@ -34,11 +34,13 @@ const OVERLAP: usize = 16 << 10;
 /// The most big-number candidates that are tried per pass (each one costs a few archive-key tests).
 const MAX_BN_TESTS: usize = 600;
 /// How many times a header-like place is tried before it is given up (the game may still be filling it).
-const MAX_TRIES: u32 = 3;
+const MAX_TRIES: u32 = 5;
 /// The most lines of detail about places that looked like a table of contents but were not one.
 const MAX_NEAR_MISS_LINES: usize = 12;
 /// The most places where a known path hash was seen next to a size and an offset that are described.
 const MAX_ENTRY_LINES: usize = 8;
+/// The most places where a known path hash was found at all (whatever follows it) that are described.
+const MAX_HASH_LINES: usize = 10;
 
 /// One archive of the install.
 struct Slot {
@@ -75,6 +77,7 @@ struct PassStats {
     bn_tested: usize,
     bn_proven: usize,
     exp_hits: usize,
+    magic_seen: usize,
     header_hits: usize,
     images_saved: usize,
     near_misses: usize,
@@ -91,10 +94,13 @@ struct Harvester<'a> {
     keys_dirty: bool,
     /// Fingerprints of the moduli that were already tried (found through big-number structures).
     tried: HashSet<String>,
-    /// How often each header-like place (absolute address) was tried; `u32::MAX` once it has been used.
-    places: HashMap<usize, u32>,
+    /// How often each header-like place (absolute address) was tried (at most once per pass), and in which pass the last time;
+    /// the count is `u32::MAX` once the place has been used.
+    places: HashMap<usize, (u32, u32)>,
+    pass_id: u32,
     near_miss_lines: usize,
     entry_lines: usize,
+    hash_lines: usize,
     probes: Vec<(u32, &'static str)>,
     max_bdt: u64,
 }
@@ -131,10 +137,12 @@ fn open_slots(dir: &Path) -> Vec<Slot> {
         let Some(stem) = name.rsplit_once('.').filter(|(_, ext)| ext.eq_ignore_ascii_case("bhd")).map(|(s, _)| s.to_string()) else { continue };
         let Some(bdt) = files.iter().find(|(n, _)| n.rsplit_once('.').is_some_and(|(s, e)| e.eq_ignore_ascii_case("bdt") && s.eq_ignore_ascii_case(&stem))) else { continue };
         let (Ok(bhd_meta), Ok(bdt_meta)) = (std::fs::metadata(path), std::fs::metadata(&bdt.1)) else { continue };
-        let Ok(mut f) = std::fs::File::open(path) else { continue };
+        // the first encrypted block proves keys; if the file cannot be read right now (the game holds it?) the archive is
+        // still covered by size (tables of contents) but no key can be proven for it
         let mut block = vec![0u8; BLOCK];
-        if std::io::Read::read_exact(&mut f, &mut block).is_err() {
-            continue;
+        let read = std::fs::File::open(path).and_then(|mut f| std::io::Read::read_exact(&mut f, &mut block));
+        if read.is_err() {
+            block.clear();
         }
         slots.push(Slot { name: stem, bhd_len: bhd_meta.len(), bdt_len: bdt_meta.len(), block, key: None, header: None, cipher_seen: 0 });
     }
@@ -154,8 +162,10 @@ impl<'a> Harvester<'a> {
             keys_dirty: false,
             tried: HashSet::new(),
             places: HashMap::new(),
+            pass_id: 0,
             near_miss_lines: 0,
             entry_lines: 0,
+            hash_lines: 0,
             probes: vec![(path_hash("/msg/ENGLISH/item.msgbnd.dcx"), "msg/ENGLISH/item.msgbnd.dcx"), (path_hash("/msg/ENGLISH/menu.msgbnd.dcx"), "msg/ENGLISH/menu.msgbnd.dcx")],
             max_bdt,
         }
@@ -279,6 +289,7 @@ impl<'a> Harvester<'a> {
             }
         }
         // a plain table of contents
+        st.magic_seen += memchr::memmem::find_iter(data, b"BHD5").count();
         if self.slots.iter().any(|s| s.header.is_none()) {
             for h in self.scanner.headers(data) {
                 st.header_hits += 1;
@@ -297,18 +308,18 @@ impl<'a> Harvester<'a> {
                 }
             }
         }
-        if self.entry_lines < MAX_ENTRY_LINES && self.slots.iter().any(|s| s.header.is_none()) {
+        if (self.entry_lines < MAX_ENTRY_LINES || self.hash_lines < MAX_HASH_LINES) && self.slots.iter().any(|s| s.header.is_none()) {
             self.entry_intel(region, base, data);
         }
     }
 
     /// The header-like bytes at `addr`: read the whole table, and keep it if it is one.
     fn try_header(&mut self, region: &Region, addr: usize, h: &HeaderHit, st: &mut PassStats) {
-        let tries = self.places.entry(addr).or_insert(0);
-        if *tries >= MAX_TRIES {
+        let tried = self.places.entry(addr).or_insert((0, 0));
+        if tried.0 >= MAX_TRIES || tried.1 == self.pass_id {
             return;
         }
-        *tries += 1;
+        *tried = (tried.0 + 1, self.pass_id);
         let direct = memscan::read(addr, h.declared);
         let mut why = String::new();
         let mut layout = "contiguous";
@@ -334,7 +345,7 @@ impl<'a> Harvester<'a> {
         }
         match image {
             Some(bytes) => {
-                self.places.insert(addr, u32::MAX);
+                self.places.insert(addr, (u32::MAX, self.pass_id));
                 if self.save_image(&bytes, addr, region, layout) {
                     st.images_saved += 1;
                 }
@@ -405,6 +416,23 @@ impl<'a> Harvester<'a> {
     /// (numbers only), so that a table the game keeps in its own layout can be recognised later.
     fn entry_intel(&mut self, region: &Region, base: usize, data: &[u8]) {
         let probes = self.probes.clone();
+        // wherever the hash itself is (a table that keeps its entries in another layout shows up here)
+        for (hash, name) in &probes {
+            for at in memchr::memmem::find_iter(data, &hash.to_le_bytes()).take(3) {
+                if self.hash_lines >= MAX_HASH_LINES {
+                    break;
+                }
+                self.hash_lines += 1;
+                let from = at.saturating_sub(32);
+                self.log.log(&format!(
+                    "the path hash of {name} ({hash:08x}) is in memory at 0x{:X} ({}); the 32 bytes before it and the 40 from it on: {} | {}",
+                    base + at,
+                    region_text(region),
+                    hex(data.get(from..at).unwrap_or_default()),
+                    hex(data.get(at..(at + 40).min(data.len())).unwrap_or_default())
+                ));
+            }
+        }
         for (hash, name) in probes {
             for hit in self.scanner.entry_hits(data, hash, 1 << 30, self.max_bdt, 3) {
                 if self.entry_lines >= MAX_ENTRY_LINES {
@@ -440,6 +468,7 @@ impl<'a> Harvester<'a> {
     /// One pass over the whole address space (within `budget`).
     fn pass(&mut self, budget: Duration) -> PassStats {
         let started = Instant::now();
+        self.pass_id += 1;
         let mut st = PassStats::default();
         let mut buf = vec![0u8; CHUNK];
         'regions: for r in memscan::regions(1 << 30) {
@@ -560,6 +589,10 @@ fn run(log: &Logger, game_dir: &Path, cache: &Path, started: Instant) {
         return;
     }
     log.log(&format!("{} archives: {}", h.slots.len(), h.slots.iter().map(|s| format!("{} ({} bytes)", s.name, s.bhd_len)).collect::<Vec<_>>().join(", ")));
+    let locked: Vec<&str> = h.slots.iter().filter(|s| s.block.is_empty()).map(|s| s.name.as_str()).collect();
+    if !locked.is_empty() {
+        log.log(&format!("the start of {} cannot be read right now; no key can be proven for it (a table of contents can still be found)", locked.join(", ")));
+    }
     log.log(&format!("libraries loaded in the game: {}", loaded_crypto_modules().join(", ")));
     h.adopt_saved();
     if h.all_covered() {
@@ -585,7 +618,7 @@ fn run(log: &Logger, game_dir: &Path, cache: &Path, started: Instant) {
                 let changed = after != before || st.new_keys > 0;
                 if pass_no <= 3 || changed || pass_no.is_multiple_of(20) || st.cut {
                     log.log(&format!(
-                        "pass {pass_no} at {:.1} s ({:.1} s, {} regions, {} MB{}): keys by shape {:?}, new {}; key text blocks {} ({} unusable); big-number structures {}, numbers next to the exponent {} (tried {}, proven {}); table-like places {} (saved {}, not usable {}); encrypted file starts seen {}",
+                        "pass {pass_no} at {:.1} s ({:.1} s, {} regions, {} MB{}): keys by shape {:?}, new {}; key text blocks {} ({} unusable); big-number structures {}, numbers next to the exponent {} (tried {}, proven {}); BHD5 text seen {}x, table-like places {} (saved {}, not usable {}); encrypted file starts seen {}",
                         t.as_secs_f32(),
                         pass_started.elapsed().as_secs_f32(),
                         st.regions,
@@ -599,6 +632,7 @@ fn run(log: &Logger, game_dir: &Path, cache: &Path, started: Instant) {
                         st.exp_hits,
                         st.bn_tested,
                         st.bn_proven,
+                        st.magic_seen,
                         st.header_hits,
                         st.images_saved,
                         st.near_misses,
@@ -616,7 +650,13 @@ fn run(log: &Logger, game_dir: &Path, cache: &Path, started: Instant) {
             log.log(&format!("every archive is covered after {:.1} s: {}", started.elapsed().as_secs_f32(), h.summary()));
             return;
         }
-        std::thread::sleep(pause_after(started.elapsed()));
+        // the pause, cut short when the game opens another archive file (that is when its keys and tables are most likely at hand)
+        let opens = crate::state::ARCHIVE_OPENS.load(std::sync::atomic::Ordering::Relaxed);
+        let pause = pause_after(started.elapsed());
+        let waited = Instant::now();
+        while waited.elapsed() < pause && crate::state::ARCHIVE_OPENS.load(std::sync::atomic::Ordering::Relaxed) == opens {
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 
@@ -766,6 +806,27 @@ mod tests {
         std::fs::create_dir_all(&empty).unwrap();
         run(&log, &empty, &cache, Instant::now());
         assert!(std::fs::read_to_string(dir.join("harvest.txt")).unwrap().contains("nothing to do"));
+    }
+
+    #[test]
+    fn an_archive_whose_start_cannot_be_read_is_still_covered_by_a_table() {
+        let _one = one_at_a_time();
+        let dir = temp_dir("locked");
+        let fake = build(&dir.join("DS3"), &FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+        let table = plain_table(&fake.game, "Data1", 1);
+        let log = Logger::open(&dir.join("harvest.txt"), "t");
+        let mut h = Harvester::new(&log, &fake.game, &dir.join("cache"));
+        assert!(h.slots.iter().all(|s| s.block.len() == 256), "all readable here");
+        for s in &mut h.slots {
+            if s.name == "Data1" {
+                s.block.clear(); // as if the game held the file
+            }
+        }
+        let st = h.pass(Duration::from_secs(120));
+        let data1 = h.slots.iter().find(|s| s.name == "Data1").unwrap();
+        assert!(data1.key.is_none(), "no key can be proven without the first block");
+        assert!(data1.header.is_some(), "the table is found by size ({} saved)", st.images_saved);
+        assert_eq!(std::fs::read(dir.join("cache/bhd5/Data1.bin")).unwrap(), table);
     }
 
     #[test]
