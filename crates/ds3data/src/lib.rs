@@ -15,6 +15,8 @@
 //! * [`dcx`], [`bnd4`], [`fmg`] - the containers inside the archives; `bnd4::replace_file` changes one file of a BND4 and
 //!   nothing else
 //! * [`msgpatch`] - changes item names and descriptions in `item.msgbnd.dcx`, failing closed
+//! * [`scan`] - recognises archive keys and decrypted tables of contents in raw bytes (the running game's memory, the program
+//!   file); the test kit's collector in the hook uses it, this crate reads nothing from a process itself
 #![forbid(unsafe_code)]
 
 pub mod archive;
@@ -27,6 +29,7 @@ pub mod install;
 pub mod keys;
 pub mod msgpatch;
 pub mod rsa;
+pub mod scan;
 mod util;
 
 pub use util::{hex, sha256_hex, snippet};

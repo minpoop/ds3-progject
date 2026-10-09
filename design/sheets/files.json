@@ -260,8 +260,26 @@
     {
       "id": "ds3_key_cache",
       "path": "{data}/cache/ds3-keys.pem",
-      "purpose": "Only if the exe does not hold the archive keys as plain text: the public RSA keys the running game has in memory, written by the test kit's probe so ds3-prepare can use them",
+      "purpose": "Only if the exe does not hold the archive keys as plain text: the public RSA keys the running game has in memory (PEM, DER or key blobs; a number found through a big-number structure only if a real archive proves it), written by the test kit's collector while the game runs so ds3-prepare can use them",
       "access": "readwrite",
+      "system": "item_names",
+      "guarded": false,
+      "milestone": 3
+    },
+    {
+      "id": "ds3_header_cache",
+      "path": "{data}/cache/bhd5",
+      "purpose": "The plain table of contents of each archive (<name>.bin), saved by the test kit's collector from the running game's memory when it lies there whole and checks out (parses completely, fits the .bhd, every file inside the .bdt); ds3-prepare uses it when no key opens an archive",
+      "access": "readwrite",
+      "system": "item_names",
+      "guarded": false,
+      "milestone": 3
+    },
+    {
+      "id": "harvest_log",
+      "path": "{data}/logs/harvest.txt",
+      "purpose": "What the test kit's collector looked for in the game's memory and what it found (key fingerprints and places only, never key text)",
+      "access": "write",
       "system": "item_names",
       "guarded": false,
       "milestone": 3

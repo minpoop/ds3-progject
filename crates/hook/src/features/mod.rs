@@ -3,8 +3,8 @@
 mod audio;
 mod equip;
 mod gametask;
+mod harvest;
 mod input;
-mod keydump;
 mod memscan;
 mod probe;
 mod sfx;
@@ -22,6 +22,8 @@ pub fn start() {
     if st.cfg.features.probe {
         st.logger.log("features: read-only game probe is on (private test kit)");
         spawn(&st.logger, "probe", probe_thread);
+        st.logger.log("features: the collector for the archive keys and tables of contents is on (private test kit)");
+        spawn(&st.logger, "collector", harvest_thread);
     }
     if st.cfg.features.sounds {
         st.logger.log("features: Space Marine 2 sounds are on");
@@ -54,6 +56,10 @@ fn guarded(what: &str, body: impl FnOnce(HookConfig) + std::panic::UnwindSafe) -
 
 unsafe extern "system" fn probe_thread(_: *mut c_void) -> u32 {
     guarded("probe", probe::thread_body)
+}
+
+unsafe extern "system" fn harvest_thread(_: *mut c_void) -> u32 {
+    guarded("collector", harvest::thread_body)
 }
 
 unsafe extern "system" fn sfx_thread(_: *mut c_void) -> u32 {

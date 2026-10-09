@@ -19,6 +19,7 @@ sha2.workspace = true
 num-bigint = "0.4"
 aes = "0.8"
 miniz_oxide = "0.8"
+memchr = "2"
 
 [dev-dependencies]
 tempfile = "3"

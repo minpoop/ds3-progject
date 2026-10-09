@@ -287,6 +287,112 @@ mod tests {
         assert!(!fake.root.join("Game").join("Data0.bhd.tmp").exists());
     }
 
+    /// The plain table of contents of every archive of a fake install, as the running game would hold them.
+    fn memory_headers(fake: &FakeDs3) -> Vec<(String, Vec<u8>)> {
+        let keys = [("Data0", 0usize), ("Data1", 1), ("DLC1", 0)];
+        keys.iter()
+            .map(|(name, k)| {
+                let bhd = std::fs::read(fake.game.join(format!("{name}.bhd"))).unwrap();
+                (name.to_string(), crate::rsa::decrypt_header(&test_key(*k).public, &bhd).unwrap())
+            })
+            .collect()
+    }
+
+    fn save_headers(dir: &Path, headers: &[(String, Vec<u8>)]) {
+        std::fs::create_dir_all(dir).unwrap();
+        for (name, bytes) in headers {
+            std::fs::write(dir.join(format!("{name}.bin")), bytes).unwrap();
+        }
+    }
+
+    #[test]
+    fn saved_plain_headers_open_the_archives_without_any_key() {
+        use crate::archive::HeaderSource;
+        use crate::install::PlainHeader;
+        let t = tempfile::tempdir().unwrap();
+        let fake = build(&t.path().join("DS3"), &FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+        let reference = {
+            let keyed = Ds3Install::open(&fake.root, &[test_key(0).public, test_key(1).public]).unwrap();
+            (keyed.read(ITEM_PATH).unwrap(), keyed.read("/regulation.bin").unwrap(), keyed.read(MODEL_PATHS[2]).unwrap())
+        };
+        let headers = memory_headers(&fake);
+        let dir = t.path().join("cache").join("bhd5");
+        save_headers(&dir, &headers);
+        std::fs::write(dir.join("notes.txt"), "not a header").unwrap();
+        let loaded = PlainHeader::load_dir(&dir);
+        assert_eq!(loaded.iter().map(|h| h.label.as_str()).collect::<Vec<_>>(), vec!["DLC1.bin", "Data0.bin", "Data1.bin"], "in name order");
+
+        let exe = crate::install::ExeInfo::scan(&fake.exe).unwrap();
+        assert!(exe.keys.is_empty());
+        let install = Ds3Install::open_with_sources(fake.game.clone(), exe, &[], &loaded, &mut |_| {}).unwrap();
+        assert_eq!(install.open_archives().count(), 3);
+        for a in install.open_archives() {
+            assert!(matches!(a.source(), HeaderSource::GameMemory(label) if label == &format!("{}.bin", a.name())), "{:?}", a.source());
+            assert_eq!(a.key_fingerprint(), "");
+            assert_eq!(a.files_outside_bdt(), 0);
+        }
+        // the files come out the same as with the keys
+        assert_eq!(install.lookup(ITEM_PATH).len(), 2);
+        assert_eq!(install.read(ITEM_PATH).unwrap(), reference.0, "the first of the two hits");
+        assert_eq!(install.read_hit(&install.lookup(ITEM_PATH)[1]).unwrap(), items::item_dcx());
+        assert_eq!(install.read("/regulation.bin").unwrap(), reference.1);
+        assert_eq!(install.read(MODEL_PATHS[2]).unwrap(), reference.2);
+    }
+
+    #[test]
+    fn a_saved_header_goes_to_the_archive_it_fits_whatever_it_is_called() {
+        use crate::install::PlainHeader;
+        let t = tempfile::tempdir().unwrap();
+        let fake = build(&t.path().join("DS3"), &FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+        let mut headers = memory_headers(&fake);
+        // swap the names of two files and add a copy that is cut off and one that is damaged
+        let (a, b) = (headers[0].1.clone(), headers[1].1.clone());
+        headers[0].1 = b;
+        headers[1].1 = a;
+        let mut cut = headers[2].1.clone();
+        cut.truncate(cut.len() / 2);
+        headers.push(("Cut".to_string(), cut));
+        let mut damaged = headers[2].1.clone();
+        damaged[0x14] = 0xFF; // the bucket table is nowhere near
+        headers.push(("Damaged".to_string(), damaged));
+        let dir = t.path().join("bhd5");
+        save_headers(&dir, &headers);
+        let install = Ds3Install::open_with_sources(fake.game.clone(), crate::install::ExeInfo::scan(&fake.exe).unwrap(), &[], &PlainHeader::load_dir(&dir), &mut |_| {}).unwrap();
+        let state: Vec<(&str, bool, String)> = install.archives().iter().map(|a| (a.name.as_str(), a.archive.is_ok(), a.archive.as_ref().map(|x| x.source().to_string()).unwrap_or_default())).collect();
+        assert!(state.iter().all(|(_, ok, _)| *ok), "{state:?}");
+        assert!(state[0].2.contains("Data1.bin"), "Data0 got the header that is called Data1: {state:?}");
+        assert!(state[1].2.contains("Data0.bin"), "{state:?}");
+        assert!(state[2].2.contains("DLC1.bin"), "{state:?}");
+        assert_eq!(install.lookup(ITEM_PATH).len(), 2, "the files are the right ones");
+        assert_eq!(install.read("/regulation.bin").unwrap(), noise(77, 3000));
+    }
+
+    #[test]
+    fn a_key_is_preferred_to_a_header_and_a_header_that_does_not_fit_is_ignored() {
+        use crate::archive::HeaderSource;
+        use crate::install::PlainHeader;
+        let t = tempfile::tempdir().unwrap();
+        let fake = build(&t.path().join("DS3"), &FakeOptions::default());
+        let dir = t.path().join("bhd5");
+        save_headers(&dir, &memory_headers(&fake));
+        let headers = PlainHeader::load_dir(&dir);
+        let install = Ds3Install::open_with_sources(fake.game.clone(), crate::install::ExeInfo::scan(&fake.exe).unwrap(), &[], &headers, &mut |_| {}).unwrap();
+        assert!(install.open_archives().all(|a| matches!(a.source(), HeaderSource::Key(_))));
+        // only the header of Data1 is there, and the keys are missing: Data1 opens, the others report the key problem
+        let one: Vec<PlainHeader> = headers.iter().filter(|h| h.label == "Data1.bin").cloned().collect();
+        let nokeys = build(&t.path().join("DS3b"), &FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+        let install = Ds3Install::open_with_sources(nokeys.game.clone(), crate::install::ExeInfo::scan(&nokeys.exe).unwrap(), &[], &one, &mut |_| {}).unwrap();
+        let state: Vec<(String, bool)> = install.archives().iter().map(|a| (a.name.clone(), a.archive.is_ok())).collect();
+        assert_eq!(state, vec![("Data0".to_string(), false), ("Data1".to_string(), true), ("DLC1".to_string(), false)]);
+        // a header whose files reach past the .bdt (a different, bigger archive) is not accepted for this one
+        let other = tempfile::tempdir().unwrap();
+        let big = build(&other.path().join("DS3"), &FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+        std::fs::write(big.game.join("Data1.bdt"), b"BDF4....").unwrap();
+        let install = Ds3Install::open_with_sources(big.game.clone(), crate::install::ExeInfo::scan(&big.exe).unwrap(), &[], &one, &mut |_| {}).unwrap();
+        assert_eq!(install.open_archives().count(), 0, "every file of Data1 now lies outside its .bdt");
+        assert!(PlainHeader::load_dir(&other.path().join("nothing")).is_empty());
+    }
+
     #[test]
     fn a_folder_without_the_program_file_is_refused() {
         let t = tempfile::tempdir().unwrap();

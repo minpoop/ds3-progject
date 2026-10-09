@@ -6,6 +6,7 @@ use crate::archive::{Archive, ArchiveError};
 use crate::bhd5::Entry;
 use crate::hash::path_hash;
 use crate::keys::{io_reason, scan_reader, RsaPublicKey};
+use crate::scan::{check_image, pairs_with, scan_reader_keys};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -43,7 +44,7 @@ impl From<ArchiveError> for InstallError {
     }
 }
 
-/// What the program file gave: size, SHA-256 and the keys that are in it as PEM text.
+/// What the program file gave: size, SHA-256 and the keys that are in it as PEM text (or as DER, base64 or a Windows key blob).
 #[derive(Debug, Clone)]
 pub struct ExeInfo {
     pub size: u64,
@@ -53,15 +54,69 @@ pub struct ExeInfo {
     /// `RSA PUBLIC KEY` blocks that were looked at, and how many of them were not usable keys.
     pub pem_blocks: usize,
     pub pem_rejected: usize,
+    /// Of `keys`, how many were not PEM text (DER, base64 without the lines, key blobs).
+    pub other_forms: usize,
 }
 
 impl ExeInfo {
-    /// Reads the file once (in chunks) for its size, SHA-256 and PEM keys.
+    /// Reads the file for its size, SHA-256 and keys (once for the PEM text and the hash, once for the other shapes).
     pub fn scan(exe: &Path) -> Result<ExeInfo, InstallError> {
         let file = std::fs::File::open(exe).map_err(|e| InstallError::Io { what: "program file", reason: io_reason(&e) })?;
         let scan = scan_reader(file).map_err(|e| InstallError::Io { what: "program file", reason: io_reason(&e) })?;
-        Ok(ExeInfo { size: scan.size, sha256: crate::util::hex(&scan.sha256), keys: scan.pem.keys, pem_blocks: scan.pem.blocks, pem_rejected: scan.pem.rejected })
+        let mut keys = scan.pem.keys;
+        let mut other_forms = 0;
+        // a second look for the other shapes a key can have in a program file (never fatal: the first look stands)
+        if let Ok(again) = std::fs::File::open(exe).and_then(|f| scan_reader_keys(f, 4 << 20)) {
+            for found in again {
+                if !keys.contains(&found.key) {
+                    keys.push(found.key);
+                    other_forms += 1;
+                }
+            }
+        }
+        Ok(ExeInfo { size: scan.size, sha256: crate::util::hex(&scan.sha256), keys, pem_blocks: scan.pem.blocks, pem_rejected: scan.pem.rejected, other_forms })
     }
+}
+
+/// A plain table of contents that the running game held in its memory and the test kit saved (`cache/bhd5/<name>.bin`).
+#[derive(Debug, Clone)]
+pub struct PlainHeader {
+    /// What it was saved as (shown in reports), e.g. `Data3.bin`.
+    pub label: String,
+    pub bytes: Vec<u8>,
+}
+
+impl PlainHeader {
+    /// The saved headers of a folder (`*.bin`, at most 64 files of at most 64 MiB), in name order. A file that cannot be read
+    /// is skipped; whether one is a header at all is decided when it is used.
+    pub fn load_dir(dir: &Path) -> Vec<PlainHeader> {
+        let Ok(listing) = std::fs::read_dir(dir) else { return Vec::new() };
+        let mut names: Vec<PathBuf> = listing.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("bin"))).collect();
+        names.sort();
+        names
+            .into_iter()
+            .take(64)
+            .filter_map(|p| {
+                let meta = std::fs::metadata(&p).ok()?;
+                if meta.len() > crate::scan::MAX_IMAGE as u64 {
+                    return None;
+                }
+                Some(PlainHeader { label: p.file_name()?.to_string_lossy().to_string(), bytes: std::fs::read(&p).ok()? })
+            })
+            .collect()
+    }
+
+    /// Does this belong to a `.bhd` of `bhd_len` bytes with a `.bdt` of `bdt_len` bytes? It must parse completely, have the
+    /// size that many encrypted blocks make, and no file may lie outside the `.bdt`.
+    pub fn fits(&self, bhd_len: u64, bdt_len: u64) -> bool {
+        check_image(&self.bytes, Some(bdt_len)).is_ok_and(|info| info.outside == 0 && pairs_with(info.declared, bhd_len))
+    }
+}
+
+/// The saved header for the archive `stem` (a file named like it first), if one fits.
+fn pick_header<'a>(headers: &'a [PlainHeader], stem: &str, bhd_len: u64, bdt_len: u64) -> Option<&'a PlainHeader> {
+    let named = |h: &&PlainHeader| h.label.rsplit_once('.').is_some_and(|(n, _)| n.eq_ignore_ascii_case(stem));
+    headers.iter().filter(named).chain(headers.iter().filter(|h| !named(h))).find(|h| h.fits(bhd_len, bdt_len))
 }
 
 /// One `.bhd` of the `Game` folder: the archive if it could be opened, else why not.
@@ -151,6 +206,12 @@ impl Ds3Install {
 
     /// Opens the archives of `game_dir` when the program file has been scanned already.
     pub fn open_with_exe(game_dir: PathBuf, exe: ExeInfo, extra_keys: &[RsaPublicKey], progress: &mut dyn FnMut(&str)) -> Result<Ds3Install, InstallError> {
+        Ds3Install::open_with_sources(game_dir, exe, extra_keys, &[], progress)
+    }
+
+    /// [`Ds3Install::open_with_exe`], and archives that no key opens are tried with the saved plain headers: the header that
+    /// is the right size for the `.bhd` and keeps every file inside the `.bdt` is used.
+    pub fn open_with_sources(game_dir: PathBuf, exe: ExeInfo, extra_keys: &[RsaPublicKey], headers: &[PlainHeader], progress: &mut dyn FnMut(&str)) -> Result<Ds3Install, InstallError> {
         let mut keys: Vec<RsaPublicKey> = exe.keys.clone();
         for k in extra_keys {
             if !keys.contains(k) {
@@ -169,7 +230,13 @@ impl Ds3Install {
             let bdt_size = partner.as_ref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
             let started = Instant::now();
             let archive = match &partner {
-                Some(bdt) => Archive::open(bhd, bdt, &keys),
+                Some(bdt) => match Archive::open(bhd, bdt, &keys) {
+                    Ok(a) => Ok(a),
+                    Err(by_key) => match pick_header(headers, &stem, bhd_size, bdt_size.unwrap_or(0)) {
+                        Some(h) => Archive::from_plain_header(stem.clone(), h.bytes.clone(), bhd_size, h.label.clone(), bdt).map_err(|_| by_key),
+                        None => Err(by_key),
+                    },
+                },
                 None => Err(ArchiveError::Io { what: ".bdt file", reason: "no such file".to_string() }),
             };
             progress(&match &archive {

@@ -36,11 +36,6 @@ fn dir_of(cfg: &HookConfig) -> PathBuf {
     Path::new(&cfg.log_file).parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// The mashup's own folder (`{data}`): the parent of the logs folder.
-fn data_dir_of(cfg: &HookConfig) -> PathBuf {
-    dir_of(cfg).parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
-}
-
 fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
     if let Some(s) = p.downcast_ref::<&str>() {
         (*s).to_string()
@@ -87,8 +82,6 @@ pub fn thread_body(cfg: HookConfig) {
     let start = Instant::now();
     let mut world_since: Option<Instant> = None;
     let mut scans = [false; 2];
-    let mut key_scans = [false; 2];
-    let mut keys_found = 0usize;
     let mut beep_title = false;
     let mut beep_world = false;
     let mut last_frames = 0u64;
@@ -110,21 +103,6 @@ pub fn thread_body(cfg: HookConfig) {
         if !beep_world && w.is_some_and(|w| w >= Duration::from_secs(6)) {
             beep_world = true;
             audio_check(&log, "in the world");
-        }
-
-        // the archive keys (public RSA keys the game carries as text) for the setup tool's item-name step: once early, and once
-        // more in the world if the first look found none
-        let key_due = [t >= Duration::from_secs(12), w.is_some_and(|w| w >= Duration::from_secs(20))];
-        for (i, d) in key_due.iter().enumerate() {
-            if *d && !key_scans[i] && (i == 0 || keys_found == 0) {
-                key_scans[i] = true;
-                let out = data_dir_of(&cfg).join("cache").join("ds3-keys.pem");
-                match catch_unwind(AssertUnwindSafe(|| super::keydump::run(&log, &out, Duration::from_secs(40)))) {
-                    Ok(n) => keys_found = keys_found.max(n),
-                    Err(p) => log.log(&format!("key scan crashed: {}", panic_text(&*p))),
-                }
-                break;
-            }
         }
 
         // text-table scans: two by the clock (the item names turned out to live in the game's archives, not in memory tables)

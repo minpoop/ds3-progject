@@ -20,6 +20,7 @@
 #   L  ds3-prepare started from its own folder, game named in game-folder.txt (the double-click way)
 #   M  a mod folder inside the game folder is refused (nothing is ever written there)
 #   N  bad command lines for the Dark Souls III commands (exit code 64)
+#   P  no key anywhere, but the plain tables of contents the running game held were saved (ashenmarine/cache/bhd5): exit code 0
 #
 #   tools/wine-setup-test.sh            # needs: wine64, xvfb-run, mingw-w64, rust target x86_64-pc-windows-gnu, python3
 set -u
@@ -210,7 +211,7 @@ wine_ds3 "$BIN/ashenmarine-setup.exe" h ds3-probe --ds3 "$(winpath "$GAME")" --o
 sed 's/^/    /' "$D3/h.out" | head -40
 check "H exit code 0" '[ "$(cat "$D3/h.rc")" = "0" ]'
 check "H the install is byte-identical afterwards" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
-check "H the report lists the keys by fingerprint and the archives" 'grep -q "archive keys found in the program file as plain text: 2 (87febfc8, b2969406)" "$D3/out-h/ds3-report.txt" && grep -q "key 87febfc8" "$D3/out-h/ds3-report.txt" && grep -q "key b2969406" "$D3/out-h/ds3-report.txt"'
+check "H the report lists the keys by fingerprint and the archives" 'grep -q "archive keys found in the program file: 2 (87febfc8, b2969406)" "$D3/out-h/ds3-report.txt" && grep -q "key 87febfc8" "$D3/out-h/ds3-report.txt" && grep -q "key b2969406" "$D3/out-h/ds3-report.txt"'
 check "H the report has the path table with the item text" 'grep -q "^  /msg/ENGLISH/item.msgbnd.dcx .*hash 50b424bf" "$D3/out-h/ds3-report.txt" && grep -q "9 of 40 paths exist" "$D3/out-h/ds3-report.txt"'
 check "H the report lists the item text container and the texts at the test ids" 'grep -q "DCX variant DCX_DFLT_10000_44_9" "$D3/out-h/ds3-report.txt" && grep -q "id 2000000: WeaponName.fmg \"Shortsword\"" "$D3/out-h/ds3-report.txt"'
 check "H the dry run passed" 'grep -q "\[ok\] the edits: 3 edits" "$D3/out-h/ds3-report.txt" && ! grep -q "FAILED\|PROBLEM\|CRASHED" "$D3/out-h/ds3-report.txt"'
@@ -242,7 +243,7 @@ echo; echo "== K: no archive key in the program file -> exit code 2; with --keys
 wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" k ds3-prepare --ds3 "$(winpath "$D3/no-key/DARK SOULS III")" --mod "$(winpath "$D3/mod-k")" --out "$(winpath "$D3/out-k")"
 sed 's/^/    /' "$D3/k.out" | tail -10
 check "K exit code 2" '[ "$(cat "$D3/k.rc")" = "2" ]'
-check "K says what to do" 'flat_out "$D3/k.out" | grep -q "no archive key was found in your Dark Souls III program file; start the game once with the test kit (Play-AshenMarine.bat), close it, and run this again"'
+check "K says what to do" 'flat_out "$D3/k.out" | grep -q "has not collected what it needs to read Dark Souls III.s archives yet" && flat_out "$D3/k.out" | grep -q "start the game once with Play-AshenMarine.bat and quit it again"'
 check "K nothing was written (no mod folder at all)" '[ ! -e "$D3/mod-k" ]'
 wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" k2 ds3-prepare --ds3 "$(winpath "$D3/no-key/DARK SOULS III")" --keys "$(winpath "$D3/keys.pem")" --mod "$(winpath "$D3/mod-k")" --out "$(winpath "$D3/out-k2")"
 check "K2 with --keys: exit code 0" '[ "$(cat "$D3/k2.rc")" = "0" ]'
@@ -276,6 +277,21 @@ for args in "ds3-prepare --bogus" "ds3-probe --mod x" "ds3-prepare --sm2 x" "ds3
   wine_ds3 "$BIN/ashenmarine-setup.exe" n $args
   check "N '$args' gives exit code 64 and shows how to use it" '[ "$(cat "$D3/n.rc")" = "64" ] && grep -q "ashenmarine-setup ds3-prepare" "$D3/n.out"'
 done
+
+echo; echo "== P: tables of contents saved from the running game replace the keys =="
+mkdir -p "$D3/kit-p"; cp "$BIN/ashenmarine-setup.exe" "$D3/kit-p/"
+"$FAKE_DS3" "$D3/memory-only/DARK SOULS III" --no-exe-keys --save-headers "$D3/kit-p/cache/bhd5" > /dev/null || { echo "cannot build the fake Dark Souls III install (memory only)"; exit 1; }
+D3_MEM_BEFORE="$(treehash "$D3/memory-only/DARK SOULS III")"
+wine_ds3 "$(winpath "$D3/kit-p/ashenmarine-setup.exe")" p ds3-prepare --ds3 "$(winpath "$D3/memory-only/DARK SOULS III")" --mod "$(winpath "$D3/mod-p")" --out "$(winpath "$D3/out-p")"
+sed 's/^/    /' "$D3/p.out" | sed -n 8,24p
+check "P exit code 0" '[ "$(cat "$D3/p.rc")" = "0" ]'
+check "P the report says where the archives' tables came from" 'grep -q "tables of contents saved from the running game (cache.bhd5): 3 (DLC1.bin, Data0.bin, Data1.bin)" "$D3/out-p/ds3-report.txt" && grep -q "header saved from the running game (Data0.bin)" "$D3/out-p/ds3-report.txt" && ! grep -q "PROBLEM" "$D3/out-p/ds3-report.txt"'
+check "P the override is right" 'ds3_manifest_ok "$D3/mod-p" && ds3_override_ok "$D3/mod-p/msg/ENGLISH/item.msgbnd.dcx"'
+check "P it is the same file the keys gave" 'cmp -s "$D3/mod-p/msg/ENGLISH/item.msgbnd.dcx" "$D3/mod-k/msg/ENGLISH/item.msgbnd.dcx"'
+check "P the install is untouched" '[ "$(treehash "$D3/memory-only/DARK SOULS III")" = "$D3_MEM_BEFORE" ]'
+rm -rf "$D3/kit-p/cache"
+wine_ds3 "$(winpath "$D3/kit-p/ashenmarine-setup.exe")" p2 ds3-prepare --ds3 "$(winpath "$D3/memory-only/DARK SOULS III")" --mod "$(winpath "$D3/mod-p2")" --out "$(winpath "$D3/out-p2")"
+check "P2 without the saved tables: exit code 2, nothing written, the plain-words hint" '[ "$(cat "$D3/p2.rc")" = "2" ] && [ ! -e "$D3/mod-p2" ] && flat_out "$D3/p2.out" | grep -q "start the game once with Play-AshenMarine.bat"'
 
 echo; echo "== O: sm2-mesh-probe under Wine against the synthetic Space Marine 2 =="
 (cd "$OUT" && WINEDEBUG=-all timeout 120 xvfb-run -a "$WINE" "$BIN/ashenmarine-setup.exe" sm2-mesh-probe --sm2 "$(winpath "$OUT/Space Marine 2")" --out "$(winpath "$OUT/out-o")" > "$OUT/run-o.out" 2>&1; echo $? > "$OUT/run-o.rc")

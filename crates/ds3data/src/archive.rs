@@ -60,6 +60,24 @@ impl From<RsaError> for ArchiveError {
     }
 }
 
+/// Where the table of contents of an opened archive came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderSource {
+    /// The `.bhd` was decrypted with a public key (its fingerprint).
+    Key(String),
+    /// A plain table of contents that the running game held in its memory (the label names the file it was saved as).
+    GameMemory(String),
+}
+
+impl fmt::Display for HeaderSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HeaderSource::Key(fp) => write!(f, "key {fp}"),
+            HeaderSource::GameMemory(label) => write!(f, "header saved from the running game ({label})"),
+        }
+    }
+}
+
 /// An opened archive.
 pub struct Archive {
     name: String,
@@ -67,7 +85,7 @@ pub struct Archive {
     bhd_size: u64,
     bdt_size: u64,
     bdt_magic: [u8; 4],
-    key_fingerprint: String,
+    source: HeaderSource,
     trailing: usize,
     outside: usize,
     header: Bhd5,
@@ -77,7 +95,7 @@ pub struct Archive {
 
 impl fmt::Debug for Archive {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Archive {{ {}, key {}, {} files }}", self.name, self.key_fingerprint, self.header.entries().len())
+        write!(f, "Archive {{ {}, {}, {} files }}", self.name, self.source, self.header.entries().len())
     }
 }
 
@@ -107,6 +125,23 @@ impl Archive {
         let (plain, trailing) = decrypt_complete_blocks(key, bhd_bytes)?;
         let summary = Bhd5::describe(&plain);
         let header = Bhd5::parse(plain).map_err(|error| ArchiveError::Header { error, summary })?;
+        Archive::finish(name, header, HeaderSource::Key(key.fingerprint()), bhd_bytes.len() as u64, trailing, bdt)
+    }
+
+    /// An archive whose table of contents is already plain: the running game held it in memory and the test kit saved it
+    /// (no key needed). `bhd_len` is the size of the archive's `.bhd`; the header must fit it (it is the plain text of that
+    /// many encrypted blocks), and `label` says where it came from.
+    pub fn from_plain_header(name: String, plain: Vec<u8>, bhd_len: u64, label: String, bdt: &Path) -> Result<Archive, ArchiveError> {
+        let summary = Bhd5::describe(&plain);
+        let header = Bhd5::parse(plain).map_err(|error| ArchiveError::Header { error, summary: summary.clone() })?;
+        if !crate::scan::pairs_with(header.len(), bhd_len) {
+            return Err(ArchiveError::Header { error: Bhd5Error::Malformed("the saved header does not belong to this .bhd (its size does not fit)"), summary });
+        }
+        let trailing = (bhd_len % crate::scan::BLOCK as u64) as usize;
+        Archive::finish(name, header, HeaderSource::GameMemory(label), bhd_len, trailing, bdt)
+    }
+
+    fn finish(name: String, header: Bhd5, source: HeaderSource, bhd_size: u64, trailing: usize, bdt: &Path) -> Result<Archive, ArchiveError> {
         let meta = std::fs::metadata(bdt).map_err(|e| ArchiveError::Io { what: ".bdt file", reason: io_reason(&e) })?;
         let mut bdt_magic = [0u8; 4];
         if let Ok(mut f) = std::fs::File::open(bdt) {
@@ -116,18 +151,7 @@ impl Archive {
         let mut index: Vec<(u32, u32)> = header.entries().iter().enumerate().map(|(i, e)| (e.hash, i as u32)).collect();
         index.sort_unstable();
         let outside = header.entries().iter().filter(|e| e.offset.checked_add(u64::from(e.padded_size)).is_none_or(|end| end > bdt_size)).count();
-        Ok(Archive {
-            name,
-            bdt_path: bdt.to_path_buf(),
-            bhd_size: bhd_bytes.len() as u64,
-            bdt_size,
-            bdt_magic,
-            key_fingerprint: key.fingerprint(),
-            trailing,
-            outside,
-            header,
-            index,
-        })
+        Ok(Archive { name, bdt_path: bdt.to_path_buf(), bhd_size, bdt_size, bdt_magic, source, trailing, outside, header, index })
     }
 
     /// The archive's name, e.g. `Data0` (the file name of the `.bhd` without its extension).
@@ -135,9 +159,17 @@ impl Archive {
         &self.name
     }
 
-    /// Fingerprint of the key that decrypts the header.
+    /// Fingerprint of the key that decrypts the header (empty when the header came from the running game instead).
     pub fn key_fingerprint(&self) -> &str {
-        &self.key_fingerprint
+        match &self.source {
+            HeaderSource::Key(fp) => fp,
+            HeaderSource::GameMemory(_) => "",
+        }
+    }
+
+    /// Where the table of contents came from: a key, or a plain header saved from the running game.
+    pub fn source(&self) -> &HeaderSource {
+        &self.source
     }
 
     pub fn header(&self) -> &Bhd5 {

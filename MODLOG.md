@@ -165,6 +165,33 @@ round-trips, `replace_file` with identical data gives identical bytes, garbage a
 4. `item.msgbnd.dcx` is DCX DFLT 10000_44_9 holding a BND4 (raw format 0x74, files in header order at one alignment, no per-file compression) whose FMG tables use version 2; the weapon names are exactly "Shortsword" (2000000), "Avelyn" (14090000), "Standard Bolt" (404000).
 5. ModEngine2 prefers `<mod>/msg/ENGLISH/item.msgbnd.dcx` over the archived file and the game accepts the rewritten FMG layout (the report says whether the writer reproduces the game's own FMGs byte for byte; informational).
 
+## Kit 0.5 results (owner's PC, 2026-10-09) - what they showed
+
+- Owner: **"all sounds work, names did not change"** (the same logs: hand-aware swings, the Avelyn three-shot burst, equipment decoding and both sound sets behaved; set A or B was not chosen yet).
+- Why the names did not change: `ds3-prepare` ran **before the game had ever been started with the kit** and the program file (`DarkSoulsIII.exe`, 84.8 MB, Steam build id 10167187, DS3 1.15.2.0 English) holds **no
+  PEM key text at all** (0 `-----BEGIN` blocks), and `cache/ds3-keys.pem` did not exist yet - so "no archive key" was the right answer, not a bug. The Steam version of the exe is protected (its code and data are encrypted on disk).
+  Archives seen: `Data0..Data5`, `DLC1`, `DLC2`; `.bhd` sizes 2.2 KB / 403 KB / 444 KB / 104 KB / 182 KB / 1.3 MB / 140 KB / 234 KB, `.bdt` 796 KB / 929 MB / 2.4 GB / 1.5 GB / 1.1 GB / 12.9 GB / 1.5 GB / 2.9 GB.
+- The in-game scan for PEM text found **0 blocks at ~13 s** (title screen) and **1 block ~86 s after the start** (in the world, after the game tried to resolve `fdp-steam-ope-login.fromsoftware-game.net`, which the guard refuses). That one block was never
+  tried against the archives (Prepare was not run again afterwards). It is most likely the key of the online login, not an archive key. Conclusion: the archive keys are not kept as PEM text, or only for a moment while the archives are opened at start.
+
+## Kit 0.6 (this window) - the collector: getting the archive keys / tables of contents from the running game
+
+- **Idea.** The game must read every archive header (RSA-"encrypted" tables of contents) itself, so something usable exists in its memory while it does. The hook now has a collector (`crates/hook/src/features/harvest.rs`) that starts at once,
+  scans the process memory in passes (back to back for 30 s, then every 5 s until 3 min, then every 30 s, at most 15 min; low thread priority; stops as soon as every archive is covered or when the cache already covers them)
+  and recognises, with `crates/ds3data/src/scan.rs`:
+  1. RSA public keys as PEM (ASCII and UTF-16), bare base64, DER `RSAPublicKey` / `SubjectPublicKeyInfo`, Windows CNG / CryptoAPI key blobs;
+  2. OpenSSL `BIGNUM` / mbed TLS `mpi` structures that point at a 2048-bit number, and 256-byte numbers lying next to the exponent 65537 (little-endian limbs or big-endian) - these candidates are **kept only if a real archive proves them**
+     (the first encrypted block of a `.bhd` decrypts to `BHD5`), so nothing else the game holds is ever stored;
+  3. a decrypted `BHD5` table of contents (contiguous or written in 256-byte slots): read whole, must parse completely, fit one `.bhd`'s block arithmetic and keep every file inside that archive's `.bdt`.
+  Output: `cache/ds3-keys.pem`, `cache/bhd5/<archive>.bin`, `logs/harvest.txt` (fingerprints and places, never key text; per-pass counts; near misses with the first 32 bytes; places where the path hash of
+  `msg/ENGLISH/item.msgbnd.dcx` / `menu.msgbnd.dcx` is followed by a plausible size and offset, with the neighbouring records - to learn a table layout if no whole table is found; which crypto libraries are loaded).
+- `ashenmarine-setup ds3-prepare` / `ds3-probe` read the cache: keys from `cache/ds3-keys.pem`, tables from `cache/bhd5/*.bin` (`Archive::from_plain_header`, `PlainHeader`, `Ds3Install::open_with_sources`); a key wins over a table; the report says per archive
+  which was used. The program file is now also searched for keys in the other shapes.
+- `Play-AshenMarine.bat` runs the launcher **in the window** (it waits for the game to close) and then runs `ds3-prepare` by itself if no name file exists yet: names appear from the second Play.
+- **Assumptions the first real `harvest.txt` will confirm or refute:** (a) keys or whole tables exist in memory at some moment within the first minutes; (b) a table in memory has the file layout (header at the start, `declared` size, offsets relative to it)
+  or 256-byte slots; (c) a header's declared size lies between "fills the last block" and the `.bhd` size; (d) the 64-bit OpenSSL / mbed TLS structure layouts. If nothing is found, the log still says what was seen (counts per shape, near misses, path-hash neighbourhoods,
+  encrypted `.bhd` starts in memory) - the next step would then be to hook the file reads of the `.bhd` files or to ask the owner whether the community-published public keys may be used.
+
 ## Space Marine 2 sound events found (kit 0.3 report)
 
 - `wpn.bnk` v150: 7186 sounds, 838 events; media in `wpn.zip` (3642 `.wem`). Names recovered by hashing words: chainsword (`chswd`) events - `wpn_melee_chswd_light_1hit..4hit` (12-16 sounds each),
@@ -193,7 +220,7 @@ and an archive reader to modify an existing weapon file). The in-game side (gran
 
 ## Open questions (waiting on the owner's PC)
 
-1. Kit 0.5: do the weapons show the names Chainsword / Bolt Pistol / Bolt Rounds (and the new descriptions)? Did `ds3-prepare` find the archive keys in the exe (fingerprints in `ds3-report.txt`)? Which `msg` folders and FMG ids exist (the report lists them)?
+1. Kit 0.6: did the collector find keys or tables of contents (`harvest.txt`: "it OPENS ...", "TABLE OF CONTENTS of ... found")? Do the weapons show the names Chainsword / Bolt Pistol / Bolt Rounds after the second Play? Which `msg` folders and FMG ids exist (`ds3-report.txt`)?
 2. Kit 0.5: does the Avelyn burst play three shots; is the crossbow silent as a sword; did equipment reading work (log lines "equipment: ..." with the raw numbers)?
 3. Kit 0.5: which sound set is better (F9): the classic mix or the exact reading? Does the exact reading cover the bank now (report line "reading the bank exactly: N of M")?
 4. Kit 0.5: `mesh-report.txt` - how are the SM2 `.tpl` / `.tpl_data` files laid out; do the vertex/index finders hit; is `tpl_data` compressed?
@@ -201,6 +228,6 @@ and an archive reader to modify an existing weapon file). The in-game side (gran
 
 ## Next
 
-- Kit 0.5 -> owner -> logs. Then: names verified -> make weapon grant automatic (no hotkey); models: read `mesh-report.txt`, write the SM2 mesh reader, FLVER2/TPF writer for the DS3 weapon model files (`parts/wp_a_*.partsbnd.dcx`), convert textures (BC7/BC5 -> DS3 TPF); equip-aware idle loop,
+- Kit 0.6 -> owner -> logs (`harvest.txt`, `ds3-report.txt`, names after the second Play). Then: names verified -> make weapon grant automatic (no hotkey); models: read `mesh-report.txt`, write the SM2 mesh reader, FLVER2/TPF writer for the DS3 weapon model files (`parts/wp_a_*.partsbnd.dcx`), convert textures (BC7/BC5 -> DS3 TPF); equip-aware idle loop,
   equip/unequip sounds, hit sounds.
 - M4: Melty listing, release, one-click check, real screenshot, publish only with the owner's OK.

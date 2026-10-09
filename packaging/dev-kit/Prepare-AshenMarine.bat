@@ -13,6 +13,8 @@ echo  This READS your Space Marine 2 and Dark Souls III files (on your PC only; 
 echo  game is changed) and makes:
 echo    1. the Space Marine 2 chainsword and bolt pistol sounds, as ordinary .wav files in  ashenmarine\assets
 echo    2. a copy of Dark Souls III's item text with the names Chainsword / Bolt Pistol / Bolt Rounds, in  ashenmarine\mod
+echo       (the very first time this part cannot finish: the game must be started once to show the kit how to read its
+echo       files. That is expected. Play-AshenMarine.bat then does this part by itself when you quit the game.)
 echo    3. a report about how the weapon models are stored (no copies of the models)
 echo  It takes a few minutes. Please wait for "Done" at the end.
 echo  If Space Marine 2 is not in a normal Steam library, put its folder on the first line of a new text file called

@@ -14,6 +14,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// What the report says when there is neither a key nor a saved table of contents.
+const NO_KEYS_YET: &str = "has not collected what it needs to read Dark Souls III's archives yet";
+
 /// Every file below `root` with its bytes.
 fn tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     fn walk(dir: &Path, root: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
@@ -102,7 +105,7 @@ fn probe_reads_a_fake_install_and_leaves_it_untouched() {
     assert_eq!(tree(&env.fake.root), before, "the probe must not change anything in the install");
     let report = env.report();
     for needle in [
-        "archive keys found in the program file as plain text: 2 (87febfc8, b2969406)",
+        "archive keys found in the program file: 2 (87febfc8, b2969406)",
         "Data0    ",
         "key 87febfc8, salt 11 characters, 11 buckets, 24 files",
         "key b2969406, salt 11 characters, 7 buckets, 5 files",
@@ -158,8 +161,8 @@ fn probe_without_any_key_says_so_and_does_not_succeed() {
     let env = Env::new(&FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
     assert!(!env.probe(None));
     let report = flat(&env.report());
-    assert!(report.contains("archive keys found in the program file as plain text: none"), "{report}");
-    assert!(report.contains("no archive key was found in your Dark Souls III program file; start the game once with the test kit (Play-AshenMarine.bat), close it, and run this again"), "{report}");
+    assert!(report.contains("archive keys found in the program file: none"), "{report}");
+    assert!(report.contains(NO_KEYS_YET), "{report}");
     assert!(report.contains("no key to try"));
 }
 
@@ -298,7 +301,7 @@ fn without_an_archive_key_nothing_is_written_and_a_stale_override_is_removed() {
     build(&env.fake.root, &FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
     let outcome = env.prepare(None);
     assert!(!outcome.ok() && outcome.removed_stale);
-    assert_eq!(outcome.reason.as_deref(), Some("no archive key was found in your Dark Souls III program file; start the game once with the test kit (Play-AshenMarine.bat), close it, and run this again"));
+    assert!(outcome.reason.as_deref().is_some_and(|r| r.contains(NO_KEYS_YET)), "{outcome:?}");
     assert!(!env.override_path().exists() && !env.mod_dir().join(MANIFEST_FILE).exists());
 }
 
@@ -453,7 +456,7 @@ fn the_program_exits_with_0_2_and_64() {
     let broken = Env::new(&FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
     let run = Command::new(setup_exe()).arg("ds3-prepare").arg("--ds3").arg(&broken.fake.root).arg("--out").arg(broken.out()).arg("--mod").arg(broken.mod_dir()).output().unwrap();
     assert_eq!(run.status.code(), Some(2));
-    assert!(flat(&text(&run.stdout)).contains("no archive key was found in your Dark Souls III program file"));
+    assert!(flat(&text(&run.stdout)).contains(NO_KEYS_YET));
     let run = Command::new(setup_exe()).arg("ds3-probe").arg("--ds3").arg(&broken.fake.root).arg("--out").arg(broken.out()).output().unwrap();
     assert_eq!(run.status.code(), Some(2));
 
@@ -524,4 +527,61 @@ fn the_text_table_writer_and_the_reader_the_hook_uses_agree_on_the_format() {
     assert_eq!(theirs.entries, vec![(2_000_000, "Chainsword".to_string()), (2_000_001, "Longsword".to_string()), (14_090_000, "Bolt Pistol".to_string())]);
     assert_eq!((theirs.version, theirs.string_count, theirs.group_count), (2, 4, 2));
     assert_eq!(fmg::header_file_size(&t.to_bytes()), Some(t.to_bytes().len()));
+}
+
+/// The tables of contents the running game would hold, saved the way the test kit saves them: `cache/bhd5/<name>.bin`.
+fn save_game_headers(env: &Env) {
+    let dir = env.data.join("cache").join("bhd5");
+    fs::create_dir_all(&dir).unwrap();
+    for (name, key) in [("Data0", 0usize), ("Data1", 1), ("DLC1", 0)] {
+        let bhd = fs::read(env.fake.game.join(format!("{name}.bhd"))).unwrap();
+        let plain = ashen_ds3data::rsa::decrypt_header(&test_key(key).public, &bhd).unwrap();
+        fs::write(dir.join(format!("{name}.bin")), plain).unwrap();
+    }
+}
+
+#[test]
+fn tables_of_contents_saved_from_the_running_game_replace_the_keys() {
+    let env = Env::new(&FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+    let before = tree(&env.fake.root);
+    // nothing collected yet: nothing is written and the report says what to do
+    let outcome = env.prepare(None);
+    assert!(!outcome.ok());
+    assert!(flat(&env.report()).contains(NO_KEYS_YET));
+    assert!(!env.mod_dir().exists());
+
+    save_game_headers(&env);
+    let outcome = env.prepare(None);
+    assert!(outcome.ok(), "{outcome:?}\n{}", env.report());
+    assert!(env.override_path().is_file());
+    let report = flat(&env.report());
+    assert!(report.contains("tables of contents saved from the running game (cache\\bhd5): 3 (DLC1.bin, Data0.bin, Data1.bin)"), "{report}");
+    assert!(report.contains("Data0 2.5 KB .bhd, header saved from the running game (Data0.bin), salt 11 characters"), "{report}");
+    assert!(report.contains("header saved from the running game (Data1.bin)") && report.contains("header saved from the running game (DLC1.bin)"), "{report}");
+    assert!(!report.contains("PROBLEM"), "{report}");
+    // the result is the same as with keys
+    let names = texts_of(&env.override_path());
+    let keyed = Env::new(&FakeOptions::default());
+    assert!(keyed.prepare(None).ok());
+    assert_eq!(fs::read(env.override_path()).unwrap(), fs::read(keyed.override_path()).unwrap(), "the same file whichever way the archives were opened");
+    assert!(!names.is_empty());
+    assert_eq!(tree(&env.fake.root), before, "the game folder is untouched");
+}
+
+#[test]
+fn saved_headers_that_do_not_fit_the_install_are_ignored_with_a_clear_message() {
+    let env = Env::new(&FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+    save_game_headers(&env);
+    // a game update: every archive is a different size now, the saved tables no longer fit
+    for name in ["Data0", "Data1", "DLC1"] {
+        let p = env.fake.game.join(format!("{name}.bhd"));
+        let mut bytes = fs::read(&p).unwrap();
+        bytes.extend(vec![0u8; 256 * 40]);
+        fs::write(&p, bytes).unwrap();
+    }
+    let outcome = env.prepare(None);
+    assert!(!outcome.ok());
+    let reason = outcome.reason.unwrap_or_default();
+    assert!(reason.contains("none of them fits an archive of this install") && reason.contains("cache\\bhd5"), "{reason}");
+    assert!(!env.mod_dir().exists());
 }

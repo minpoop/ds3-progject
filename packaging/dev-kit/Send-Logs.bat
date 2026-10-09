@@ -8,6 +8,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
  "$srcs = @('ashenmarine\logs', 'modengine2\modengine2\logs', 'ashenmarine\probe-sm2', 'ashenmarine\prepare-sm2', 'ashenmarine\ds3-prepare', 'ashenmarine\probe-sm2-mesh', 'ashenmarine\mod', 'ashenmarine\assets');" ^
  "foreach ($s in $srcs) { if (Test-Path $s) { Get-ChildItem $s -File | ForEach-Object { $t = (Get-Content $_.FullName -Raw) -replace [regex]::Escape($env:USERNAME), '<user>' -replace '\b\d{15,20}\b', '<steamid>'; Set-Content -Path (Join-Path $tmp ($s.Replace('\','_') + '__' + $_.Name)) -Value $t } } };" ^
  "if (Test-Path 'ashenmarine\FATAL.txt') { Copy-Item 'ashenmarine\FATAL.txt' $tmp };" ^
+ "if (Test-Path 'ashenmarine\cache') { $root = (Resolve-Path 'ashenmarine').Path; Get-ChildItem 'ashenmarine\cache' -Recurse -File | ForEach-Object { ('{0}  {1} bytes' -f $_.FullName.Substring($root.Length + 1), $_.Length) } | Set-Content (Join-Path $tmp 'cache-listing.txt') };" ^
  "if (Test-Path 'ashenmarine\assets\sounds\index.json') { Copy-Item 'ashenmarine\assets\sounds\index.json' (Join-Path $tmp 'assets_sounds__index.json') };" ^
  "if (Test-Path 'ashenmarine\assets\sounds-exact\index.json') { Copy-Item 'ashenmarine\assets\sounds-exact\index.json' (Join-Path $tmp 'assets_sounds-exact__index.json') };" ^
  "$out = Join-Path ([Environment]::GetFolderPath('Desktop')) 'AshenMarine-logs.zip'; if (Test-Path $out) { Remove-Item $out -Force };" ^

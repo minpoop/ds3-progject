@@ -28,6 +28,8 @@ pub const DS3_PREPARE_REPORT: &str = "ds3_prepare_report";
 pub const MSG_OVERRIDE_ITEM: &str = "msg_override_item";
 pub const MSG_OVERRIDE_MANIFEST: &str = "msg_override_manifest";
 pub const DS3_KEY_CACHE: &str = "ds3_key_cache";
+pub const DS3_HEADER_CACHE: &str = "ds3_header_cache";
+pub const HARVEST_LOG: &str = "harvest_log";
 pub const ASSETS_SOUNDS_EXACT_DIR: &str = "assets_sounds_exact_dir";
 
 pub static FILES: &[FileRule] = &[
@@ -259,8 +261,26 @@ pub static FILES: &[FileRule] = &[
     FileRule {
         id: "ds3_key_cache",
         path: "{data}/cache/ds3-keys.pem",
-        purpose: "Only if the exe does not hold the archive keys as plain text: the public RSA keys the running game has in memory, written by the test kit's probe so ds3-prepare can use them",
+        purpose: "Only if the exe does not hold the archive keys as plain text: the public RSA keys the running game has in memory (PEM, DER or key blobs; a number found through a big-number structure only if a real archive proves it), written by the test kit's collector while the game runs so ds3-prepare can use them",
         access: Access::ReadWrite,
+        system: "item_names",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "ds3_header_cache",
+        path: "{data}/cache/bhd5",
+        purpose: "The plain table of contents of each archive (<name>.bin), saved by the test kit's collector from the running game's memory when it lies there whole and checks out (parses completely, fits the .bhd, every file inside the .bdt); ds3-prepare uses it when no key opens an archive",
+        access: Access::ReadWrite,
+        system: "item_names",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "harvest_log",
+        path: "{data}/logs/harvest.txt",
+        purpose: "What the test kit's collector looked for in the game's memory and what it found (key fingerprints and places only, never key text)",
+        access: Access::Write,
         system: "item_names",
         guarded: false,
         milestone: 3,

@@ -33,7 +33,7 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
 name = "ashen-common"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -44,9 +44,10 @@ dependencies = [
 
 [[package]]
 name = "ashen-ds3data"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "aes",
+ "memchr",
  "miniz_oxide 0.8.9",
  "num-bigint",
  "sha2",
@@ -55,16 +56,17 @@ dependencies = [
 
 [[package]]
 name = "ashen-harness"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ashen-common",
 ]
 
 [[package]]
 name = "ashen-hook"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ashen-common",
+ "ashen-ds3data",
  "darksouls3",
  "fromsoftware-shared",
  "memchr",
@@ -75,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "ashen-launcher"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "ashen-common",
@@ -84,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "ashen-setup"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "ashen-common",
@@ -97,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "ashen-sm2"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "bcdec_rs",

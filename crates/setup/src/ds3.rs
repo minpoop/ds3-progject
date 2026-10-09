@@ -23,7 +23,7 @@ use ashen_ds3data::bnd4::{self, Bnd4};
 use ashen_ds3data::dcx::{self, DcxInfo};
 use ashen_ds3data::fmg::{FmgError, FmgFile};
 use ashen_ds3data::hash::path_hash;
-use ashen_ds3data::install::{exe_path, find_game_dir, Ds3Install, ExeInfo};
+use ashen_ds3data::install::{exe_path, find_game_dir, Ds3Install, ExeInfo, PlainHeader};
 use ashen_ds3data::keys::{load_pem_file, RsaPublicKey};
 use ashen_ds3data::msgpatch::{patch_item_msgbnd_detailed, ItemEdit, PatchError};
 use ashen_ds3data::{sha256_hex, snippet};
@@ -255,8 +255,19 @@ fn find_step(rep: &mut Report, given: Option<&Path>) -> Result<PathBuf> {
     Ok(root)
 }
 
-/// Step "program file and keys": the folder with the program file, what it holds, and the extra keys the player gave.
-fn keys_step(rep: &mut Report, root: &Path, keys_arg: Option<&Path>, data: &Path) -> Result<(PathBuf, ExeInfo, Vec<RsaPublicKey>)> {
+/// What the program file, the player and the test kit's in-game collector gave for reading the archives.
+struct Sources {
+    game_dir: PathBuf,
+    exe: ExeInfo,
+    /// Keys from `--keys` and `cache/ds3-keys.pem`.
+    extra: Vec<RsaPublicKey>,
+    /// Plain tables of contents the running game held (`cache/bhd5/*.bin`).
+    headers: Vec<PlainHeader>,
+}
+
+/// Step "program file and keys": the folder with the program file, what it holds, the extra keys the player gave and what
+/// the test kit collected from the running game.
+fn keys_step(rep: &mut Report, root: &Path, keys_arg: Option<&Path>, data: &Path) -> Result<Sources> {
     let game_dir = find_game_dir(root).map_err(|_| {
         anyhow!("{} does not contain Game\\DarkSoulsIII.exe. Is that really the Dark Souls III folder? If the game is installed, Steam can check it: right click the game, Properties, Installed Files, Verify integrity of game files", name_of(root))
     })?;
@@ -266,9 +277,9 @@ fn keys_step(rep: &mut Report, root: &Path, keys_arg: Option<&Path>, data: &Path
     rep.say(format!("  program file: {}\\{}, {}, SHA-256 {}", name_of(&game_dir), name_of(&exe_file), human(exe.size), exe.sha256));
     let prints = |keys: &[RsaPublicKey]| keys.iter().map(|k| k.fingerprint()).collect::<Vec<_>>().join(", ");
     if exe.keys.is_empty() {
-        rep.say(format!("  archive keys found in the program file as plain text: none ({} key blocks looked at, {} of them damaged)", exe.pem_blocks, exe.pem_rejected));
+        rep.say(format!("  archive keys found in the program file: none ({} key text blocks looked at, {} of them damaged; no key in any other shape either)", exe.pem_blocks, exe.pem_rejected));
     } else {
-        rep.say(format!("  archive keys found in the program file as plain text: {} ({})", exe.keys.len(), prints(&exe.keys)));
+        rep.say(format!("  archive keys found in the program file: {} ({}){}", exe.keys.len(), prints(&exe.keys), if exe.other_forms > 0 { format!(", {} of them not as plain PEM text", exe.other_forms) } else { String::new() }));
     }
     let mut extra: Vec<RsaPublicKey> = Vec::new();
     if let Some(p) = keys_arg {
@@ -292,13 +303,21 @@ fn keys_step(rep: &mut Report, root: &Path, keys_arg: Option<&Path>, data: &Path
     } else {
         rep.detail("  keys from cache\\ds3-keys.pem: no such file");
     }
-    Ok((game_dir, exe, extra))
+    let headers = PlainHeader::load_dir(&data.join("cache").join("bhd5"));
+    if headers.is_empty() {
+        rep.say("  tables of contents saved from the running game (cache\\bhd5): none yet");
+    } else {
+        rep.say(format!("  tables of contents saved from the running game (cache\\bhd5): {} ({})", headers.len(), headers.iter().map(|h| h.label.as_str()).collect::<Vec<_>>().join(", ")));
+    }
+    Ok(Sources { game_dir, exe, extra, headers })
 }
 
 /// The plain-words explanation for "no archive could be opened".
-fn no_archive_opened(install: &Ds3Install) -> String {
-    if install.keys().is_empty() {
-        "no archive key was found in your Dark Souls III program file; start the game once with the test kit (Play-AshenMarine.bat), close it, and run this again".to_string()
+fn no_archive_opened(install: &Ds3Install, headers: usize) -> String {
+    if install.keys().is_empty() && headers == 0 {
+        "the test kit has not collected what it needs to read Dark Souls III's archives yet (the program file holds no archive key). It collects it from the running game: start the game once with Play-AshenMarine.bat and quit it again; this step then runs by itself, or run Prepare-AshenMarine.bat again".to_string()
+    } else if install.keys().is_empty() {
+        format!("{headers} table(s) of contents were saved from the running game but none of them fits an archive of this install (was the game updated since?). Delete the folder ashenmarine\\cache\\bhd5, start the game once with Play-AshenMarine.bat and quit it again")
     } else {
         format!(
             "none of the {} archive keys that were found opens Dark Souls III's archives (key fingerprints: {}). Please send me the report so I can see why",
@@ -309,8 +328,9 @@ fn no_archive_opened(install: &Ds3Install) -> String {
 }
 
 /// Step "archives": opens every `.bhd` and lists them; fails when none can be used.
-fn archives_step(rep: &mut Report, game_dir: PathBuf, exe: ExeInfo, extra: &[RsaPublicKey]) -> Result<Ds3Install> {
-    let install = Ds3Install::open_with_exe(game_dir, exe, extra, &mut |m| rep.progress(&format!("  {m}"))).map_err(|e| anyhow!("{e}"))?;
+fn archives_step(rep: &mut Report, src: Sources) -> Result<Ds3Install> {
+    let saved = src.headers.len();
+    let install = Ds3Install::open_with_sources(src.game_dir, src.exe, &src.extra, &src.headers, &mut |m| rep.progress(&format!("  {m}"))).map_err(|e| anyhow!("{e}"))?;
     if install.archives().is_empty() {
         bail!("the Game folder has no archive files (Data0.bhd and so on). Is Dark Souls III fully installed? Steam can check it: right click the game, Properties, Installed Files, Verify integrity of game files");
     }
@@ -320,10 +340,10 @@ fn archives_step(rep: &mut Report, game_dir: PathBuf, exe: ExeInfo, extra: &[Rsa
             Ok(a) => {
                 let magic = if a.bdt_magic() == *b"BDF4" { "BDF4".to_string() } else { format!("UNEXPECTED start {:02x?}", a.bdt_magic()) };
                 rep.say(format!(
-                    "  {:<8} {} .bhd, key {}, salt {} characters, {} buckets, {} files; {bdt} ({magic})",
+                    "  {:<8} {} .bhd, {}, salt {} characters, {} buckets, {} files; {bdt} ({magic})",
                     slot.name,
                     human(slot.bhd_size),
-                    a.key_fingerprint(),
+                    a.source(),
                     a.header().salt().len(),
                     a.header().bucket_count(),
                     a.entries().len()
@@ -355,7 +375,7 @@ fn archives_step(rep: &mut Report, game_dir: PathBuf, exe: ExeInfo, extra: &[Rsa
     }
     let opened = install.open_archives().count();
     if opened == 0 {
-        bail!("{}", no_archive_opened(&install));
+        bail!("{}", no_archive_opened(&install, saved));
     }
     if opened < install.archives().len() {
         rep.say_wrapped("  ", &format!("NOTE: {} of {} archives could not be opened; files inside them cannot be found.", install.archives().len() - opened, install.archives().len()));
@@ -858,8 +878,8 @@ pub fn probe(opts: &ProbeOpts) -> bool {
     rep.say_wrapped("  ", &format!("A report of what it found is written to:  {}", shown(&report, opts.out.parent().unwrap_or(&opts.out))));
 
     let Ok(root) = stage(&mut rep, "1/6 Finding Dark Souls III", |rep| find_step(rep, opts.ds3.as_deref())) else { return finish_probe(rep, false) };
-    let Ok((game_dir, exe, extra)) = stage(&mut rep, "2/6 The program file and the archive keys", |rep| keys_step(rep, &root, opts.keys.as_deref(), &opts.data)) else { return finish_probe(rep, false) };
-    let Ok(install) = stage(&mut rep, "3/6 The game archives", |rep| archives_step(rep, game_dir, exe, &extra)) else { return finish_probe(rep, false) };
+    let Ok(sources) = stage(&mut rep, "2/6 The program file and the archive keys", |rep| keys_step(rep, &root, opts.keys.as_deref(), &opts.data)) else { return finish_probe(rep, false) };
+    let Ok(install) = stage(&mut rep, "3/6 The game archives", |rep| archives_step(rep, sources)) else { return finish_probe(rep, false) };
     step(&mut rep, "4/6 Where the files the mod needs are", |rep| {
         path_table(rep, &install);
         Ok(())
@@ -934,8 +954,8 @@ pub fn prepare(opts: &PrepareOpts) -> Outcome {
         };
     }
     let root = try_stage!(stage(&mut rep, "1/5 Finding Dark Souls III", |rep| find_step(rep, opts.ds3.as_deref())));
-    let (game_dir, exe, extra) = try_stage!(stage(&mut rep, "2/5 The program file and the archive keys", |rep| keys_step(rep, &root, opts.keys.as_deref(), &opts.data)));
-    let install = try_stage!(stage(&mut rep, "3/5 The game archives", |rep| archives_step(rep, game_dir, exe, &extra)));
+    let sources = try_stage!(stage(&mut rep, "2/5 The program file and the archive keys", |rep| keys_step(rep, &root, opts.keys.as_deref(), &opts.data)));
+    let install = try_stage!(stage(&mut rep, "3/5 The game archives", |rep| archives_step(rep, sources)));
     let plan = try_stage!(stage(&mut rep, "4/5 Reading the item text and checking the name change", |rep| plan_step(rep, &install)));
 
     // the last stage: write. Everything above passed.

@@ -13,6 +13,8 @@ crate-type = ["cdylib"]
 ashen-common = { path = "../common" }
 
 [target.'cfg(windows)'.dependencies]
+# reads the player's archives and finds keys and tables of contents in the game's memory (pure Rust, no unsafe)
+ashen-ds3data = { path = "../ds3data" }
 minhook = "0.9"
 # typed Dark Souls III structures, parameter tables and function addresses (MIT OR Apache-2.0)
 darksouls3 = "0.14"
@@ -31,3 +33,6 @@ windows-sys = { workspace = true, features = [
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[target.'cfg(windows)'.dev-dependencies]
+ashen-ds3data = { path = "../ds3data", features = ["testing"] }

@@ -116,11 +116,12 @@ sed 's/^/    /' "$W/ashen/logs/probe-ds3.txt" 2>/dev/null | cut -c1-200 | head -
 check "L launcher exit code 0" '[ "$(cat "$W/launcher.rc")" = "0" ]'
 check "L the probe started and said it is read-only" 'grep -q "DS3 probe v.* starting (read-only" "$W/ashen/logs/probe-ds3.txt"'
 check "L it noticed it cannot read this game version and did not touch game memory structures" 'grep -q "cannot read the game version" "$W/ashen/logs/probe-ds3.txt" && grep -q "in-game probe skipped" "$W/ashen/logs/probe-ds3.txt"'
+check "L the collector started (read-only) and, with no archive in this fake game, had nothing to do" 'grep -q "collector v.* starting (read-only" "$W/ashen/logs/harvest.txt" && grep -q "no .bhd/.bdt archive pair" "$W/ashen/logs/harvest.txt"'
 check "L the text-table scan ran and finished" 'grep -q "text-table scan 1" "$W/ashen/logs/probe-ds3.txt" && grep -q "found .* text tables" "$W/ashen/logs/probe-ds3.txt"'
 check "L the sandbox still worked (VERIFIED, real save untouched)" 'grep -q "VERIFIED" "$W/ashen/logs/launcher.log" && [ "$(treehash "$W/appdata")" = "$REAL0" ]'
 check "L the hook config said probe=true" 'grep -q "\"probe\": true" "$W/ashen/config/ashenmarine.json"'
 make_world L2; LAUNCHER_ARGS="" launch "$W" ASHEN_FAKE_HOLD_SECS=0
-check "L2 without --probe no probe file is created" '[ ! -e "$W/ashen/logs/probe-ds3.txt" ]'
+check "L2 without --probe no probe file is created" '[ ! -e "$W/ashen/logs/probe-ds3.txt" ] && [ ! -e "$W/ashen/logs/harvest.txt" ]'
 
 echo; echo "== M: --sounds --experiments in a game it does not know (the feature loads its sounds, says why it stays off, changes nothing) =="
 make_world M; REAL0="$(treehash "$W/appdata")"
@@ -176,6 +177,7 @@ else
   check "K real save byte-identical" '[ "$(treehash "$W/appdata")" = "$REAL0" ]'
   check "K launcher log says VERIFIED" 'grep -q "VERIFIED" "$W/kit/ashenmarine/logs/launcher.log"'
   check "K the probe thread started inside the real-ModEngine2-loaded hook" 'grep -q "DS3 probe v" "$W/kit/ashenmarine/logs/probe-ds3.txt"'
+  check "K the collector thread started inside the real-ModEngine2-loaded hook" 'grep -q "collector v" "$W/kit/ashenmarine/logs/harvest.txt"'
   check "K the sound feature read what prepare made (index.json contract)" 'grep -q "loaded [1-9][0-9]* sound slots" "$W/kit/ashenmarine/logs/sfx.txt"'
   check "K the logs the player sends contain no game audio" '! find "$W/kit/ashenmarine/logs" -name "*.wav" | grep -q .'
 fi
