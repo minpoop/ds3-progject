@@ -23,7 +23,7 @@ mkdir -p "$OUT/ashenmarine" "$OUT/modengine2/modengine2/bin" "$OUT/modengine2/mo
 
 cp "$BIN/ashenmarine-launcher.exe" "$BIN/ashenmarine_hook.dll" "$BIN/ashenmarine-setup.exe" "$OUT/ashenmarine/"
 # Windows line endings for everything a person opens or double-clicks
-for f in packaging/dev-kit/Prepare-AshenMarine.bat packaging/dev-kit/Play-AshenMarine.bat packaging/dev-kit/Send-Logs.bat packaging/dev-kit/Send-Model-Files.bat packaging/dev-kit/README-FIRST.txt; do sed 's/\r$//; s/$/\r/' "$f" > "$OUT/$(basename "$f")"; done
+for f in packaging/dev-kit/Prepare-AshenMarine.bat packaging/dev-kit/Play-AshenMarine.bat packaging/dev-kit/Send-Logs.bat packaging/dev-kit/Send-Model-Files.bat packaging/dev-kit/Remove-Models.bat packaging/dev-kit/README-FIRST.txt; do sed 's/\r$//; s/$/\r/' "$f" > "$OUT/$(basename "$f")"; done
 sed 's/\r$//; s/$/\r/' THIRD_PARTY_NOTICES.md > "$OUT/THIRD_PARTY_NOTICES.txt"
 
 # ModEngine2: only what it needs to run (no debug-menu assets, no developer headers)

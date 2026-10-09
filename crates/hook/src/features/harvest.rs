@@ -3,8 +3,11 @@
 //! though, so for a while after it starts this looks through the game's own memory for what the setup tool needs and saves it
 //! next to the program:
 //!
-//!   * `cache/ds3-keys.pem`   RSA public keys (PEM text, DER, key blobs, or a big-number structure that a real archive proves)
-//!   * `cache/bhd5/<name>.bin` the plain table of contents of an archive, when it lies in memory whole and checks out
+//!   * `cache/ds3-keys.pem`: RSA public keys that open an archive, and every key the game keeps as plain PEM text (the archive
+//!     keys are kept like that; one that opens nothing is still saved, for the setup tool to look at)
+//!   * `cache/keys-seen.pem`: every distinct public key seen in any shape, so that the setup tool can try them all on the archives
+//!     that no key has opened (the archives of the downloadable content and `Data0`)
+//!   * `cache/bhd5/<name>.bin`: the plain table of contents of an archive, when it lies in memory whole and checks out
 //!
 //! Strictly read-only on the game (it only reads memory the game has already committed, with `ReadProcessMemory`, which
 //! cannot fault); the only things written are the files above and `logs/harvest.txt`. It stops by itself as soon as every
@@ -35,6 +38,8 @@ const OVERLAP: usize = 16 << 10;
 const MAX_BN_TESTS: usize = 600;
 /// How many times a header-like place is tried before it is given up (the game may still be filling it).
 const MAX_TRIES: u32 = 5;
+/// The most keys that are written to `keys-seen.pem` (a few dozen are seen in practice).
+const MAX_KEYS_SEEN: usize = 400;
 /// The most lines of detail about places that looked like a table of contents but were not one.
 const MAX_NEAR_MISS_LINES: usize = 12;
 /// The most places where a known path hash was seen next to a size and an offset that are described.
@@ -100,9 +105,12 @@ struct Harvester<'a> {
     slots: Vec<Slot>,
     /// Every distinct key seen, by any shape.
     keys: Vec<RsaPublicKey>,
-    /// The ones among them that open an archive (only these are saved, unless an archive's start cannot be read).
+    /// The ones among them that open an archive.
     proven: Vec<RsaPublicKey>,
+    /// The ones among them the game keeps as plain PEM text, whether they open an archive or not.
+    pem_keys: Vec<RsaPublicKey>,
     keys_dirty: bool,
+    seen_dirty: bool,
     /// Fingerprints of the moduli that were already tried (found through big-number structures).
     tried: HashSet<String>,
     /// How often each header-like place (absolute address) was tried (at most once per pass), and in which pass the last time;
@@ -171,20 +179,26 @@ impl<'a> Harvester<'a> {
             slots,
             keys: Vec::new(),
             proven: Vec::new(),
+            pem_keys: Vec::new(),
             keys_dirty: false,
+            seen_dirty: false,
             tried: HashSet::new(),
             places: HashMap::new(),
             pass_id: 0,
             near_miss_lines: 0,
             entry_lines: 0,
             hash_lines: 0,
-            probes: vec![(path_hash("/msg/ENGLISH/item.msgbnd.dcx"), "msg/ENGLISH/item.msgbnd.dcx"), (path_hash("/msg/ENGLISH/menu.msgbnd.dcx"), "msg/ENGLISH/menu.msgbnd.dcx")],
+            probes: vec![(path_hash("/msg/engUS/item.msgbnd.dcx"), "msg/engUS/item.msgbnd.dcx"), (path_hash("/msg/engUS/menu.msgbnd.dcx"), "msg/engUS/menu.msgbnd.dcx")],
             max_bdt,
         }
     }
 
     fn keys_file(&self) -> PathBuf {
         self.cache.join("ds3-keys.pem")
+    }
+
+    fn seen_file(&self) -> PathBuf {
+        self.cache.join("keys-seen.pem")
     }
 
     fn bhd5_dir(&self) -> PathBuf {
@@ -196,6 +210,11 @@ impl<'a> Harvester<'a> {
         if let Ok(old) = load_pem_file(&self.keys_file()) {
             for k in old {
                 self.note_key(&k, "cache", false);
+            }
+        }
+        if let Ok(old) = load_pem_file(&self.seen_file()) {
+            for k in old {
+                self.note_key(&k, "keys-seen cache", false);
             }
         }
         let saved = PlainHeader::load_dir(&self.bhd5_dir());
@@ -219,6 +238,13 @@ impl<'a> Harvester<'a> {
         let new = !self.keys.contains(key);
         if new {
             self.keys.push(key.clone());
+            self.seen_dirty = true;
+        }
+        // the archive keys are kept in the game as plain PEM text: such a key is worth saving whatever it opens (the key of an
+        // archive that this collector cannot prove, because its start looks different, is among them)
+        if (form.starts_with("PEM text") || form == "cache") && !self.pem_keys.contains(key) {
+            self.pem_keys.push(key.clone());
+            self.keys_dirty = true;
         }
         let mut opens = Vec::new();
         for slot in &mut self.slots {
@@ -241,21 +267,37 @@ impl<'a> Harvester<'a> {
         new
     }
 
-    /// Saves the keys (merged with the file's) when there is something new.
+    /// Saves the keys when there is something new: the ones that open an archive and the ones kept as PEM text in
+    /// `ds3-keys.pem`, every distinct key seen in `keys-seen.pem`.
     fn save_keys(&mut self) {
-        if !self.keys_dirty {
-            return;
+        if self.keys_dirty {
+            self.keys_dirty = false;
+            let mut keep: Vec<&RsaPublicKey> = if self.slots.iter().any(|s| s.block.is_empty()) { self.keys.iter().collect() } else { self.proven.iter().collect() };
+            for k in &self.pem_keys {
+                if !keep.contains(&k) {
+                    keep.push(k);
+                }
+            }
+            let text: String = keep.iter().map(|k| k.to_pem()).collect();
+            let _ = std::fs::create_dir_all(&self.cache);
+            match write_atomic(&self.keys_file(), text.as_bytes()) {
+                Ok(()) => self.log.log(&format!(
+                    "{} key(s) saved to cache\\ds3-keys.pem ({} open an archive, {} are kept as plain PEM text in the game)",
+                    keep.len(),
+                    self.proven.len(),
+                    self.pem_keys.len()
+                )),
+                Err(e) => self.log.log(&format!("could not save cache\\ds3-keys.pem: {e}")),
+            }
         }
-        self.keys_dirty = false;
-        let keep: &[RsaPublicKey] = if self.slots.iter().any(|s| s.block.is_empty()) { &self.keys } else { &self.proven };
-        let mut text = String::new();
-        for k in keep {
-            text.push_str(&k.to_pem());
-        }
-        let _ = std::fs::create_dir_all(&self.cache);
-        match write_atomic(&self.keys_file(), text.as_bytes()) {
-            Ok(()) => self.log.log(&format!("{} key(s) that open an archive saved to cache\\ds3-keys.pem ({} other public keys were seen and not kept)", keep.len(), self.keys.len().saturating_sub(keep.len()))),
-            Err(e) => self.log.log(&format!("could not save cache\\ds3-keys.pem: {e}")),
+        if self.seen_dirty {
+            self.seen_dirty = false;
+            let text: String = self.keys.iter().take(MAX_KEYS_SEEN).map(|k| k.to_pem()).collect();
+            let _ = std::fs::create_dir_all(&self.cache);
+            match write_atomic(&self.seen_file(), text.as_bytes()) {
+                Ok(()) => self.log.log(&format!("{} key(s) seen so far saved to cache\\keys-seen.pem", self.keys.len().min(MAX_KEYS_SEEN))),
+                Err(e) => self.log.log(&format!("could not save cache\\keys-seen.pem: {e}")),
+            }
         }
     }
 
@@ -809,6 +851,37 @@ mod tests {
         assert_eq!(h.slots.iter().find(|s| s.name == "Data1").unwrap().key.as_deref(), Some("b2969406"), "{text}");
         assert!(st.exp_hits >= 1, "the structure was seen: {text}");
         drop(structure);
+    }
+
+    #[test]
+    fn a_key_kept_as_plain_text_is_saved_even_when_it_opens_nothing_and_every_key_seen_is_listed() {
+        let _one = one_at_a_time();
+        let dir = temp_dir("pem");
+        let fake = build(&dir.join("DS3"), &FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+        // two 2048-bit keys of this install's shape that open none of its archives: one kept as PEM text, one as DER
+        let mut n_pem = test_key(1).public.n.to_bytes_le();
+        n_pem[0] ^= 0x02;
+        let mut n_der = test_key(0).public.n.to_bytes_le();
+        n_der[0] ^= 0x04;
+        let (k_pem, k_der) = (modulus_key(&n_pem).unwrap(), modulus_key(&n_der).unwrap());
+        let pem_text = k_pem.to_pem().into_bytes();
+        let der = k_der.to_pkcs1_der();
+        let log = Logger::open(&dir.join("harvest.txt"), "t");
+        let cache = dir.join("cache");
+        let mut h = Harvester::new(&log, &fake.game, &cache);
+        h.pass(Duration::from_secs(120));
+        let text = std::fs::read_to_string(dir.join("harvest.txt")).unwrap();
+        let kept = ashen_ds3data::keys::load_pem_file(&cache.join("ds3-keys.pem")).unwrap();
+        let seen = ashen_ds3data::keys::load_pem_file(&cache.join("keys-seen.pem")).unwrap();
+        assert!(kept.contains(&k_pem), "a key the game keeps as PEM text is saved although no archive opens with it: {text}");
+        assert!(!kept.contains(&k_der), "a key seen only as DER is not in the key file of the archives: {text}");
+        assert!(seen.contains(&k_pem) && seen.contains(&k_der), "every key seen is listed: {text}");
+        assert!(text.contains("saved to cache\\keys-seen.pem") && !text.contains("BEGIN"), "{text}");
+        // a second run adopts both files and writes nothing new for the same keys
+        let mut again = Harvester::new(&log, &fake.game, &cache);
+        again.adopt_saved();
+        assert!(again.keys.contains(&k_pem) && again.keys.contains(&k_der) && again.pem_keys.contains(&k_pem) && !again.pem_keys.contains(&k_der));
+        drop((pem_text, der));
     }
 
     #[test]

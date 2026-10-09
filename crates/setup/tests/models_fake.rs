@@ -8,7 +8,7 @@ use ashen_ds3data::dcx;
 use ashen_ds3data::flver::Flver;
 use ashen_ds3data::testing::install::{build, FakeDs3, FakeOptions};
 use ashen_ds3data::tpf::Tpf;
-use ashen_setup::ds3::{self, ModelsOpts, MODELS_MANIFEST_FILE, MODELS_REPORT_FILE};
+use ashen_setup::ds3::{self, ModelsOpts, MODELS_MANIFEST_FILE, MODELS_REMOVE_REPORT_FILE, MODELS_REPORT_FILE};
 use common::{add_made_up_weapons, fake_install, tree};
 use serde_json::Value;
 use std::fs;
@@ -44,7 +44,7 @@ impl Env {
     }
 
     fn run(&self, install: bool) -> ds3::ModelsOutcome {
-        ds3::models(&ModelsOpts { ds3: Some(self.ds3.root.clone()), sm2: Some(self.sm2.clone()), keys: None, data: self.data.clone(), out: self.out(), mod_dir: self.mod_dir(), install })
+        ds3::models(&ModelsOpts { ds3: Some(self.ds3.root.clone()), sm2: Some(self.sm2.clone()), keys: None, data: self.data.clone(), out: self.out(), mod_dir: self.mod_dir(), install, remove: false })
     }
 
     fn report(&self) -> String {
@@ -146,6 +146,36 @@ fn an_install_run_puts_the_containers_in_the_mod_folder_and_lists_them() {
 }
 
 #[test]
+fn remove_takes_out_exactly_what_an_install_put_there_and_nothing_else() {
+    let env = Env::new(true);
+    assert!(env.run(true).ok());
+    let parts = env.mod_dir().join("parts");
+    fs::write(parts.join("mine.txt"), b"mine").unwrap();
+    fs::write(env.mod_dir().join("ashenmarine-msg.json"), b"{}").unwrap();
+    let (ds3_before, sm2_before) = (tree(&env.ds3.root), tree(&env.sm2));
+    let outcome = ds3::models(&ModelsOpts { ds3: Some(env.ds3.root.clone()), sm2: Some(env.sm2.clone()), keys: None, data: env.data.clone(), out: env.out(), mod_dir: env.mod_dir(), install: false, remove: true });
+    assert!(outcome.ok() && outcome.removal_only && outcome.removed_stale == 3 && outcome.ready.is_empty(), "{outcome:?}");
+    // the three models and the manifest are gone; the player's own file and the other manifest are not
+    let mut left: Vec<String> = fs::read_dir(&parts).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    left.sort();
+    assert_eq!(left, vec!["mine.txt"]);
+    assert!(!env.mod_dir().join(MODELS_MANIFEST_FILE).exists() && env.mod_dir().join("ashenmarine-msg.json").exists());
+    assert_eq!((tree(&env.ds3.root), tree(&env.sm2)), (ds3_before, sm2_before), "the games are untouched");
+    let report = fs::read_to_string(env.out().join(MODELS_REMOVE_REPORT_FILE)).unwrap();
+    assert!(report.contains("take the new weapon models out again") && report.contains("Removed 3 file(s)"), "{report}");
+    // nothing left to remove: said plainly, and still a success
+    let again = ds3::models(&ModelsOpts { ds3: Some(env.ds3.root.clone()), sm2: Some(env.sm2.clone()), keys: None, data: env.data.clone(), out: env.out(), mod_dir: env.mod_dir(), install: false, remove: true });
+    assert!(again.ok() && again.removed_stale == 0);
+    assert!(fs::read_to_string(env.out().join(MODELS_REMOVE_REPORT_FILE)).unwrap().contains("There was nothing to remove"));
+    // a manifest that points outside the mod folder deletes nothing outside it
+    let outside = env.data.join("precious.txt");
+    fs::write(&outside, b"keep").unwrap();
+    fs::write(env.mod_dir().join(MODELS_MANIFEST_FILE), "{\"format\":1,\"files\":[{\"path\":\"../precious.txt\"}]}").unwrap();
+    let hostile = ds3::models(&ModelsOpts { ds3: Some(env.ds3.root.clone()), sm2: Some(env.sm2.clone()), keys: None, data: env.data.clone(), out: env.out(), mod_dir: env.mod_dir(), install: false, remove: true });
+    assert!(hostile.ok() && hostile.removed_stale == 0 && outside.exists());
+}
+
+#[test]
 fn when_a_weapon_cannot_be_made_nothing_stale_stays_and_the_reason_is_in_the_report() {
     let env = Env::new(true);
     assert!(env.run(true).ok());
@@ -159,7 +189,7 @@ fn when_a_weapon_cannot_be_made_nothing_stale_stays_and_the_reason_is_in_the_rep
         &[("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl", tpl), ("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl_data", data)],
         true,
     );
-    let outcome = ds3::models(&ModelsOpts { ds3: Some(env.ds3.root.clone()), sm2: Some(sm2_bare), keys: None, data: env.data.clone(), out: env.out(), mod_dir: env.mod_dir(), install: true });
+    let outcome = ds3::models(&ModelsOpts { ds3: Some(env.ds3.root.clone()), sm2: Some(sm2_bare), keys: None, data: env.data.clone(), out: env.out(), mod_dir: env.mod_dir(), install: true, remove: false });
     assert!(outcome.ok());
     assert_eq!(outcome.failed.len(), 1, "{:?}", outcome.failed);
     assert!(!env.mod_dir().join("parts").join("wp_a_1409.partsbnd.dcx").exists(), "the pistol's model of the earlier run is gone");
@@ -167,7 +197,7 @@ fn when_a_weapon_cannot_be_made_nothing_stale_stays_and_the_reason_is_in_the_rep
     let report = env.report();
     assert!(report.contains("NOT DONE: the template folder has no .tpl_data") || report.contains("NOT DONE: no template folder with \"bolt_pistol\""), "{report}");
     // no usable full-detail model at all: nothing is made, and the exit says so
-    let nothing = ds3::models(&ModelsOpts { ds3: Some(env.ds3.root.clone()), sm2: Some(env.sm2.parent().unwrap().join("nowhere")), keys: None, data: env.data.clone(), out: env.out(), mod_dir: env.mod_dir(), install: true });
+    let nothing = ds3::models(&ModelsOpts { ds3: Some(env.ds3.root.clone()), sm2: Some(env.sm2.parent().unwrap().join("nowhere")), keys: None, data: env.data.clone(), out: env.out(), mod_dir: env.mod_dir(), install: true, remove: false });
     assert!(!nothing.ok());
     assert!(!env.mod_dir().join("parts").join("wp_a_0200.partsbnd.dcx").exists(), "a run that cannot make anything leaves no stale model");
 }
@@ -182,16 +212,16 @@ fn damaged_game_files_are_reported_and_a_folder_inside_a_game_is_refused() {
     add_made_up_weapons(&sm2);
     let data = t.path().join("kit");
     fs::create_dir_all(&data).unwrap();
-    let outcome = ds3::models(&ModelsOpts { ds3: Some(ds3.root.clone()), sm2: Some(sm2.clone()), keys: None, data: data.clone(), out: data.join("ds3-models"), mod_dir: data.join("mod"), install: true });
+    let outcome = ds3::models(&ModelsOpts { ds3: Some(ds3.root.clone()), sm2: Some(sm2.clone()), keys: None, data: data.clone(), out: data.join("ds3-models"), mod_dir: data.join("mod"), install: true, remove: false });
     assert!(!outcome.ok());
     assert!(outcome.failed.iter().all(|(_, why)| why.contains("cannot be read")), "{:?}", outcome.failed);
     assert!(!data.join("mod").join("parts").exists() || fs::read_dir(data.join("mod").join("parts")).unwrap().count() == 0);
     // a folder inside a game's folder
     let before = (tree(&ds3.root), tree(&sm2));
     for inside in [ds3.game.join("copies"), sm2.join("client_pc").join("copies")] {
-        let refused = ds3::models(&ModelsOpts { ds3: Some(ds3.root.clone()), sm2: Some(sm2.clone()), keys: None, data: data.clone(), out: inside.clone(), mod_dir: data.join("mod2"), install: false });
+        let refused = ds3::models(&ModelsOpts { ds3: Some(ds3.root.clone()), sm2: Some(sm2.clone()), keys: None, data: data.clone(), out: inside.clone(), mod_dir: data.join("mod2"), install: false, remove: false });
         assert!(!refused.ok() && !inside.exists());
-        let refused = ds3::models(&ModelsOpts { ds3: Some(ds3.root.clone()), sm2: Some(sm2.clone()), keys: None, data: data.clone(), out: data.join("o"), mod_dir: inside.clone(), install: true });
+        let refused = ds3::models(&ModelsOpts { ds3: Some(ds3.root.clone()), sm2: Some(sm2.clone()), keys: None, data: data.clone(), out: data.join("o"), mod_dir: inside.clone(), install: true, remove: false });
         assert!(!refused.ok() && !inside.exists());
     }
     assert_eq!((tree(&ds3.root), tree(&sm2)), before);

@@ -12,13 +12,13 @@ use std::path::{Path, PathBuf};
 /// What the fake install holds for the item text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemMsg {
-    /// `/msg/ENGLISH/item.msgbnd.dcx` as the game has it.
+    /// `/msg/engUS/item.msgbnd.dcx` as the game has it.
     Good,
     /// ... but "Shortsword" at id 2000000 is called "Broadsword" (a game update that renamed things).
     WrongName,
     /// There is no item text at all.
     Missing,
-    /// Only `/msg/FRENCH/item.msgbnd.dcx` exists.
+    /// Only `/msg/frafr/item.msgbnd.dcx` exists.
     FrenchOnly,
     /// The DCX file is damaged (its checksum fails).
     DamagedDcx,
@@ -62,7 +62,7 @@ pub struct FakeDs3 {
     pub exe: PathBuf,
 }
 
-pub const ITEM_PATH: &str = "/msg/ENGLISH/item.msgbnd.dcx";
+pub const ITEM_PATH: &str = "/msg/engUS/item.msgbnd.dcx";
 /// Where [`ItemMsg::UnexpectedPath`] puts the item text.
 pub const UNEXPECTED_ITEM_PATH: &str = "/msg/zzTEXT/item.msgbnd.dcx";
 pub const MODEL_PATHS: [&str; 5] = [
@@ -202,7 +202,7 @@ pub fn build(root: &Path, opts: &FakeOptions) -> FakeDs3 {
     }
     let item_dcx = item_msg_dcx(opts.item_msg);
     let item_path = match opts.item_msg {
-        ItemMsg::FrenchOnly => "/msg/FRENCH/item.msgbnd.dcx",
+        ItemMsg::FrenchOnly => "/msg/frafr/item.msgbnd.dcx",
         ItemMsg::UnexpectedPath | ItemMsg::UnexpectedPathWrongName => UNEXPECTED_ITEM_PATH,
         _ => ITEM_PATH,
     };
@@ -212,7 +212,7 @@ pub fn build(root: &Path, opts: &FakeOptions) -> FakeDs3 {
     if opts.item_msg != ItemMsg::Missing {
         add_encrypted(&mut data0, item_path, &item_dcx, 0x42);
     }
-    data0.add("/msg/ENGLISH/menu.msgbnd.dcx", &small_msg_dcx("MenuText.fmg", "Menu"));
+    data0.add("/msg/engUS/menu.msgbnd.dcx", &small_msg_dcx("MenuText.fmg", "Menu"));
     add_encrypted(&mut data0, "/regulation.bin", &noise(77, 3000), 0x17);
     if opts.plain_data0 {
         data0.write_plain(&game, "Data0");
@@ -234,7 +234,7 @@ pub fn build(root: &Path, opts: &FakeOptions) -> FakeDs3 {
 
     // DLC1: the DLC item text, under the first key
     let mut dlc1 = ArchiveBuilder::new(3);
-    dlc1.add("/msg/ENGLISH/item_dlc1.msgbnd.dcx", &small_msg_dcx("WeaponName_dlc1.fmg", "Dlc"));
+    dlc1.add("/msg/engUS/item_dlc1.msgbnd.dcx", &small_msg_dcx("WeaponName_dlc1.fmg", "Dlc"));
     dlc1.write(&game, "DLC1", &k0);
 
     if opts.broken_archives {
@@ -248,7 +248,7 @@ pub fn build(root: &Path, opts: &FakeOptions) -> FakeDs3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::install::Ds3Install;
+    use crate::install::{look_at_bhd, BhdLook, Ds3Install};
 
     #[test]
     fn the_fake_install_opens_and_serves_its_files() {
@@ -272,7 +272,52 @@ mod tests {
         }
         assert_eq!(install.read("/regulation.bin").unwrap(), noise(77, 3000));
         assert!(matches!(install.read("/nothing"), Err(crate::install::InstallError::NotInArchives { .. })));
-        assert_eq!(install.lookup("msg\\english\\item_dlc1.msgbnd.dcx").len(), 1);
+        assert_eq!(install.lookup("msg\\ENGUS\\item_dlc1.msgbnd.dcx").len(), 1);
+    }
+
+    #[test]
+    fn a_header_no_key_opens_is_described_from_the_outside_and_the_keys_that_fit_are_named() {
+        let t = tempfile::tempdir().unwrap();
+        let both = [test_key(0).public, test_key(1).public];
+        // a header made with key 0 that does not start with BHD5: the archive does not open, but key 0 is the right one
+        let mut plain = b"ZZZZ a different kind of header".to_vec();
+        plain.resize(600, 7);
+        let odd = test_key(0).encrypt_header(&plain);
+        assert_eq!(odd.len(), 3 * 256);
+        let path = t.path().join("DLC9.bhd");
+        std::fs::write(&path, &odd).unwrap();
+        let look = look_at_bhd(&path, &both).unwrap();
+        assert_eq!((look.size, look.head.len(), look.tail.len(), look.keys_tried), (768, 64, 64, 2));
+        assert_eq!(look.head, odd[..64]);
+        assert_eq!(look.tail, odd[768 - 64..]);
+        assert_eq!(look.whole.as_deref(), Some(&odd[..]), "a small file is kept whole");
+        assert_eq!(look.plain_by.len(), 1, "only key 0 fits: {look:?}");
+        assert_eq!(look.plain_by[0].0, "87febfc8");
+        assert!(look.plain_by[0].1.starts_with(b"ZZZZ a different kind") && look.plain_by[0].1.len() == 32);
+        assert!(BhdLook::readable_start(&look.plain_by[0].1) && !BhdLook::readable_start(&[0, 1, 2, 3]) && !BhdLook::readable_start(b"ab"));
+        // a file that is not a whole number of blocks, and one shorter than a block
+        let mut odd_size = odd.clone();
+        odd_size.truncate(700);
+        std::fs::write(&path, &odd_size).unwrap();
+        assert_eq!(look_at_bhd(&path, &both).unwrap().plain_by.len(), 1, "the first block is all that is tried");
+        std::fs::write(&path, [1u8, 2, 3]).unwrap();
+        let short = look_at_bhd(&path, &both).unwrap();
+        assert_eq!((short.size, short.keys_tried, short.plain_by.len(), short.head.clone(), short.tail.clone()), (3, 0, 0, vec![1, 2, 3], vec![1, 2, 3]));
+        // a big file is not kept whole
+        std::fs::write(&path, vec![9u8; 5000]).unwrap();
+        assert_eq!(look_at_bhd(&path, &both).unwrap().whole, None);
+        // nothing there
+        assert!(look_at_bhd(&t.path().join("none.bhd"), &both).is_err());
+        // the slots carry the path of the file
+        let fake = build(&t.path().join("DS3"), &FakeOptions { broken_archives: true, ..FakeOptions::default() });
+        let install = Ds3Install::open(&fake.root, &[]).unwrap();
+        let broken: Vec<_> = install.archives().iter().filter(|s| s.archive.is_err()).collect();
+        assert_eq!(broken.len(), 2);
+        for slot in broken {
+            assert_eq!(slot.bhd_path, fake.game.join(format!("{}.bhd", slot.name)));
+            let look = look_at_bhd(&slot.bhd_path, install.keys()).unwrap();
+            assert_eq!(look.size, slot.bhd_size);
+        }
     }
 
     #[test]

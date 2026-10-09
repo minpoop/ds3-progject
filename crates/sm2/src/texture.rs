@@ -451,7 +451,8 @@ unknownField: [1, 2, 3]
         let img = decode(fmt::OXT1, 8, 4, &data).unwrap();
         assert_eq!((img.width, img.height), (8, 4));
         assert_eq!(&img.rgba[0..4], &[255, 0, 0, 255]);
-        let right = ((0 * 8 + 4) * 4) as usize;
+        let (row, col) = (0usize, 4usize);
+        let right = (row * 8 + col) * 4;
         assert_eq!(&img.rgba[right..right + 4], &[0, 0, 255, 255]);
         let last = ((3 * 8 + 7) * 4) as usize;
         assert_eq!(&img.rgba[last..last + 4], &[0, 0, 255, 255]);

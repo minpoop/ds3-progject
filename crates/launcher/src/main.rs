@@ -20,7 +20,7 @@ use std::process::{Command, ExitCode};
 use std::time::{Duration, Instant};
 
 const DS3_EXE_NAME: &str = "DarkSoulsIII.exe";
-const USAGE: &str = "ashenmarine-launcher [--game <Dark Souls III folder>] [--me2 <ModEngine2 folder>] [--data <folder>] [--appdata <folder>] [--silent] [--probe] [--sounds] [--experiments]\n\
+const USAGE: &str = "ashenmarine-launcher [--game <Dark Souls III folder>] [--me2 <ModEngine2 folder>] [--data <folder>] [--appdata <folder>] [--silent] [--probe] [--sounds] [--experiments] [--rename]\n\
   --game     Dark Souls III install folder (default: found through Steam)\n\
   --me2      ModEngine2 folder (default: ..\\modengine2 next to this program)\n\
   --data     where the mashup keeps its save copy, backups and logs (default: next to this program)\n\
@@ -28,7 +28,8 @@ const USAGE: &str = "ashenmarine-launcher [--game <Dark Souls III folder>] [--me
   --silent   no message boxes (testing)\n\
   --probe    private test kits: also write a read-only report about the running game (probe-ds3.txt)\n\
   --sounds   play the Space Marine 2 sounds the setup step prepared (assets\\sounds) for swings and shots\n\
-  --experiments  private test kits: hotkey experiments that change the running game (F8 gives the test weapons)";
+  --experiments  private test kits: hotkey experiments that change the running game (F8 gives the test weapons)\n\
+  --rename   private test kits: write the new names of the test weapons over the old ones in the running game's memory (logs\\rename.txt)";
 
 #[derive(Default)]
 struct Opts {
@@ -40,6 +41,7 @@ struct Opts {
     probe: bool,
     sounds: bool,
     experiments: bool,
+    rename: bool,
 }
 
 fn parse_args() -> Result<Opts, String> {
@@ -56,6 +58,7 @@ fn parse_args() -> Result<Opts, String> {
             "--probe" => o.probe = true,
             "--sounds" => o.sounds = true,
             "--experiments" => o.experiments = true,
+            "--rename" => o.rename = true,
             "--help" | "-h" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
@@ -201,7 +204,7 @@ fn run(o: &Opts, exe_dir: &Path) -> Result<ExitCode, (String, Option<Logger>)> {
         window_suffix: WINDOW_SUFFIX.to_string(),
         silent: o.silent,
         block_network: true,
-        features: Features { probe: o.probe, sounds: o.sounds, experiments: o.experiments },
+        features: Features { probe: o.probe, sounds: o.sounds, experiments: o.experiments, rename: o.rename },
         assets_dir: assets_dir.to_string_lossy().into_owned(),
     };
     hook_cfg.save(&hook_cfg_path).map_err(|e| fail(format!("Cannot write {}: {e}", hook_cfg_path.display())))?;

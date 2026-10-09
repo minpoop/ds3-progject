@@ -16,6 +16,12 @@ pub struct SheetWeapon {
     pub base_name: String,
     /// ranged weapons: the ammunition row
     pub ammo_row: Option<u32>,
+    /// the name the in-memory rename writes over `base_name` (no longer than it); `None`: not renamed in memory
+    pub live_name: Option<String>,
+    /// ranged weapons: the ammunition's name in the game, in the item text of the mod, and for the in-memory rename
+    pub ammo_base_name: Option<String>,
+    pub ammo_display_name: Option<String>,
+    pub ammo_live_name: Option<String>,
 }
 
 pub fn sheet_weapons() -> Vec<SheetWeapon> {
@@ -32,13 +38,74 @@ pub fn sheet_weapons() -> Vec<SheetWeapon> {
         ds3_base_name: String,
         #[serde(default)]
         ammo_row: Option<u32>,
+        #[serde(default)]
+        live_name: Option<String>,
+        #[serde(default)]
+        ammo_base_name: Option<String>,
+        #[serde(default)]
+        ammo_display_name: Option<String>,
+        #[serde(default)]
+        ammo_live_name: Option<String>,
     }
     let sheet: Sheet = serde_json::from_str(include_str!("../../../design/sheets/weapons.json")).expect("design/sheets/weapons.json is valid (checked by tests)");
     sheet
         .rows
         .into_iter()
-        .map(|r| SheetWeapon { id: r.id, display_name: r.display_name, ranged: r.kind == "ranged", base_row: r.ds3_base_row, base_name: r.ds3_base_name, ammo_row: r.ammo_row })
+        .map(|r| SheetWeapon {
+            id: r.id,
+            display_name: r.display_name,
+            ranged: r.kind == "ranged",
+            base_row: r.ds3_base_row,
+            base_name: r.ds3_base_name,
+            ammo_row: r.ammo_row,
+            live_name: r.live_name,
+            ammo_base_name: r.ammo_base_name,
+            ammo_display_name: r.ammo_display_name,
+            ammo_live_name: r.ammo_live_name,
+        })
         .collect()
+}
+
+/// One name the running game's memory gets: `old` is what the game has, `new` is `live` padded with spaces to the length of
+/// `old` (in UTF-16 units), so that a length kept next to the text stays true and the text never grows into what follows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiveName {
+    /// what it is, for the log ("Chainsword (a Shortsword)")
+    pub what: String,
+    pub old: Vec<u16>,
+    pub new: Vec<u16>,
+}
+
+/// `live` written over `old`: `None` when it is longer than `old` (or empty, or the same as `old`).
+pub fn same_length(old: &str, live: &str) -> Option<Vec<u16>> {
+    let old: Vec<u16> = old.encode_utf16().collect();
+    let mut new: Vec<u16> = live.trim_end().encode_utf16().collect();
+    if new.is_empty() || new.len() > old.len() || new == old {
+        return None;
+    }
+    new.resize(old.len(), b' ' as u16);
+    Some(new)
+}
+
+/// The names the in-memory rename writes, from the sheet: every weapon's `live_name` over its `ds3_base_name`, and its
+/// ammunition's. A name that does not fit is left out (and returned in the second list, for the log).
+pub fn live_names(weapons: &[SheetWeapon]) -> (Vec<LiveName>, Vec<String>) {
+    let mut names = Vec::new();
+    let mut left_out = Vec::new();
+    let mut add = |what: String, old: &str, live: Option<&String>| {
+        let Some(live) = live else { return };
+        match same_length(old, live) {
+            Some(new) => names.push(LiveName { what, old: old.encode_utf16().collect(), new }),
+            None => left_out.push(format!("{what}: \"{live}\" does not fit over \"{old}\" (it is longer, empty or the same)")),
+        }
+    };
+    for w in weapons {
+        add(format!("{} (the game's \"{}\")", w.display_name, w.base_name), &w.base_name, w.live_name.as_ref());
+        if let (Some(base), Some(live)) = (&w.ammo_base_name, &w.ammo_live_name) {
+            add(format!("{live} (the game's \"{base}\")"), base, Some(live));
+        }
+    }
+    (names, left_out)
 }
 
 /// What a weapon-table row is, as far as sounds are concerned.
@@ -171,6 +238,37 @@ mod tests {
         assert_eq!((pistol.base_row, pistol.base_name.as_str(), pistol.display_name.as_str(), pistol.ranged), (14_090_000, "Avelyn", "Bolt Pistol", true));
         assert_eq!(pistol.ammo_row, Some(404_000));
         assert_eq!(chainsword.ammo_row, None);
+        assert_eq!((chainsword.live_name.as_deref(), pistol.live_name.as_deref()), (Some("Chainsword"), Some("Bolter")));
+        assert_eq!((pistol.ammo_base_name.as_deref(), pistol.ammo_display_name.as_deref(), pistol.ammo_live_name.as_deref()), (Some("Standard Bolt"), Some("Bolt Rounds"), Some("Bolt Rounds")));
+    }
+
+    #[test]
+    fn a_live_name_is_written_over_the_old_one_at_the_same_length() {
+        let u = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+        assert_eq!(same_length("Shortsword", "Chainsword"), Some(u("Chainsword")));
+        assert_eq!(same_length("Standard Bolt", "Bolt Rounds"), Some(u("Bolt Rounds  ")), "shorter names are padded with spaces");
+        assert_eq!(same_length("Avelyn", "Bolter"), Some(u("Bolter")));
+        assert_eq!(same_length("Avelyn", "Bolt Pistol"), None, "longer would run into what follows the text");
+        assert_eq!(same_length("Avelyn", "Avelyn"), None, "nothing to do");
+        assert_eq!(same_length("Avelyn", ""), None);
+        assert_eq!(same_length("Avelyn", "   "), None);
+        assert_eq!(same_length("Avelyn", "Bolt  "), Some(u("Bolt  ")), "trailing spaces of the new name do not count as characters");
+    }
+
+    #[test]
+    fn the_sheet_gives_the_names_the_rename_writes() {
+        let (names, left_out) = live_names(&sheet_weapons());
+        assert!(left_out.is_empty(), "{left_out:?}");
+        let table: Vec<(String, String)> = names.iter().map(|n| (String::from_utf16_lossy(&n.old), String::from_utf16_lossy(&n.new))).collect();
+        assert_eq!(table, vec![("Shortsword".to_string(), "Chainsword".to_string()), ("Avelyn".to_string(), "Bolter".to_string()), ("Standard Bolt".to_string(), "Bolt Rounds  ".to_string())]);
+        assert!(names.iter().all(|n| n.old.len() == n.new.len()));
+        // a name that does not fit is reported, not written
+        let mut w = sheet_weapons();
+        w[1].live_name = Some("Bolt Pistol".to_string());
+        let (names, left_out) = live_names(&w);
+        assert_eq!(names.len(), 2);
+        assert_eq!(left_out.len(), 1);
+        assert!(left_out[0].contains("Bolt Pistol") && left_out[0].contains("Avelyn"), "{left_out:?}");
     }
 
     #[test]

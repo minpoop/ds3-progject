@@ -1,7 +1,7 @@
 //! Reading this process's own memory without ever faulting: `ReadProcessMemory` on ourselves returns an error for an
 //! unreadable page instead of raising an access violation.
 use core::ffi::c_void;
-use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+use windows_sys::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
 use windows_sys::Win32::System::Memory::{VirtualQuery, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS, PAGE_NOCACHE, PAGE_WRITECOMBINE};
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
@@ -48,6 +48,13 @@ pub fn read_into(addr: usize, buf: &mut [u8]) -> usize {
     } else {
         got
     }
+}
+
+/// Copy `bytes` to `addr` in this process; false if the memory is not writable (an error instead of a fault).
+pub fn write(addr: usize, bytes: &[u8]) -> bool {
+    let mut put: usize = 0;
+    let ok = unsafe { WriteProcessMemory(GetCurrentProcess(), addr as *const c_void, bytes.as_ptr() as *const c_void, bytes.len(), &mut put) };
+    ok != 0 && put == bytes.len()
 }
 
 pub fn read(addr: usize, len: usize) -> Option<Vec<u8>> {

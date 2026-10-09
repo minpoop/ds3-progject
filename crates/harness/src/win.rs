@@ -366,10 +366,35 @@ fn fake_ds3() -> ExitCode {
         closesocket(s);
         WSACleanup();
     }
-    let _ = fs::write(&result_path, result);
+    let _ = fs::write(&result_path, &result);
+    // Optionally keep game-style name strings in memory (an 8-byte block header, the zero-ended UTF-16 text, at an address
+    // divisible by 8) so that the in-memory rename can be tested end to end; what they read afterwards goes to the result file.
+    let mut pool: Vec<u64> = Vec::new();
+    if std::env::var("ASHEN_FAKE_PLANT_NAMES").as_deref() == Ok("1") {
+        pool = vec![0u64; 512];
+        let bytes = unsafe { std::slice::from_raw_parts_mut(pool.as_mut_ptr() as *mut u8, pool.len() * 8) };
+        for (i, text) in ["Shortsword", "Avelyn", "Standard Bolt", "Longsword", "Shortsword +1"].iter().enumerate() {
+            let at = i * 64;
+            bytes[at..at + 8].copy_from_slice(&[0x40, 0x46, 0xdc, 0x76, 0xcd, 0x01, 0x00, 0x00]);
+            for (k, u) in text.encode_utf16().enumerate() {
+                bytes[at + 8 + k * 2..at + 10 + k * 2].copy_from_slice(&u.to_le_bytes());
+            }
+        }
+    }
     // Optionally stay alive a while longer (the in-game probe's first scan runs 25 s after it starts).
     if let Some(secs) = std::env::var("ASHEN_FAKE_HOLD_SECS").ok().and_then(|v| v.parse::<u32>().ok()) {
         unsafe { Sleep(secs * 1000) };
+    }
+    if !pool.is_empty() {
+        let bytes = unsafe { std::slice::from_raw_parts(pool.as_ptr() as *const u8, pool.len() * 8) };
+        let names: Vec<String> = (0..5)
+            .map(|i| {
+                let units: Vec<u16> = bytes[i * 64 + 8..i * 64 + 64].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|u| *u != 0).collect();
+                String::from_utf16_lossy(&units)
+            })
+            .collect();
+        result.push_str(&format!("names_after={}\n", names.join("|")));
+        let _ = fs::write(&result_path, &result);
     }
     ExitCode::SUCCESS
 }

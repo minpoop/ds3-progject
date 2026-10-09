@@ -8,6 +8,7 @@
 #   G  the hook closes the game (private save vanished): the launcher reports why; real save untouched
 #   I  Dark Souls III already running: the launcher refuses to start
 #   L  --probe: the hook's read-only game probe starts, copes with a game it does not know, and scans for text tables
+#   M4 --rename: the new names are written over the old ones in the game's memory (a stand-in game that keeps name strings the way the real one does)
 set -u
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
@@ -145,6 +146,18 @@ check "M the sandbox still worked (VERIFIED, real save untouched)" 'grep -q "VER
 make_world M2; LAUNCHER_ARGS="--sounds" launch "$W" ASHEN_FAKE_HOLD_SECS=4
 check "M2 without prepared sounds it says what to do" 'grep -q "Run Prepare-AshenMarine.bat" "$W/ashen/logs/sfx.txt"'
 check "M2 the game was not disturbed (exit code 0)" '[ "$(cat "$W/launcher.rc")" = "0" ]'
+echo; echo "== M4: --rename: the new names are written over the old ones in the game's memory, in place, and nothing else =="
+make_world M4; REAL0="$(treehash "$W/appdata")"
+LAUNCHER_ARGS="--rename" launch "$W" ASHEN_FAKE_HOLD_SECS=12 ASHEN_FAKE_PLANT_NAMES=1
+sed 's/^/    /' "$W/ashen/logs/rename.txt" 2>/dev/null | cut -c1-220 | head -12
+check "M4 launcher exit code 0" '[ "$(cat "$W/launcher.rc")" = "0" ]'
+check "M4 the hook config switched rename on" 'grep -q "\"rename\": true" "$W/ashen/config/ashenmarine.json"'
+check "M4 the rename feature started and said what it will write" 'grep -q "rename v.* starting" "$W/ashen/logs/rename.txt" && grep -q "will write: .*\"Shortsword\" -> \"Chainsword\"" "$W/ashen/logs/rename.txt"'
+check "M4 the game's strings were found and written" 'grep -q "WROTE \"Chainsword\" over \"Shortsword\"" "$W/ashen/logs/rename.txt" && grep -q "WROTE \"Bolter\" over \"Avelyn\"" "$W/ashen/logs/rename.txt" && grep -q "WROTE \"Bolt Rounds\" over \"Standard Bolt\"" "$W/ashen/logs/rename.txt"'
+check "M4 the game reads the new names, and only those three changed" 'grep -q "^names_after=Chainsword|Bolter|Bolt Rounds  |Longsword|Shortsword +1$" "$W/result.txt"'
+check "M4 the sandbox still worked (VERIFIED, real save untouched)" 'grep -q "VERIFIED" "$W/ashen/logs/launcher.log" && [ "$(treehash "$W/appdata")" = "$REAL0" ]'
+make_world M5; LAUNCHER_ARGS="" launch "$W" ASHEN_FAKE_HOLD_SECS=6 ASHEN_FAKE_PLANT_NAMES=1
+check "M5 without --rename no log is made and the names are as they were" '[ ! -e "$W/ashen/logs/rename.txt" ] && grep -q "^names_after=Shortsword|Avelyn|Standard Bolt|Longsword|Shortsword +1$" "$W/result.txt"'
 make_world M3; LAUNCHER_ARGS="" launch "$W" ASHEN_FAKE_HOLD_SECS=0
 check "M3 without --sounds no sound file is created" '[ ! -e "$W/ashen/logs/sfx.txt" ]'
 

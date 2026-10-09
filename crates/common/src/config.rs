@@ -17,9 +17,13 @@ pub struct Features {
     #[serde(default)]
     pub sounds: bool,
     /// Private test kits only: hotkey experiments that CHANGE the running game (F8: put the test weapons in the
-    /// inventory and rename them in memory). Everything else is read-only or plays sound.
+    /// inventory). Everything else is read-only or plays sound.
     #[serde(default)]
     pub experiments: bool,
+    /// Private test kits only: write the new names of the test weapons over the old ones in the running game's memory
+    /// (`logs/rename.txt`). Needs no archive; changes only the text of those names, in place.
+    #[serde(default)]
+    pub rename: bool,
 }
 
 /// What the hook DLL needs to know. Written by the launcher before every launch (sheet: files.hook_config).
@@ -108,7 +112,7 @@ mod tests {
             window_suffix: " - x".into(),
             silent: true,
             block_network: true,
-            features: Features { probe: true, sounds: true, experiments: true },
+            features: Features { probe: true, sounds: true, experiments: true, rename: true },
             assets_dir: r"D:\b\assets".into(),
         };
         let p = dir.path().join("sub/ashenmarine.json");

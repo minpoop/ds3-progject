@@ -17,6 +17,7 @@ pub const LAUNCHER_LOG: &str = "launcher_log";
 pub const SM2_INSTALL: &str = "sm2_install";
 pub const CONVERTED_ASSETS: &str = "converted_assets";
 pub const PROBE_DS3_FILES: &str = "probe_ds3_files";
+pub const ME2_HOOK_LOG: &str = "me2_hook_log";
 pub const SM2_PROBE_OUT: &str = "sm2_probe_out";
 pub const SM2_FOLDER_HINT: &str = "sm2_folder_hint";
 pub const ASSETS_SOUNDS_DIR: &str = "assets_sounds_dir";
@@ -28,6 +29,7 @@ pub const DS3_PREPARE_REPORT: &str = "ds3_prepare_report";
 pub const MSG_OVERRIDE_ITEM: &str = "msg_override_item";
 pub const MSG_OVERRIDE_MANIFEST: &str = "msg_override_manifest";
 pub const DS3_KEY_CACHE: &str = "ds3_key_cache";
+pub const DS3_KEYS_SEEN: &str = "ds3_keys_seen";
 pub const DS3_PROBE_REPORT: &str = "ds3_probe_report";
 pub const DS3_HEADER_CACHE: &str = "ds3_header_cache";
 pub const HARVEST_LOG: &str = "harvest_log";
@@ -36,6 +38,8 @@ pub const SM2_MESH_REPORT: &str = "sm2_mesh_report";
 pub const SM2_MODEL_EXPORT_DIR: &str = "sm2_model_export_dir";
 pub const DS3_MODEL_EXPORT_DIR: &str = "ds3_model_export_dir";
 pub const PARTS_OVERRIDE_DIR: &str = "parts_override_dir";
+pub const RENAME_LOG: &str = "rename_log";
+pub const DS3_HEADER_COPIES: &str = "ds3_header_copies";
 
 pub static FILES: &[FileRule] = &[
     FileRule {
@@ -174,6 +178,15 @@ pub static FILES: &[FileRule] = &[
         milestone: 2,
     },
     FileRule {
+        id: "me2_hook_log",
+        path: "{data}/logs/me2-hook.txt",
+        purpose: "A read-only look at ModEngine2's footprint in the running game: where its file hook and patches should be in the program file and what is there (bytes, where a jump leads), and how often its loose-parameter signatures occur",
+        access: Access::Write,
+        system: "ds3_probe",
+        guarded: false,
+        milestone: 2,
+    },
+    FileRule {
         id: "sm2_probe_out",
         path: "{data}/probe-sm2",
         purpose: "The setup tool's probe report and texture preview pictures (private; made from the player's own install)",
@@ -247,7 +260,7 @@ pub static FILES: &[FileRule] = &[
     },
     FileRule {
         id: "msg_override_item",
-        path: "{data}/mod/msg/ENGLISH/item.msgbnd.dcx",
+        path: "{data}/mod/msg/engus/item.msgbnd.dcx",
         purpose: "Loose copy of the game's item text with the test weapons' names, picked up by ModEngine2 instead of the archived file",
         access: Access::Write,
         system: "item_names",
@@ -267,6 +280,15 @@ pub static FILES: &[FileRule] = &[
         id: "ds3_key_cache",
         path: "{data}/cache/ds3-keys.pem",
         purpose: "Only if the exe does not hold the archive keys as plain text: the public RSA keys the running game has in memory (PEM, DER or key blobs; a number found through a big-number structure only if a real archive proves it), written by the test kit's collector while the game runs so ds3-prepare can use them",
+        access: Access::ReadWrite,
+        system: "item_names",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "ds3_keys_seen",
+        path: "{data}/cache/keys-seen.pem",
+        purpose: "Every public RSA key the collector saw in the running game's memory, whatever it opened (a few dozen, mostly from the system): ds3-probe and ds3-prepare try each one on the archives that no key has opened yet and say which ones turn the first block into a plain block (kit 0.9)",
         access: Access::ReadWrite,
         system: "item_names",
         guarded: false,
@@ -341,6 +363,24 @@ pub static FILES: &[FileRule] = &[
         purpose: "The weapon containers the model swap writes (a copy of the game's container whose model carries the Space Marine 2 shape); ModEngine2 loads them instead of the archived ones; removed again when anything is wrong so a stale model never stays",
         access: Access::Write,
         system: "weapon_look",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "rename_log",
+        path: "{data}/logs/rename.txt",
+        purpose: "What the in-memory rename found and wrote in the running game (addresses, the bytes around each string, results)",
+        access: Access::Write,
+        system: "item_names_live",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "ds3_header_copies",
+        path: "{data}/model-files/ds3/headers",
+        purpose: "Copies of the small table-of-contents files (.bhd) of the archives that could not be opened, and of the public keys the collector saw, for the optional model-files zip: they let the owner of the project see how those archives are laid out (private test kit only)",
+        access: Access::Write,
+        system: "item_names",
         guarded: false,
         milestone: 3,
     },

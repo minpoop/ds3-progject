@@ -124,6 +124,8 @@ fn pick_header<'a>(headers: &'a [PlainHeader], stem: &str, bhd_len: u64, bdt_len
 pub struct ArchiveSlot {
     /// File name without extension, e.g. `Data0`.
     pub name: String,
+    /// The `.bhd` file itself (for [`look_at_bhd`]).
+    pub bhd_path: PathBuf,
     pub bhd_size: u64,
     /// Size of the partner `.bdt`, if there is one.
     pub bdt_size: Option<u64>,
@@ -131,6 +133,71 @@ pub struct ArchiveSlot {
     /// For an archive that could not be opened: what its `.bhd` looks like from the outside (size, first bytes), to tell what
     /// kind of file it is. Empty for an opened archive.
     pub hint: String,
+}
+
+/// How much of the start and the end of a `.bhd` [`look_at_bhd`] keeps.
+pub const LOOK_BYTES: usize = 64;
+/// A `.bhd` up to this size is kept whole by [`look_at_bhd`] (`Data0.bhd` is about 2 KB).
+pub const LOOK_WHOLE_UP_TO: u64 = 4096;
+
+/// What a `.bhd` that no key opened looks like from the outside, and what every key does to its first block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BhdLook {
+    pub size: u64,
+    /// The first and the last bytes of the file.
+    pub head: Vec<u8>,
+    pub tail: Vec<u8>,
+    /// The whole file, when it is small.
+    pub whole: Option<Vec<u8>>,
+    /// How many keys were tried on the first 256 bytes (0 when the file is shorter than a block).
+    pub keys_tried: usize,
+    /// The keys whose public operation turns the first block into a plain block (the result fits 255 bytes: a wrong key does
+    /// that for one block in about 128), with the start of that plain block.
+    pub plain_by: Vec<(String, Vec<u8>)>,
+}
+
+impl BhdLook {
+    /// Does the plain block start with four printable characters (a magic such as `BHD5`)?
+    pub fn readable_start(plain: &[u8]) -> bool {
+        plain.len() >= 4 && plain[..4].iter().all(|b| b.is_ascii_alphanumeric())
+    }
+}
+
+/// Looks at the `.bhd` at `path`: its first and last bytes and, for every key, whether the public operation turns its first
+/// 256-byte block into a plain block. A key that is right for an archive does that for every block, whatever the header
+/// looks like, so this tells "the key is right but the header is laid out differently" from "no key here is the right one".
+pub fn look_at_bhd(path: &Path, keys: &[RsaPublicKey]) -> std::io::Result<BhdLook> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    let size = f.metadata()?.len();
+    let mut head = vec![0u8; LOOK_BYTES.min(size as usize)];
+    f.read_exact(&mut head)?;
+    let tail_len = LOOK_BYTES.min(size as usize);
+    let mut tail = vec![0u8; tail_len];
+    f.seek(SeekFrom::Start(size - tail_len as u64))?;
+    f.read_exact(&mut tail)?;
+    let whole = if size <= LOOK_WHOLE_UP_TO {
+        let mut all = vec![0u8; size as usize];
+        f.seek(SeekFrom::Start(0))?;
+        f.read_exact(&mut all)?;
+        Some(all)
+    } else {
+        None
+    };
+    let mut first = vec![0u8; crate::scan::BLOCK];
+    f.seek(SeekFrom::Start(0))?;
+    let have_block = f.read_exact(&mut first).is_ok();
+    let mut plain_by = Vec::new();
+    let mut keys_tried = 0;
+    if have_block {
+        for key in keys.iter().filter(|k| k.modulus_len() == crate::scan::BLOCK) {
+            keys_tried += 1;
+            if let Ok(plain) = crate::rsa::decrypt_block(key, &first) {
+                plain_by.push((key.fingerprint(), plain.into_iter().take(32).collect()));
+            }
+        }
+    }
+    Ok(BhdLook { size, head, tail, whole, keys_tried, plain_by })
 }
 
 /// What a `.bhd` that could not be opened looks like: whether its size is a whole number of encrypted blocks, and how it starts.
@@ -258,7 +325,7 @@ impl Ds3Install {
                 Err(e) => format!("could not open {stem} ({}/{}): {e}", i + 1, bhds.len()),
             });
             let hint = if archive.is_err() { bhd_hint(bhd, bhd_size) } else { String::new() };
-            slots.push(ArchiveSlot { name: stem, bhd_size, bdt_size, archive, hint });
+            slots.push(ArchiveSlot { name: stem, bhd_path: (*bhd).clone(), bhd_size, bdt_size, archive, hint });
         }
         Ok(Ds3Install { game_dir, exe, keys, slots })
     }

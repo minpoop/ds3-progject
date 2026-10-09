@@ -5,7 +5,8 @@
 //! Without `--install` it is a dry run: the candidates go into the report folder next to the report and nothing is put where
 //! the game would load it. With `--install` the finished containers go to `<mod>/parts/` (ModEngine2 loads them instead of
 //! the archived ones), listed in `ashenmarine-models.json`; the files an earlier run wrote are removed first, so a stale model
-//! never stays when something is wrong. The games' folders are only read.
+//! never stays when something is wrong. With `--remove` nothing is made: the files an earlier `--install` wrote are taken out
+//! again (only the ones the manifest lists), so the game shows its own weapon models. The games' folders are only read.
 use super::{find_step, json_text, keys_step, leaf, name_of, read_valid, safe_relative, shown, stage, write_atomic, Found, MAX_MODEL_FILE};
 use crate::meshprobe::{texture_family, texture_stem};
 use crate::report::{panic_text, Report};
@@ -26,6 +27,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
 pub const MODELS_REPORT_FILE: &str = "ds3-models-report.txt";
+/// The report of `--remove`.
+pub const MODELS_REMOVE_REPORT_FILE: &str = "ds3-models-remove.txt";
 /// The manifest in the mod folder, next to the finished containers.
 pub const MODELS_MANIFEST_FILE: &str = "ashenmarine-models.json";
 
@@ -41,6 +44,8 @@ pub struct ModelsOpts {
     pub mod_dir: PathBuf,
     /// Write the finished containers where the game loads them.
     pub install: bool,
+    /// Take out what an earlier `--install` put there; nothing is made.
+    pub remove: bool,
 }
 
 /// How a run ended.
@@ -54,11 +59,18 @@ pub struct ModelsOutcome {
     pub installed: usize,
     /// Files of an earlier run that were removed.
     pub removed_stale: usize,
+    /// The run only took models out (`--remove`).
+    pub removal_only: bool,
 }
 
 impl ModelsOutcome {
+    /// A trial or install run is done when something was made; a removal is done when nothing went wrong.
     pub fn ok(&self) -> bool {
-        !self.ready.is_empty()
+        if self.removal_only {
+            self.failed.is_empty()
+        } else {
+            !self.ready.is_empty()
+        }
     }
 }
 
@@ -198,6 +210,20 @@ pub fn models(opts: &ModelsOpts) -> ModelsOutcome {
             outcome.failed.push(("start".to_string(), "a folder to write to is inside a game folder".to_string()));
             return outcome;
         }
+    }
+    if opts.remove {
+        outcome.removal_only = true;
+        let report = opts.out.join(MODELS_REMOVE_REPORT_FILE);
+        let mut rep = Report::create(&report);
+        rep.say(format!("Ashen Marine - take the new weapon models out again (version {VERSION})"));
+        rep.say_wrapped("  ", "This deletes the weapon model files that an earlier run of this program put into the mod folder (only the ones listed in ashenmarine-models.json). Dark Souls III then shows its own weapon models again. Nothing else is changed.");
+        outcome.removed_stale = remove_earlier(&mut rep, &opts.mod_dir);
+        if outcome.removed_stale == 0 {
+            rep.say("  There was nothing to remove: no weapon model of this program is in the mod folder.");
+        } else {
+            rep.say_wrapped("  ", &format!("Removed {} file(s). Dark Souls III shows its own weapon models again the next time you press Play.", outcome.removed_stale));
+        }
+        return outcome;
     }
     let report = opts.out.join(MODELS_REPORT_FILE);
     let mut rep = Report::create(&report);

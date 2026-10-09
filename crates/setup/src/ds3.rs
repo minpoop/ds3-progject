@@ -5,7 +5,7 @@
 //! names (Shortsword, Avelyn, Standard Bolt). ModEngine2 loads a loose file from the mod folder instead of the archived
 //! one, so this reads the game's own item text out of the archives (read-only, with `ashen-ds3data`), changes the names
 //! and descriptions of the test weapons in a copy in memory and, only if every check passes, writes that copy as
-//! `<mod>/msg/ENGLISH/item.msgbnd.dcx`.
+//! `<mod>/msg/engus/item.msgbnd.dcx` (the game's own folder for its English text is `engUS`; it asks for it in lower case).
 //!
 //! * `probe` writes a report of what is in the install (key fingerprints, archives, where the interesting files are,
 //!   a dry run of the name change). It writes nothing but the report.
@@ -15,7 +15,7 @@
 //! The game's folder is only ever read. Reports show key fingerprints, never keys, and name paths relative to the game
 //! folder or the program's folder, so they never carry the player's user name.
 mod models;
-pub use models::{models, ModelsOpts, ModelsOutcome, MODELS_MANIFEST_FILE, MODELS_REPORT_FILE};
+pub use models::{models, ModelsOpts, ModelsOutcome, MODELS_MANIFEST_FILE, MODELS_REMOVE_REPORT_FILE, MODELS_REPORT_FILE};
 use crate::report::{panic_text, Report};
 use crate::{find_ds3, human};
 use anyhow::{anyhow, bail, Result};
@@ -28,7 +28,7 @@ use ashen_ds3data::discover::{self, Bundle, Limits, Search};
 use ashen_ds3data::flver::Flver;
 use ashen_ds3data::fmg::{FmgError, FmgFile};
 use ashen_ds3data::hash::path_hash;
-use ashen_ds3data::install::{exe_path, find_game_dir, Ds3Install, ExeInfo, PlainHeader};
+use ashen_ds3data::install::{exe_path, find_game_dir, look_at_bhd, BhdLook, Ds3Install, ExeInfo, PlainHeader};
 use ashen_ds3data::keys::{load_pem_file, RsaPublicKey};
 use ashen_ds3data::msgpatch::{patch_item_msgbnd_detailed, ItemEdit, PatchError};
 use ashen_ds3data::tpf::Tpf;
@@ -41,45 +41,61 @@ use std::path::{Path, PathBuf};
 /// The report both commands write.
 pub const REPORT_FILE: &str = "ds3-report.txt";
 /// The override, relative to the mod folder (always with `/`), and the manifest next to it.
-pub const OVERRIDE_REL: &str = "msg/ENGLISH/item.msgbnd.dcx";
+pub const OVERRIDE_REL: &str = "msg/engus/item.msgbnd.dcx";
 pub const MANIFEST_FILE: &str = "ashenmarine-msg.json";
-/// Where the archive path of the English item text is.
-pub const ENGLISH_ITEM_PATH: &str = "/msg/ENGLISH/item.msgbnd.dcx";
+/// Where the archive path of the English item text is. The folder is `engUS`: kit 0.8 looked for `ENGLISH` and found
+/// nothing, while the game itself (seen in the hook log) asks ModEngine2 for `msg\engus\item_dlc2.msgbnd.dcx`, `ngword`,
+/// `menu_dlc2` and `msg\na\sellregion`. (The hash of a path ignores the case.)
+pub const ENGLISH_ITEM_PATH: &str = "/msg/engUS/item.msgbnd.dcx";
+/// The folder of the English text, as the report calls it.
+pub const ENGLISH_FOLDER: &str = "engUS";
 
-/// The language folders of `msg` that are looked for (the real names are not certain; the path table finds out).
+/// The language folders of `msg` that are looked for (the PC build's names; the path table shows which exist).
 pub const LANGUAGES: [&str; 16] = [
-    "ENGLISH",
-    "FRENCH",
-    "GERMAN",
-    "ITALIAN",
-    "JAPANESE",
-    "KOREAN",
-    "POLISH",
-    "PORTUGUESE",
-    "RUSSIAN",
-    "SPANISH",
-    "LATAM_SPANISH",
-    "TCHINESE",
-    "SCHINESE",
-    "THAI",
-    "TURKISH",
-    "ARABIC",
+    "engUS", "engGB", "frafr", "deude", "itait", "jpnjp", "korkr", "polpl", "porbr", "rusru", "spaes", "spaar", "zhocn", "zhotw", "thath", "turtr",
 ];
+/// A language folder of `msg` in plain words.
+pub fn language_name(folder: &str) -> &str {
+    match folder {
+        "engUS" => "English",
+        "engGB" => "English (UK)",
+        "frafr" => "French",
+        "deude" => "German",
+        "itait" => "Italian",
+        "jpnjp" => "Japanese",
+        "korkr" => "Korean",
+        "polpl" => "Polish",
+        "porbr" => "Portuguese (Brazil)",
+        "rusru" => "Russian",
+        "spaes" => "Spanish",
+        "spaar" => "Spanish (Latin America)",
+        "zhocn" => "Chinese (simplified)",
+        "zhotw" => "Chinese (traditional)",
+        "thath" => "Thai",
+        "turtr" => "Turkish",
+        other => other,
+    }
+}
 /// Other names the English item text might have, tried when the expected one is not in the archives.
 const ALTERNATIVE_ITEM_PATHS: [&str; 9] = [
-    "/msg/engUS/item.msgbnd.dcx",
-    "/msg/engGB/item.msgbnd.dcx",
+    "/msg/ENGLISH/item.msgbnd.dcx",
     "/msg/ENG/item.msgbnd.dcx",
     "/msg/EN/item.msgbnd.dcx",
-    "/msg/ENGLISH/item.msgbnd",
-    "/msg/ENGLISH/Item.msgbnd.dcx.bak",
+    "/msg/na/item.msgbnd.dcx",
+    "/msg/engUS/item.msgbnd",
+    "/msg/engUS/item.msgbnd.dcx.bak",
     "/msg/item.msgbnd.dcx",
-    "/msg/ENGLISH/item_patch.msgbnd.dcx",
-    "/msg/ENGLISH/itemname.msgbnd.dcx",
+    "/msg/engUS/item_patch.msgbnd.dcx",
+    "/msg/engUS/itemname.msgbnd.dcx",
 ];
-const EXTRA_PATHS: [&str; 13] = [
-    "/msg/ENGLISH/item_dlc1.msgbnd.dcx",
-    "/msg/ENGLISH/item_dlc2.msgbnd.dcx",
+const EXTRA_PATHS: [&str; 17] = [
+    // the text files the game itself was seen asking for (hook log of kit 0.8): they show in which archive the text lives
+    "/msg/engUS/item_dlc1.msgbnd.dcx",
+    "/msg/engUS/item_dlc2.msgbnd.dcx",
+    "/msg/engUS/menu_dlc1.msgbnd.dcx",
+    "/msg/engUS/menu_dlc2.msgbnd.dcx",
+    "/msg/engUS/ngword.msgbnd.dcx",
+    "/msg/na/sellregion.msgbnd.dcx",
     "/regulation.bin",
     "/param/gameparam/gameparam.parambnd.dcx",
     "/param/gameparam/gameparam_dlc1.parambnd.dcx",
@@ -337,6 +353,22 @@ fn keys_step(rep: &mut Report, root: &Path, keys_arg: Option<&Path>, data: &Path
     } else {
         rep.detail("  keys from cache\\ds3-keys.pem: no such file");
     }
+    // everything the running game showed (kit 0.9): the archives that no real key has opened are tried with these, too
+    let seen = data.join("cache").join("keys-seen.pem");
+    if seen.is_file() {
+        match load_pem_file(&seen) {
+            Ok(keys) => {
+                let before = extra.len();
+                for k in keys {
+                    if !extra.contains(&k) && !exe.keys.contains(&k) {
+                        extra.push(k);
+                    }
+                }
+                rep.say(format!("  keys the running game showed (cache\\keys-seen.pem): {} more", extra.len() - before));
+            }
+            Err(e) => rep.say_wrapped("  ", &format!("PROBLEM: cache\\keys-seen.pem cannot be used: {e}")),
+        }
+    }
     let headers = PlainHeader::load_dir(&data.join("cache").join("bhd5"));
     if headers.is_empty() {
         rep.say("  tables of contents saved from the running game (cache\\bhd5): none yet");
@@ -410,6 +442,7 @@ fn archives_step(rep: &mut Report, src: Sources) -> Result<Ds3Install> {
         let shown: Vec<String> = files.iter().take(60).map(|(name, size)| if *size == 0 { format!("{name}/") } else { format!("{name} ({})", human(*size)) }).collect();
         rep.detail_wrapped("  ", &format!("files in the {} folder: {}{}", name_of(install.game_dir()), shown.join(", "), if files.len() > 60 { ", ..." } else { "" }));
     }
+    describe_unopened(rep, &install);
     let opened = install.open_archives().count();
     if opened == 0 {
         let why = no_archive_opened(&install, saved);
@@ -422,6 +455,49 @@ fn archives_step(rep: &mut Report, src: Sources) -> Result<Ds3Install> {
         rep.say_wrapped("  ", &format!("NOTE: {} of {} archives could not be opened; files inside them cannot be found.", install.archives().len() - opened, install.archives().len()));
     }
     Ok(install)
+}
+
+/// Hex in lines of 32 bytes, each with its offset.
+fn hex_lines(bytes: &[u8]) -> Vec<String> {
+    bytes.chunks(32).enumerate().map(|(i, c)| format!("{:04x}: {}", i * 32, ashen_ds3data::hex(c))).collect()
+}
+
+/// What an archive that no key opened looks like from the outside: its first and last bytes (the whole file when it is small),
+/// and which of the keys that are known turn its first block into a plain block. The rules that hold for the other archives
+/// may not hold for these (`Data0.bhd` is not a whole number of encrypted blocks; the downloadable content may be laid out
+/// differently), so the report carries what is needed to work out the rules.
+fn describe_unopened(rep: &mut Report, install: &Ds3Install) {
+    for slot in install.archives().iter().filter(|s| s.archive.is_err()) {
+        let look = match look_at_bhd(&slot.bhd_path, install.keys()) {
+            Ok(look) => look,
+            Err(e) => {
+                rep.detail(format!("  {}: its .bhd cannot be looked at ({e})", slot.name));
+                continue;
+            }
+        };
+        rep.detail(format!("  {}: {} bytes; the first {}: {}", slot.name, look.size, look.head.len(), ashen_ds3data::hex(&look.head)));
+        rep.detail(format!("  {}: the last {}: {}", slot.name, look.tail.len(), ashen_ds3data::hex(&look.tail)));
+        if let Some(whole) = &look.whole {
+            rep.detail(format!("  {}: the whole file, 32 bytes to a line:", slot.name));
+            for line in hex_lines(whole) {
+                rep.detail(format!("      {line}"));
+            }
+        }
+        if look.keys_tried == 0 {
+            rep.say(format!("  {:<8} too short for a key to be tried on it", slot.name));
+        } else if look.plain_by.is_empty() {
+            rep.say(format!("  {:<8} {} keys were tried on its first block: none turns it into a plain block (so none of them is its key, or it is not stored in blocks)", slot.name, look.keys_tried));
+        } else {
+            for (fingerprint, plain) in &look.plain_by {
+                let readable = if BhdLook::readable_start(plain) { format!(" = \"{}\"", String::from_utf8_lossy(&plain[..4])) } else { String::new() };
+                rep.say(format!(
+                    "  {:<8} key {fingerprint} turns its first block into a plain block (one wrong key in about 128 does that by chance); it starts {}{readable}",
+                    slot.name,
+                    ashen_ds3data::hex(&plain[..plain.len().min(16)])
+                ));
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ reading files out of the archives
@@ -882,7 +958,7 @@ fn find_item_text_by_content(rep: &mut Report, install: &Ds3Install, search: &Se
                     "The English item text is the container in {} with the path hash {:08x}{}.",
                     b.archive,
                     b.hash,
-                    if b.hash == known { " (the hash of msg/ENGLISH/item.msgbnd.dcx)".to_string() } else { format!(", which is NOT the hash of msg/ENGLISH/item.msgbnd.dcx ({known:08x}); it was recognised by its text (\"Shortsword\", \"Avelyn\" and \"Standard Bolt\" at the ids the mod changes)") }
+                    if b.hash == known { " (the hash of msg/engUS/item.msgbnd.dcx)".to_string() } else { format!(", which is NOT the hash of msg/engUS/item.msgbnd.dcx ({known:08x}); it was recognised by its text (\"Shortsword\", \"Avelyn\" and \"Standard Bolt\" at the ids the mod changes)") }
                 ),
             );
             return Some(found);
@@ -945,7 +1021,7 @@ fn item_text_probe(rep: &mut Report, install: &Ds3Install) {
             continue;
         }
         any = true;
-        let english = lang == "ENGLISH";
+        let english = lang == ENGLISH_FOLDER;
         let mut out = Out { rep: &mut *rep, loud: english };
         out.line(format!("  {path}:"));
         match read_valid(install, &path, MAX_MSG_FILE) {
@@ -1169,6 +1245,48 @@ fn copy_weapon_containers(rep: &mut Report, install: &Ds3Install, out: &Path) ->
     copied
 }
 
+/// A table of contents (`.bhd`) bigger than this is not copied (the real ones that no key opens are 2 KB to 250 KB).
+const MAX_HEADER_COPY: u64 = 1 << 20;
+
+/// Copies the small `.bhd` of every archive that could not be opened, and the public keys the collector saw, into
+/// `out/headers`: what is needed to work out how those archives are laid out. A `.bhd` is only the index of an archive
+/// (hashes, sizes, offsets), never its content. Returns how many files were copied.
+fn copy_unopened_headers(rep: &mut Report, install: &Ds3Install, data: &Path, out: &Path) -> usize {
+    let dir = out.join("headers");
+    let mut copied = 0;
+    let mut put = |rep: &mut Report, from: &Path, name: String| {
+        match std::fs::read(from) {
+            Err(e) => rep.say(format!("  {name}: not copied - cannot be read ({e})")),
+            Ok(bytes) => match std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(&name), &bytes)) {
+                Err(e) => rep.say(format!("  {name}: not copied - cannot write it ({e})")),
+                Ok(()) => {
+                    copied += 1;
+                    rep.say(format!("  {name:<34} {:>10}", human(bytes.len() as u64)));
+                }
+            },
+        }
+    };
+    let unopened: Vec<&ashen_ds3data::install::ArchiveSlot> = install.archives().iter().filter(|s| s.archive.is_err()).collect();
+    if unopened.is_empty() {
+        rep.say("  every archive could be opened, so there is nothing to copy");
+        return 0;
+    }
+    for slot in unopened {
+        if slot.bhd_size > MAX_HEADER_COPY {
+            rep.say(format!("  {}.bhd: not copied - it is {}", slot.name, human(slot.bhd_size)));
+            continue;
+        }
+        put(rep, &slot.bhd_path, format!("{}.bhd", slot.name));
+    }
+    for name in ["ds3-keys.pem", "keys-seen.pem"] {
+        let p = data.join("cache").join(name);
+        if p.is_file() {
+            put(rep, &p, name.to_string());
+        }
+    }
+    copied
+}
+
 /// `ds3-export-models`: OPTIONAL. Copies the five weapon containers the model swap will change into a folder so the player
 /// can choose to send them. Returns true when at least one was copied. The game is only read; nothing is uploaded.
 pub fn export_models(opts: &ExportOpts) -> bool {
@@ -1185,13 +1303,15 @@ pub fn export_models(opts: &ExportOpts) -> bool {
     let report = export_report_path(&opts.out);
     let mut rep = Report::create(&report);
     rep.say(format!("Ashen Marine - copy the Dark Souls III weapon model files (version {VERSION})"));
-    rep.say_wrapped("  ", "This READS five weapon files of your Dark Souls III (the Shortsword and the Avelyn, and the left-hand and related versions the mod may change) and writes plain copies of them into a folder next to this program. Nothing is uploaded and nothing in the game is changed. The copies are only for you to send me, if you want to, so that I can build the model converter.");
+    rep.say_wrapped("  ", "This READS five weapon files of your Dark Souls III (the Shortsword and the Avelyn, and the left-hand and related versions the mod may change) and writes plain copies of them into a folder next to this program. It also copies the small table-of-contents files (.bhd, a few KB to a few hundred KB, only the index of an archive) of the archives this program could not open, and the public keys it saw in the running game. Nothing is uploaded and nothing in the game is changed. The copies are only for you to send me, if you want to, so that I can build the model converter and work out how those archives are laid out.");
     rep.say_wrapped("  ", &format!("The copies and a list of them go to:  {}", shown(&opts.out, opts.out.parent().unwrap_or(&opts.out))));
-    let Ok(root) = stage(&mut rep, "1/4 Finding Dark Souls III", |rep| find_step(rep, opts.ds3.as_deref())) else { return finish_export(rep, 0) };
-    let Ok(sources) = stage(&mut rep, "2/4 The program file and the archive keys", |rep| keys_step(rep, &root, opts.keys.as_deref(), &opts.data)) else { return finish_export(rep, 0) };
-    let Ok(install) = stage(&mut rep, "3/4 The game archives", |rep| archives_step(rep, sources)) else { return finish_export(rep, 0) };
-    let copied = stage(&mut rep, "4/4 Copying the weapon files", |rep| Ok(copy_weapon_containers(rep, &install, &opts.out))).unwrap_or(0);
-    finish_export(rep, copied)
+    let Ok(root) = stage(&mut rep, "1/5 Finding Dark Souls III", |rep| find_step(rep, opts.ds3.as_deref())) else { return finish_export(rep, 0) };
+    let Ok(sources) = stage(&mut rep, "2/5 The program file and the archive keys", |rep| keys_step(rep, &root, opts.keys.as_deref(), &opts.data)) else { return finish_export(rep, 0) };
+    let Ok(install) = stage(&mut rep, "3/5 The game archives", |rep| archives_step(rep, sources)) else { return finish_export(rep, 0) };
+    let copied = stage(&mut rep, "4/5 Copying the weapon files", |rep| Ok(copy_weapon_containers(rep, &install, &opts.out))).unwrap_or(0);
+    // the small tables of contents that no key opened, and the public keys seen: they show how those archives are laid out
+    let headers = stage(&mut rep, "5/5 Copying the tables of contents of the archives that could not be opened (small index files, no content)", |rep| Ok(copy_unopened_headers(rep, &install, &opts.data, &opts.out))).unwrap_or(0);
+    finish_export(rep, copied + headers)
 }
 
 fn finish_export(mut rep: Report, copied: usize) -> bool {
@@ -1219,7 +1339,7 @@ fn give_up(mut rep: Report, mut outcome: Outcome, mod_dir: &Path, reason: String
     outcome
 }
 
-/// `ds3-prepare`: reads the item text, and only if every check passes writes `<mod>/msg/ENGLISH/item.msgbnd.dcx` and
+/// `ds3-prepare`: reads the item text, and only if every check passes writes `<mod>/msg/engus/item.msgbnd.dcx` and
 /// `<mod>/ashenmarine-msg.json`. On any problem nothing new is written and an override of an earlier run is removed.
 pub fn prepare(opts: &PrepareOpts) -> Outcome {
     let mut outcome = Outcome::default();
@@ -1298,14 +1418,14 @@ struct Plan {
 /// Stage 4: finds the English item text, and only returns a plan if the dry run passed.
 fn plan_step(rep: &mut Report, install: &Ds3Install) -> Result<Plan> {
     let found = if install.lookup(ENGLISH_ITEM_PATH).is_empty() {
-        rep.say_wrapped("  ", &format!("The English item text is not in the archives under the name msg/ENGLISH/item.msgbnd.dcx (no archive has a file whose path hashes to {:08x}).", path_hash(ENGLISH_ITEM_PATH)));
+        rep.say_wrapped("  ", &format!("The English item text is not in the archives under the name msg/engUS/item.msgbnd.dcx (no archive has a file whose path hashes to {:08x}).", path_hash(ENGLISH_ITEM_PATH)));
         let search = bundle_search(rep, install);
         match find_item_text_by_content(rep, install, &search) {
             Some(found) => found,
             None => {
                 let others: Vec<&str> = LANGUAGES.iter().skip(1).copied().filter(|l| !install.lookup(&format!("/msg/{l}/item.msgbnd.dcx")).is_empty()).collect();
                 if !others.is_empty() {
-                    let list: Vec<String> = others.iter().map(|l| l.to_lowercase()).collect();
+                    let list: Vec<&str> = others.iter().map(|l| language_name(l)).collect();
                     bail!("the item text was found only for {} but not for English, and this program only changes the English text. Is the game set to another language? Run ds3-probe and send me its report", list.join(", "));
                 }
                 let unopened = install.archives().iter().filter(|s| s.archive.is_err()).map(|s| s.name.clone()).collect::<Vec<_>>();
@@ -1374,10 +1494,11 @@ mod tests {
         let edits = item_edits();
         assert_eq!(edits.len(), 3);
         assert_eq!((edits[1].id, edits[1].expect_name, edits[1].new_name, edits[1].short_text, edits[1].long_text), (14_090_000, "Avelyn", "Bolt Pistol", Some(EDITS[1].short), Some(EDITS[1].long)));
-        assert!(LANGUAGES.len() == 16 && LANGUAGES[0] == "ENGLISH" && ENGLISH_ITEM_PATH == "/msg/ENGLISH/item.msgbnd.dcx");
+        assert!(LANGUAGES.len() == 16 && LANGUAGES[0] == ENGLISH_FOLDER && ENGLISH_FOLDER == "engUS" && ENGLISH_ITEM_PATH == "/msg/engUS/item.msgbnd.dcx");
         // all the paths of the path table hash to something (and the two item paths used for the override agree)
-        assert_eq!(path_hash("/msg/ENGLISH/item.msgbnd.dcx"), path_hash(ENGLISH_ITEM_PATH));
-        assert_eq!(OVERRIDE_REL, "msg/ENGLISH/item.msgbnd.dcx");
+        assert_eq!(path_hash("/msg/engus/item.msgbnd.dcx"), path_hash(ENGLISH_ITEM_PATH), "the hash ignores the case: the game asks for engus, the archive path says engUS");
+        assert_eq!(OVERRIDE_REL, "msg/engus/item.msgbnd.dcx", "the override is named the way the game asks for it");
+        assert_ne!(path_hash("/msg/ENGLISH/item.msgbnd.dcx"), path_hash(ENGLISH_ITEM_PATH), "kit 0.8's guess was a different path");
     }
 
     #[test]
@@ -1391,15 +1512,15 @@ mod tests {
         assert_eq!(v["source"]["sha256_of_decoded_original"].as_str().unwrap().len(), 64);
         assert_eq!(v["edits"][0], serde_json::json!({"id": 2000000, "old": "Shortsword", "new": "Chainsword"}));
         assert_eq!(v["edits"][1]["old"], "Standard \"Bolt\"");
-        assert_eq!(v["written"], "msg/ENGLISH/item.msgbnd.dcx");
+        assert_eq!(v["written"], "msg/engus/item.msgbnd.dcx");
         assert!(text.starts_with("{\"format\":1,\"tool\":\"ashenmarine-setup "), "keys in the documented order: {text}");
         assert!(text.find("\"source\"").unwrap() < text.find("\"edits\"").unwrap() && text.find("\"edits\"").unwrap() < text.find("\"written\"").unwrap());
     }
 
     #[test]
     fn manifest_paths_must_stay_below_the_mod_folder() {
-        assert_eq!(safe_relative("msg/ENGLISH/item.msgbnd.dcx"), Some(vec!["msg", "ENGLISH", "item.msgbnd.dcx"]));
-        assert_eq!(safe_relative("msg\\ENGLISH\\item.msgbnd.dcx"), Some(vec!["msg", "ENGLISH", "item.msgbnd.dcx"]));
+        assert_eq!(safe_relative("msg/engus/item.msgbnd.dcx"), Some(vec!["msg", "engus", "item.msgbnd.dcx"]));
+        assert_eq!(safe_relative("msg\\engUS\\item.msgbnd.dcx"), Some(vec!["msg", "engUS", "item.msgbnd.dcx"]));
         for bad in ["", "/etc/passwd", "\\windows\\x", "../x", "a/../../x", "a//b", "./a", "C:\\x", "a/b:c", "a/", ".."] {
             assert_eq!(safe_relative(bad), None, "{bad:?}");
         }
@@ -1436,7 +1557,7 @@ mod tests {
     fn a_stale_override_is_removed_only_when_the_manifest_lists_it() {
         let t = tempfile::tempdir().unwrap();
         let mod_dir = t.path().join("mod");
-        let override_path = mod_dir.join("msg").join("ENGLISH").join("item.msgbnd.dcx");
+        let override_path = mod_dir.join("msg").join("engus").join("item.msgbnd.dcx");
         let mut rep = Report::create(&t.path().join("r.txt"));
         // nothing there: fine
         assert!(remove_stale_override(&mut rep, &mod_dir));

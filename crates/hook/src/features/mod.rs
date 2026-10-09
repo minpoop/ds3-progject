@@ -5,8 +5,10 @@ mod equip;
 mod gametask;
 mod harvest;
 mod input;
+mod me2check;
 mod memscan;
 mod probe;
+mod rename;
 mod sfx;
 mod version;
 
@@ -24,10 +26,15 @@ pub fn start() {
         spawn(&st.logger, "probe", probe_thread);
         st.logger.log("features: the collector for the archive keys and tables of contents is on (private test kit)");
         spawn(&st.logger, "collector", harvest_thread);
+        spawn(&st.logger, "me2 check", me2check_thread);
     }
     if st.cfg.features.sounds {
         st.logger.log("features: Space Marine 2 sounds are on");
         spawn(&st.logger, "sounds", sfx_thread);
+    }
+    if st.cfg.features.rename {
+        st.logger.log("features: the in-memory rename of the test weapons is on (private test kit)");
+        spawn(&st.logger, "rename", rename_thread);
     }
 }
 
@@ -60,6 +67,14 @@ unsafe extern "system" fn probe_thread(_: *mut c_void) -> u32 {
 
 unsafe extern "system" fn harvest_thread(_: *mut c_void) -> u32 {
     guarded("collector", harvest::thread_body)
+}
+
+unsafe extern "system" fn me2check_thread(_: *mut c_void) -> u32 {
+    guarded("me2 check", me2check::thread_body)
+}
+
+unsafe extern "system" fn rename_thread(_: *mut c_void) -> u32 {
+    guarded("rename", rename::thread_body)
 }
 
 unsafe extern "system" fn sfx_thread(_: *mut c_void) -> u32 {

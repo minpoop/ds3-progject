@@ -14,7 +14,7 @@
 # throwaway test keys among junk, three encrypted archives with made-up item text and weapon model containers):
 #
 #   H  ds3-probe: report with key fingerprints (no keys), archives, path table, DCX/BND4 listing and a dry run
-#   I  ds3-prepare: writes mod/msg/ENGLISH/item.msgbnd.dcx (a DCX holding the new names) and ashenmarine-msg.json
+#   I  ds3-prepare: writes mod/msg/engus/item.msgbnd.dcx (a DCX holding the new names) and ashenmarine-msg.json
 #   J  a game that renamed the item (ds3-prepare after I): exit code 2, nothing written, the override of I is removed
 #   K  no archive key in the program file: exit code 2 and the plain-words message; the same install with --keys: exit code 0
 #   L  ds3-prepare started from its own folder, game named in game-folder.txt (the double-click way)
@@ -193,7 +193,7 @@ assert m["format"] == 1 and m["tool"].startswith("ashenmarine-setup "), m
 assert list(m["source"]) == ["archive", "sha256_of_decoded_original"], m["source"]
 assert m["source"]["archive"] == "Data0.bhd" and len(m["source"]["sha256_of_decoded_original"]) == 64, m["source"]
 assert [(e["id"], e["old"], e["new"]) for e in m["edits"]] == [(2000000, "Shortsword", "Chainsword"), (14090000, "Avelyn", "Bolt Pistol"), (404000, "Standard Bolt", "Bolt Rounds")], m["edits"]
-assert m["written"] == "msg/ENGLISH/item.msgbnd.dcx" and os.path.isfile(os.path.join(mod, m["written"])), m["written"]
+assert m["written"] == "msg/engus/item.msgbnd.dcx" and os.path.isfile(os.path.join(mod, m["written"])), m["written"]
 PY
 }
 # ds3_override_ok <file>: a DCX (zlib, checksum verified here by python) holding a BND4 with the new names and without the old ones
@@ -221,7 +221,7 @@ sed 's/^/    /' "$D3/h.out" | head -40
 check "H exit code 0" '[ "$(cat "$D3/h.rc")" = "0" ]'
 check "H the install is byte-identical afterwards" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
 check "H the report lists the keys by fingerprint and the archives" 'grep -q "archive keys found in the program file: 2 (87febfc8, b2969406)" "$D3/out-h/ds3-report.txt" && grep -q "key 87febfc8" "$D3/out-h/ds3-report.txt" && grep -q "key b2969406" "$D3/out-h/ds3-report.txt"'
-check "H the report has the path table with the item text" 'grep -q "^  /msg/ENGLISH/item.msgbnd.dcx .*hash 50b424bf" "$D3/out-h/ds3-report.txt" && grep -q "9 of 50 paths exist" "$D3/out-h/ds3-report.txt"'
+check "H the report has the path table with the item text" 'grep -q "^  /msg/engus/item.msgbnd.dcx .*hash 624f014f" "$D3/out-h/ds3-report.txt" && grep -q "9 of 54 paths exist" "$D3/out-h/ds3-report.txt"'
 check "H the report lists the item text container and the texts at the test ids" 'grep -q "DCX variant DCX_DFLT_10000_44_9" "$D3/out-h/ds3-report.txt" && grep -q "id 2000000: WeaponName.fmg \"Shortsword\"" "$D3/out-h/ds3-report.txt"'
 check "H the dry run passed" 'grep -q "\[ok\] the edits: 3 edits" "$D3/out-h/ds3-report.txt" && ! grep -q "FAILED\|PROBLEM\|CRASHED" "$D3/out-h/ds3-report.txt"'
 check "H the report lists the weapon model containers" 'grep -q "wp_a_0200.flver" "$D3/out-h/ds3-report.txt" && grep -q "wp_a_1409.hkx" "$D3/out-h/ds3-report.txt"'
@@ -234,17 +234,17 @@ wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" i ds3-prepare --ds3 "$(win
 sed 's/^/    /' "$D3/i.out" | tail -22
 check "I exit code 0" '[ "$(cat "$D3/i.rc")" = "0" ]'
 check "I the install is byte-identical afterwards" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
-check "I exactly the override and the manifest are in the mod folder" '[ "$(find "$D3/mod" -type f | wc -l)" = "2" ] && [ -f "$D3/mod/msg/ENGLISH/item.msgbnd.dcx" ] && [ -f "$D3/mod/ashenmarine-msg.json" ]'
+check "I exactly the override and the manifest are in the mod folder" '[ "$(find "$D3/mod" -type f | wc -l)" = "2" ] && [ -f "$D3/mod/msg/engus/item.msgbnd.dcx" ] && [ -f "$D3/mod/ashenmarine-msg.json" ]'
 check "I the manifest has the documented shape" 'ds3_manifest_ok "$D3/mod"'
-check "I the override is a DCX holding the new names and not the old ones" 'ds3_override_ok "$D3/mod/msg/ENGLISH/item.msgbnd.dcx"'
+check "I the override is a DCX holding the new names and not the old ones" 'ds3_override_ok "$D3/mod/msg/engus/item.msgbnd.dcx"'
 check "I the console says it only reads the game" 'grep -q "only READS your Dark Souls III files" "$D3/i.out"'
-check "I the report is in the report folder" 'grep -q "wrote msg.ENGLISH.item.msgbnd.dcx" "$D3/out-i/ds3-report.txt"'
+check "I the report is in the report folder" 'grep -q "wrote msg.engus.item.msgbnd.dcx" "$D3/out-i/ds3-report.txt"'
 
 echo; echo "== J: the game renamed an item -> exit code 2, nothing written, the override of I is removed =="
 wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" j ds3-prepare --ds3 "$(winpath "$D3/renamed/DARK SOULS III")" --mod "$(winpath "$D3/mod")" --out "$(winpath "$D3/out-j")"
 sed 's/^/    /' "$D3/j.out" | tail -14
 check "J exit code 2" '[ "$(cat "$D3/j.rc")" = "2" ]'
-check "J the stale override and its manifest are gone" '[ ! -e "$D3/mod/msg/ENGLISH/item.msgbnd.dcx" ] && [ ! -e "$D3/mod/ashenmarine-msg.json" ]'
+check "J the stale override and its manifest are gone" '[ ! -e "$D3/mod/msg/engus/item.msgbnd.dcx" ] && [ ! -e "$D3/mod/ashenmarine-msg.json" ]'
 check "J says why in plain words" 'flat_out "$D3/j.out" | grep -q "no longer has \"Shortsword\" at id 2000000"'
 check "J says nothing was changed" 'flat_out "$D3/j.out" | grep -q "Nothing was changed: the item names in the game stay as Dark Souls III has them"'
 check "J the renamed install is untouched" '[ "$(treehash "$D3/renamed/DARK SOULS III")" = "$D3_RENAMED_BEFORE" ]'
@@ -257,7 +257,7 @@ check "K says what to do" 'flat_out "$D3/k.out" | grep -q "has not collected wha
 check "K nothing was written (no mod folder at all)" '[ ! -e "$D3/mod-k" ]'
 wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" k2 ds3-prepare --ds3 "$(winpath "$D3/no-key/DARK SOULS III")" --keys "$(winpath "$D3/keys.pem")" --mod "$(winpath "$D3/mod-k")" --out "$(winpath "$D3/out-k2")"
 check "K2 with --keys: exit code 0" '[ "$(cat "$D3/k2.rc")" = "0" ]'
-check "K2 with --keys: the override is right" 'ds3_manifest_ok "$D3/mod-k" && ds3_override_ok "$D3/mod-k/msg/ENGLISH/item.msgbnd.dcx"'
+check "K2 with --keys: the override is right" 'ds3_manifest_ok "$D3/mod-k" && ds3_override_ok "$D3/mod-k/msg/engus/item.msgbnd.dcx"'
 check "K2 the report names the key file and not the keys" 'grep -q "keys from the key file keys.pem: 2 (87febfc8, b2969406)" "$D3/out-k2/ds3-report.txt" && ! grep -q "BEGIN RSA" "$D3/out-k2/ds3-report.txt"'
 check "K the install without keys in its program file is untouched" '[ "$(treehash "$D3/no-key/DARK SOULS III")" = "$D3_NOKEY_BEFORE" ]'
 
@@ -268,10 +268,10 @@ printf '"%s"\r\nthis second line is ignored\r\n' "$(winpath "$GAME")" > "$D3/kit
 (cd "$D3/cwd-l" && WINEDEBUG=-all timeout 180 xvfb-run -a "$WINE" "$(winpath "$D3/kit-l/ashenmarine-setup.exe")" ds3-prepare > "$D3/l.out" 2>&1; echo $? > "$D3/l.rc")
 sed 's/^/    /' "$D3/l.out" | tail -8
 check "L exit code 0" '[ "$(cat "$D3/l.rc")" = "0" ]'
-check "L the override, the manifest and the report are written next to the program" 'ds3_manifest_ok "$D3/kit-l/mod" && ds3_override_ok "$D3/kit-l/mod/msg/ENGLISH/item.msgbnd.dcx" && [ -f "$D3/kit-l/ds3-prepare/ds3-report.txt" ]'
+check "L the override, the manifest and the report are written next to the program" 'ds3_manifest_ok "$D3/kit-l/mod" && ds3_override_ok "$D3/kit-l/mod/msg/engus/item.msgbnd.dcx" && [ -f "$D3/kit-l/ds3-prepare/ds3-report.txt" ]'
 check "L nothing is written in the working folder" '[ -z "$(ls -A "$D3/cwd-l")" ]'
 check "L the install is still byte-identical" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
-check "L the override is the same as the one K2 made from the same archives" 'cmp -s "$D3/kit-l/mod/msg/ENGLISH/item.msgbnd.dcx" "$D3/mod-k/msg/ENGLISH/item.msgbnd.dcx"'
+check "L the override is the same as the one K2 made from the same archives" 'cmp -s "$D3/kit-l/mod/msg/engus/item.msgbnd.dcx" "$D3/mod-k/msg/engus/item.msgbnd.dcx"'
 
 echo; echo "== M: a mod folder inside the game folder is refused =="
 wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" m ds3-prepare --ds3 "$(winpath "$GAME")" --mod "$(winpath "$GAME/Game/mod")" --out "$(winpath "$D3/out-m")"
@@ -296,8 +296,8 @@ wine_ds3 "$(winpath "$D3/kit-p/ashenmarine-setup.exe")" p ds3-prepare --ds3 "$(w
 sed 's/^/    /' "$D3/p.out" | sed -n 8,24p
 check "P exit code 0" '[ "$(cat "$D3/p.rc")" = "0" ]'
 check "P the report says where the archives' tables came from" 'grep -q "tables of contents saved from the running game (cache.bhd5): 3 (DLC1.bin, Data0.bin, Data1.bin)" "$D3/out-p/ds3-report.txt" && grep -q "header saved from the running game (Data0.bin)" "$D3/out-p/ds3-report.txt" && ! grep -q "PROBLEM" "$D3/out-p/ds3-report.txt"'
-check "P the override is right" 'ds3_manifest_ok "$D3/mod-p" && ds3_override_ok "$D3/mod-p/msg/ENGLISH/item.msgbnd.dcx"'
-check "P it is the same file the keys gave" 'cmp -s "$D3/mod-p/msg/ENGLISH/item.msgbnd.dcx" "$D3/mod-k/msg/ENGLISH/item.msgbnd.dcx"'
+check "P the override is right" 'ds3_manifest_ok "$D3/mod-p" && ds3_override_ok "$D3/mod-p/msg/engus/item.msgbnd.dcx"'
+check "P it is the same file the keys gave" 'cmp -s "$D3/mod-p/msg/engus/item.msgbnd.dcx" "$D3/mod-k/msg/engus/item.msgbnd.dcx"'
 check "P the install is untouched" '[ "$(treehash "$D3/memory-only/DARK SOULS III")" = "$D3_MEM_BEFORE" ]'
 rm -rf "$D3/kit-p/cache"
 wine_ds3 "$(winpath "$D3/kit-p/ashenmarine-setup.exe")" p2 ds3-prepare --ds3 "$(winpath "$D3/memory-only/DARK SOULS III")" --mod "$(winpath "$D3/mod-p2")" --out "$(winpath "$D3/out-p2")"
@@ -311,12 +311,12 @@ wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" r ds3-prepare --ds3 "$(w
 sed 's/^/    /' "$D3/r.out" | sed -n 8,26p
 check "R exit code 0" '[ "$(cat "$D3/r.rc")" = "0" ]'
 check "R the report says Data0 was opened as a plain header and what the others need" 'grep -q "Data0 .*plain header (the .bhd is not encrypted)" "$D3/out-r/ds3-report.txt" && grep -q "NOTE: 2 of 3 archives could not be opened" "$D3/out-r/ds3-report.txt" && grep -q "whole 256-byte blocks" "$D3/out-r/ds3-report.txt"'
-check "R the override is right and the same file the keys gave" 'ds3_manifest_ok "$D3/mod-r" && ds3_override_ok "$D3/mod-r/msg/ENGLISH/item.msgbnd.dcx" && cmp -s "$D3/mod-r/msg/ENGLISH/item.msgbnd.dcx" "$D3/mod-k/msg/ENGLISH/item.msgbnd.dcx"'
+check "R the override is right and the same file the keys gave" 'ds3_manifest_ok "$D3/mod-r" && ds3_override_ok "$D3/mod-r/msg/engus/item.msgbnd.dcx" && cmp -s "$D3/mod-r/msg/engus/item.msgbnd.dcx" "$D3/mod-k/msg/engus/item.msgbnd.dcx"'
 check "R the install is untouched" '[ "$(treehash "$D3/plain-data0/DARK SOULS III")" = "$D3_PLAIN_BEFORE" ]'
 # a failed prepare writes the diagnosis (path table) into the same report
 "$FAKE_DS3" "$D3/no-item/DARK SOULS III" --variant no-item > /dev/null || { echo "cannot build the fake Dark Souls III install (no item text)"; exit 1; }
 wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" r2 ds3-prepare --ds3 "$(winpath "$D3/no-item/DARK SOULS III")" --mod "$(winpath "$D3/mod-r2")" --out "$(winpath "$D3/out-r2")"
-check "R2 a missing item text: exit code 2, nothing written, and the report carries the path table for the diagnosis" '[ "$(cat "$D3/r2.rc")" = "2" ] && [ ! -e "$D3/mod-r2" ] && grep -q "Where the files are (for the diagnosis)" "$D3/out-r2/ds3-report.txt" && grep -q "/msg/ENGLISH/item.msgbnd.dcx .*hash 50b424bf" "$D3/out-r2/ds3-report.txt"'
+check "R2 a missing item text: exit code 2, nothing written, and the report carries the path table for the diagnosis" '[ "$(cat "$D3/r2.rc")" = "2" ] && [ ! -e "$D3/mod-r2" ] && grep -q "Where the files are (for the diagnosis)" "$D3/out-r2/ds3-report.txt" && grep -q "/msg/engus/item.msgbnd.dcx .*hash 624f014f" "$D3/out-r2/ds3-report.txt"'
 
 echo; echo "== S: an item text stored under a name nobody expects is found by what it contains =="
 "$FAKE_DS3" "$D3/unexpected/DARK SOULS III" --variant unexpected-path > /dev/null || { echo "cannot build the fake Dark Souls III install (unexpected path)"; exit 1; }
@@ -325,7 +325,7 @@ wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" s ds3-prepare --ds3 "$(w
 sed 's/^/    /' "$D3/s.out" | sed -n 8,30p
 check "S exit code 0" '[ "$(cat "$D3/s.rc")" = "0" ]'
 check "S the report says it looked at the files and recognised the text by its content" 'grep -q "Looking at the start of every file in the archives" "$D3/out-s/ds3-report.txt" && grep -q "recognised by its text" "$D3/out-s/ds3-report.txt" && ! grep -q "PROBLEM" "$D3/out-s/ds3-report.txt"'
-check "S the override is right" 'ds3_manifest_ok "$D3/mod-s" && ds3_override_ok "$D3/mod-s/msg/ENGLISH/item.msgbnd.dcx"'
+check "S the override is right" 'ds3_manifest_ok "$D3/mod-s" && ds3_override_ok "$D3/mod-s/msg/engus/item.msgbnd.dcx"'
 check "S the install is untouched" '[ "$(treehash "$D3/unexpected/DARK SOULS III")" = "$D3_UNEXP_BEFORE" ]'
 "$FAKE_DS3" "$D3/unexpected-wrong/DARK SOULS III" --variant unexpected-wrong-name > /dev/null || { echo "cannot build the fake Dark Souls III install (unexpected path, wrong name)"; exit 1; }
 wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" s2 ds3-prepare --ds3 "$(winpath "$D3/unexpected-wrong/DARK SOULS III")" --mod "$(winpath "$D3/mod-s2")" --out "$(winpath "$D3/out-s2")"
@@ -365,6 +365,9 @@ for f in m["files"]:
     b = open(os.path.join(mod, f["path"]), "rb").read()
     assert f["bytes"] == len(b) and f["sha256"] == hashlib.sha256(b).hexdigest(), f
 PY'
+touch "$D3/mod-u/parts/mine.txt"
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" u2r ds3-models --remove --ds3 "$(winpath "$GAME")" --mod "$(winpath "$D3/mod-u")" --out "$(winpath "$D3/out-u2r")"
+check "U2r --remove: exit code 0, the installed models and their list are gone, the player's own file is not" '[ "$(cat "$D3/u2r.rc")" = "0" ] && [ ! -e "$D3/mod-u/parts/wp_a_0200.partsbnd.dcx" ] && [ ! -e "$D3/mod-u/parts/wp_a_1409.partsbnd.dcx" ] && [ ! -e "$D3/mod-u/ashenmarine-models.json" ] && [ -f "$D3/mod-u/parts/mine.txt" ] && grep -q "Removed 3 file(s)" "$D3/out-u2r/ds3-models-remove.txt" && [ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
 wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" u3 ds3-models --install --ds3 "$(winpath "$GAME")" --sm2 "$(winpath "$D3/sm2-weapons/Space Marine 2")" --mod "$(winpath "$GAME/Game/mods")" --out "$(winpath "$D3/out-u3")"
 check "U3 a mod folder inside the game is refused (exit code 2) and nothing is created there" '[ "$(cat "$D3/u3.rc")" = "2" ] && flat_out "$D3/u3.out" | grep -q "is inside a game" && [ ! -e "$GAME/Game/mods" ] && [ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
 

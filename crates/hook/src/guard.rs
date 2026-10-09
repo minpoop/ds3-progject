@@ -79,33 +79,44 @@ fn note_archive_open(st: &state::State, units: &[u16], id: &'static str) {
     st.logger.log(&format!("ARCHIVE opened by the game [{id}]: {leaf} (+{t} ms after the hook loaded; {} different archive files so far)", seen.len()));
 }
 
-/// A `.dcx` file the game opens from the disk that matters for the name change: anything below a folder called `mod` (the
-/// files ModEngine2 serves instead of the archived ones) or a text bundle (`*.msgbnd.dcx`). `None` for everything else; the
-/// ending is checked first, so the thousands of other opens cost almost nothing.
-pub fn watched_file(units: &[u16]) -> Option<String> {
+/// Is there a folder called `mod` in this path (`\mod\` or `/mod/`, any case)? No allocation: this runs for every file the game
+/// opens, asks about or lists.
+fn has_mod_folder(units: &[u16]) -> bool {
     let lower = |u: u16| if (b'A' as u16..=b'Z' as u16).contains(&u) { u + 32 } else { u };
-    let tail = units.get(units.len().checked_sub(4)?..)?;
-    if [lower(tail[0]), lower(tail[1]), lower(tail[2]), lower(tail[3])] != [b'.' as u16, b'd' as u16, b'c' as u16, b'x' as u16] {
-        return None;
-    }
-    let path = String::from_utf16_lossy(units);
-    let low = path.to_lowercase();
-    (low.contains("\\mod\\") || low.contains("/mod/") || low.ends_with(".msgbnd.dcx")).then_some(path)
+    let is_sep = |u: u16| u == b'\\' as u16 || u == b'/' as u16;
+    units.windows(5).any(|w| is_sep(w[0]) && lower(w[1]) == b'm' as u16 && lower(w[2]) == b'o' as u16 && lower(w[3]) == b'd' as u16 && is_sep(w[4]))
 }
 
-/// The first time the game opens such a file, say so: it is the proof that ModEngine2 serves the loose item text.
+/// Does the path end in `.msgbnd.dcx` (any case)?
+fn is_text_bundle(units: &[u16]) -> bool {
+    const END: &[u8] = b".msgbnd.dcx";
+    let lower = |u: u16| if (b'A' as u16..=b'Z' as u16).contains(&u) { u + 32 } else { u };
+    units.len() >= END.len() && units[units.len() - END.len()..].iter().zip(END).all(|(u, e)| lower(*u) == *e as u16)
+}
+
+/// A file the game opens, asks about or lists that matters for the mod: anything below a folder called `mod` (the files
+/// ModEngine2 serves instead of the archived ones; kit 0.8 only watched `.dcx` files there and never saw ModEngine2 ask about
+/// the weapon models at all) or a text bundle (`*.msgbnd.dcx`) anywhere. `None` for everything else.
+pub fn watched_file(units: &[u16]) -> Option<String> {
+    (has_mod_folder(units) || is_text_bundle(units)).then(|| String::from_utf16_lossy(units))
+}
+
+/// The most different mod-folder paths that are logged.
+const MAX_WATCHED: usize = 300;
+
+/// The first time the game opens such a file, say so: it is the proof that ModEngine2 serves the loose files.
 fn note_watched_open(st: &state::State, units: &[u16], id: &'static str) {
     use std::sync::Mutex;
     static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let Some(path) = watched_file(units) else { return };
     let Ok(mut seen) = SEEN.lock() else { return };
     let lower = path.to_lowercase();
-    if seen.contains(&lower) || seen.len() >= 80 {
+    if seen.contains(&lower) || seen.len() >= MAX_WATCHED {
         return;
     }
     seen.push(lower);
     let t = state::T0.get().map_or(0, |t| t.elapsed().as_millis());
-    st.logger.log(&format!("MOD FILE opened by the game [{id}]: {path} (+{t} ms after the hook loaded; {} different such files so far)", seen.len()));
+    st.logger.log(&format!("MOD FILE asked for by the game [{id}]: {path} (+{t} ms after the hook loaded; {} different such files so far)", seen.len()));
 }
 
 /// If the path points into the game's real save folder, returns the NUL-terminated path inside the private copy.
@@ -235,10 +246,14 @@ mod tests {
 
     #[test]
     fn only_files_of_the_mod_folder_and_text_bundles_are_watched() {
-        assert!(watched_file(&w(r"C:\Users\me\Downloads\AshenMarine-dev-0.7.0\ashenmarine\mod\msg\ENGLISH\item.msgbnd.dcx")).is_some());
+        assert!(watched_file(&w(r"C:\Users\me\Downloads\AshenMarine-dev-0.7.0\ashenmarine\mod\msg\engus\item.msgbnd.dcx")).is_some());
         assert!(watched_file(&w("C:/kit/ashenmarine/MOD/parts/wp_a_0200.partsbnd.DCX")).is_some());
-        assert!(watched_file(&w(r"D:\Games\DS3\Game\msg\ENGLISH\item.msgbnd.dcx")).is_some(), "a text bundle from the game's own folder is worth knowing about, too");
-        for other in ["", ".dcx", r"C:\x\mod", r"C:\x\mod\readme.txt", r"D:\Games\DS3\Game\Data1.bdt", r"D:\Games\DS3\Game\map\m30_00_00_00.mapbnd.dcx", r"C:\Users\me\AppData\Roaming\DarkSoulsIII\DS30000.sl2", r"C:\x\mod\a.dcx.bak"] {
+        // any ending counts below the mod folder: ModEngine2 asks about directories and other files, too
+        assert!(watched_file(&w(r"C:\kit\ashenmarine\mod\Data0.bhd")).is_some());
+        assert!(watched_file(&w(r"C:\kit\ashenmarine\mod\parts\")).is_some());
+        assert!(watched_file(&w(r"C:\kit\ashenmarine\mod\*")).is_some());
+        assert!(watched_file(&w(r"D:\Games\DS3\Game\msg\engus\item.msgbnd.dcx")).is_some(), "a text bundle from the game's own folder is worth knowing about, too");
+        for other in ["", ".dcx", r"C:\x\mod", r"C:\x\model\a.dcx", r"C:\x\mods\a.dcx", r"D:\Games\DS3\Game\Data1.bdt", r"D:\Games\DS3\Game\map\m30_00_00_00.mapbnd.dcx", r"C:\Users\me\AppData\Roaming\DarkSoulsIII\DS30000.sl2", r"C:\x\a.msgbnd.dcx.bak", "mod\\", "\\mod"] {
             assert_eq!(watched_file(&w(other)), None, "{other:?}");
         }
     }

@@ -248,6 +248,6 @@ fn an_install_made_of_garbage_files_opens_with_every_archive_refused() {
     assert_eq!(install.exe().keys.len(), 1);
     assert!(install.archives().len() >= 10);
     assert!(install.archives().iter().all(|a| a.archive.is_err()), "garbage opens nothing");
-    assert!(install.lookup("/msg/ENGLISH/item.msgbnd.dcx").is_empty());
+    assert!(install.lookup("/msg/engUS/item.msgbnd.dcx").is_empty());
     assert!(install.read("/regulation.bin").is_err());
 }

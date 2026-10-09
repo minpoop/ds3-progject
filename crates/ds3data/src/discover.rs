@@ -1,6 +1,6 @@
 //! Finding the game's text files by what they contain, not by the hash of their path.
 //!
-//! The usual way to find `msg/ENGLISH/item.msgbnd.dcx` is the hash of its path ([`crate::hash`]). If that finds nothing - the
+//! The usual way to find `msg/engUS/item.msgbnd.dcx` is the hash of its path ([`crate::hash`]). If that finds nothing - the
 //! folder may be called something else, or the hash rule may differ from the one documented - this looks at the start of
 //! the files themselves, the way a person would: does the file start like a compressed file (`DCX`)? Does that hold a `BND4`
 //! container? Do the names of the files inside end in `.fmg` (text tables)? Only a few KB of each file are read (the

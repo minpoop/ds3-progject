@@ -45,9 +45,9 @@ fn an_item_text_stored_under_an_unexpected_name_is_found_by_what_it_contains() {
     let outcome = env.prepare(None);
     assert!(outcome.ok(), "{outcome:?}\n{}", env.report());
     let report = flat(&env.report());
-    assert!(report.contains("no archive has a file whose path hashes to 50b424bf"), "{report}");
+    assert!(report.contains("no archive has a file whose path hashes to 624f014f"), "{report}");
     assert!(report.contains("Looking at the start of every file in the archives"), "{report}");
-    assert!(report.contains("which is NOT the hash of msg/ENGLISH/item.msgbnd.dcx") && report.contains("recognised by its text"), "{report}");
+    assert!(report.contains("which is NOT the hash of msg/engUS/item.msgbnd.dcx") && report.contains("recognised by its text"), "{report}");
     // the same names as when the text is where it is expected
     let expected = Env::new(&FakeOptions::default());
     assert!(expected.prepare(None).ok());
@@ -175,6 +175,30 @@ fn the_export_copies_what_it_can_and_says_what_it_cannot() {
     assert!(!inside.exists());
 }
 
+#[test]
+fn the_export_also_copies_the_small_tables_of_contents_nothing_opened_and_the_keys_seen() {
+    let env = Env::new(&FakeOptions { broken_archives: true, ..FakeOptions::default() });
+    fs::create_dir_all(env.data.join("cache")).unwrap();
+    fs::write(env.data.join("cache").join("ds3-keys.pem"), test_key(0).pem()).unwrap();
+    fs::write(env.data.join("cache").join("keys-seen.pem"), test_key(0).pem() + &test_key(1).pem()).unwrap();
+    assert!(env.export(None));
+    let headers = env.export_dir().join("headers");
+    // the two .bhd files no key opens (one without a .bdt) are copied as they are, the archives that open are not
+    assert_eq!(fs::read(headers.join("Data8.bhd")).unwrap(), fs::read(env.fake.game.join("Data8.bhd")).unwrap());
+    assert_eq!(fs::read(headers.join("Data9.bhd")).unwrap(), fs::read(env.fake.game.join("Data9.bhd")).unwrap());
+    assert!(!headers.join("Data0.bhd").exists() && !headers.join("Data1.bhd").exists() && !headers.join("DLC1.bhd").exists());
+    // the public keys
+    assert_eq!(fs::read_to_string(headers.join("ds3-keys.pem")).unwrap(), test_key(0).pem());
+    assert!(fs::read_to_string(headers.join("keys-seen.pem")).unwrap().contains("BEGIN RSA PUBLIC KEY"));
+    let report = flat(&fs::read_to_string(env.export_dir().join(ds3::EXPORT_REPORT_FILE)).unwrap());
+    assert!(report.contains("5/5 Copying the tables of contents of the archives that could not be opened") && report.contains("Data8.bhd") && report.contains("Data9.bhd"), "{report}");
+    // when everything opens, there is nothing to copy
+    let all = Env::new(&FakeOptions::default());
+    assert!(all.export(None));
+    assert!(!all.export_dir().join("headers").exists());
+    assert!(flat(&fs::read_to_string(all.export_dir().join(ds3::EXPORT_REPORT_FILE)).unwrap()).contains("every archive could be opened, so there is nothing to copy"));
+}
+
 /// A fake install, the folder of the "program" (where the report and the mod folder go) and what a run needs.
 struct Env {
     _t: tempfile::TempDir,
@@ -200,7 +224,7 @@ impl Env {
     }
 
     fn override_path(&self) -> PathBuf {
-        self.mod_dir().join("msg").join("ENGLISH").join("item.msgbnd.dcx")
+        self.mod_dir().join("msg").join("engus").join("item.msgbnd.dcx")
     }
 
     fn probe(&self, keys: Option<PathBuf>) -> bool {
@@ -255,11 +279,11 @@ fn probe_reads_a_fake_install_and_leaves_it_untouched() {
         "key 87febfc8, salt 11 characters, 11 buckets, 24 files",
         "key b2969406, salt 11 characters, 7 buckets, 5 files",
         "DLC1     ",
-        "/msg/ENGLISH/item.msgbnd.dcx               hash 50b424bf  Data0: 40 B stored, 40 B unpadded; also Data0: ",
+        "/msg/engUS/item.msgbnd.dcx                 hash 624f014f  Data0: 40 B stored, 40 B unpadded; also Data0: ",
         "/regulation.bin",
         "/parts/wp_a_1419.partsbnd.dcx",
-        "9 of 50 paths exist in the archives",
-        "/msg/FRENCH/item.msgbnd.dcx",
+        "9 of 54 paths exist in the archives",
+        "/msg/frafr/item.msgbnd.dcx",
         "DCX variant DCX_DFLT_10000_44_9",
         "container: BND4 version \"07D7R6\", format 0x2e (IDs|Names1|Names2|Compression) (stored as 0x74)",
         "layout: alignment 0x10",
@@ -312,6 +336,32 @@ fn probe_without_any_key_says_so_and_does_not_succeed() {
 }
 
 #[test]
+fn keys_the_running_game_showed_are_tried_too_and_an_archive_no_key_opens_is_described() {
+    // the keys are only in the list of everything the game showed
+    let env = Env::new(&FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+    assert!(!env.probe(None));
+    fs::create_dir_all(env.data.join("cache")).unwrap();
+    fs::write(env.data.join("cache").join("keys-seen.pem"), test_key(1).pem() + &test_key(0).pem()).unwrap();
+    assert!(env.probe(None));
+    let report = flat(&env.report());
+    assert!(report.contains("keys the running game showed (cache\\keys-seen.pem): 2 more"), "{report}");
+    assert!(report.contains("[ok] the edits"), "{report}");
+    // only one key: the archives of the other one are described from the outside
+    let env = Env::new(&FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+    let one = env.data.join("one.pem");
+    fs::write(&one, test_key(1).pem()).unwrap();
+    assert!(env.probe(Some(one)));
+    let report = flat(&env.report());
+    assert!(report.contains("Data0: 2560 bytes; the first 64: ") && report.contains("Data0: the last 64: ") && report.contains("Data0: the whole file, 32 bytes to a line:"), "{report}");
+    assert!(report.contains("Data0 1 keys were tried on its first block: none turns it into a plain block"), "{report}");
+    // a key file with a damaged block does not stop anything
+    let env = Env::new(&FakeOptions::default());
+    fs::create_dir_all(env.data.join("cache")).unwrap();
+    fs::write(env.data.join("cache").join("keys-seen.pem"), "-----BEGIN RSA PUBLIC KEY-----\nnot a key\n-----END RSA PUBLIC KEY-----\n").unwrap();
+    assert!(env.probe(None));
+}
+
+#[test]
 fn keys_from_a_file_or_the_cache_open_the_archives() {
     let env = Env::new(&FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
     // --keys
@@ -351,7 +401,7 @@ fn prepare_writes_the_override_and_its_manifest_and_leaves_the_install_untouched
     assert_eq!(tree(&env.fake.root), before, "prepare must not change anything in the install");
     // exactly these three files appear: the report, the override, the manifest
     let files: Vec<PathBuf> = tree(&env.data).keys().cloned().collect();
-    assert_eq!(files, vec![PathBuf::from("ds3-prepare").join("ds3-report.txt"), PathBuf::from("mod").join("ashenmarine-msg.json"), ["mod", "msg", "ENGLISH", "item.msgbnd.dcx"].iter().collect::<PathBuf>()]);
+    assert_eq!(files, vec![PathBuf::from("ds3-prepare").join("ds3-report.txt"), PathBuf::from("mod").join("ashenmarine-msg.json"), ["mod", "msg", "engus", "item.msgbnd.dcx"].iter().collect::<PathBuf>()]);
 
     // the override: DCX holding the game's BND4 with only the test weapons' texts changed
     let t = texts_of(&env.override_path());
@@ -380,7 +430,7 @@ fn prepare_writes_the_override_and_its_manifest_and_leaves_the_install_untouched
     assert_eq!(manifest["source"]["sha256_of_decoded_original"], ashen_ds3data::sha256_hex(&original));
     assert_eq!(manifest["edits"].as_array().unwrap().len(), 3);
     assert_eq!(manifest["edits"][2], serde_json::json!({"id": 404000, "old": "Standard Bolt", "new": "Bolt Rounds"}));
-    assert_eq!(manifest["written"], "msg/ENGLISH/item.msgbnd.dcx");
+    assert_eq!(manifest["written"], "msg/engus/item.msgbnd.dcx");
 
     // running it again gives the same files, and no temporary files are left
     let again = env.prepare(None);
@@ -388,7 +438,7 @@ fn prepare_writes_the_override_and_its_manifest_and_leaves_the_install_untouched
     assert_eq!(tree(&env.mod_dir()).len(), 2);
     assert_eq!(fs::read(env.override_path()).unwrap(), fs::read(env.override_path()).unwrap());
     let report = flat(&env.report());
-    assert!(report.contains("Written: msg\\ENGLISH\\item.msgbnd.dcx and ashenmarine-msg.json"), "{report}");
+    assert!(report.contains("Written: msg\\engus\\item.msgbnd.dcx and ashenmarine-msg.json"), "{report}");
     assert!(report.contains("Dark Souls III itself was not changed"));
 }
 
@@ -454,7 +504,7 @@ fn without_an_archive_key_nothing_is_written_and_a_stale_override_is_removed() {
 fn a_missing_or_unusable_item_text_is_a_failure_with_a_reason() {
     for (kind, needle) in [
         (ItemMsg::Missing, "was not found in any Dark Souls III archive"),
-        (ItemMsg::FrenchOnly, "found only for french but not for English"),
+        (ItemMsg::FrenchOnly, "found only for French but not for English"),
         (ItemMsg::DamagedDcx, "could not be used"),
         (ItemMsg::UnpatchableLayout, "not stored the way this program expects"),
     ] {
@@ -477,6 +527,9 @@ fn archives_that_cannot_be_opened_do_not_stop_a_run_that_does_not_need_them() {
     let report = flat(&env.report());
     assert!(report.contains("Data8 1.0 KB .bhd, no key matched") && report.contains("Data9 512 B .bhd, cannot be opened: cannot read the .bdt file: no such file"), "{report}");
     assert!(report.contains("NOTE: 2 of 5 archives could not be opened"));
+    // what the two look like from the outside is in the report (the whole of a small file)
+    assert!(report.contains("Data8: 1024 bytes; the first 64: ") && report.contains("Data9: 512 bytes; the first 64: "), "{report}");
+    assert!(report.contains("Data8: the whole file, 32 bytes to a line:"), "{report}");
 }
 
 #[test]
@@ -626,7 +679,7 @@ fn started_from_its_own_folder_it_follows_game_folder_txt_and_writes_next_to_its
     let before = tree(&env.fake.root);
     let run = Command::new(&exe).arg("ds3-prepare").current_dir(env._t.path()).output().unwrap();
     assert_eq!(run.status.code(), Some(0), "{}", text(&run.stdout));
-    assert!(kit.join("mod/msg/ENGLISH/item.msgbnd.dcx").is_file() && kit.join("mod/ashenmarine-msg.json").is_file());
+    assert!(kit.join("mod/msg/engus/item.msgbnd.dcx").is_file() && kit.join("mod/ashenmarine-msg.json").is_file());
     assert!(kit.join("ds3-prepare/ds3-report.txt").is_file());
     assert!(!env._t.path().join("mod").exists() && !env._t.path().join("ds3-prepare").exists(), "nothing is written next to the working folder");
     assert_eq!(tree(&env.fake.root), before);
@@ -755,7 +808,7 @@ fn a_failed_prepare_carries_the_diagnosis_in_the_same_report() {
     assert!(!outcome.ok());
     let report = flat(&env.report());
     assert!(report.contains("Where the files are (for the diagnosis)"), "{report}");
-    assert!(report.contains("/msg/ENGLISH/menu.msgbnd.dcx") && report.contains("The English item text was not found under the expected name. Other spellings:"), "{report}");
+    assert!(report.contains("/msg/engUS/menu.msgbnd.dcx") && report.contains("The English item text was not found under the expected name. Other spellings:"), "{report}");
     assert!(report.contains("No item.msgbnd.dcx was found for any language"), "{report}");
     assert!(!env.mod_dir().exists());
 }

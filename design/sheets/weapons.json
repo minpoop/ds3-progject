@@ -1,6 +1,6 @@
 {
   "sheet": "weapons",
-  "doc": "The weapons the player gets. Moves and damage rules are Dark Souls III's. The first build repurposes an existing Dark Souls III weapon row (same moveset, same numbers) and gives it Space Marine 2's sounds and, through the item text, its name; Space Marine 2's models and numbers are a later upgrade (milestone 5). The bolt pistol is Avelyn because it is the base-game crossbow that fires a burst of three bolts per trigger pull (the Light Crossbow it started from fires one and then reloads).",
+  "doc": "The weapons the player gets. Moves and damage rules are Dark Souls III's. The first build repurposes an existing Dark Souls III weapon row (same moveset, same numbers) and gives it Space Marine 2's sounds and, through the item text, its name; Space Marine 2's models and numbers are a later upgrade (milestone 5). The bolt pistol is Avelyn because it is the base-game crossbow that fires a burst of three bolts per trigger pull (the Light Crossbow it started from fires one and then reloads). Kit 0.9: besides the item-text file, the running game's own copy of the names can be rewritten in memory (live_name): that needs no archive and is limited to the length of the base name.",
   "columns": {
     "id": {
       "type": "id"
@@ -61,12 +61,32 @@
     },
     "ds3_base_name": {
       "type": "string",
-      "doc": "that row's name in Dark Souls III (English); the item-text file (msg/ENGLISH/item.msgbnd.dcx) is overridden so the player sees display_name instead"
+      "doc": "that row's name in Dark Souls III (English); the item-text file (msg/engUS/item.msgbnd.dcx) is overridden so the player sees display_name instead"
     },
     "ammo_row": {
       "type": "int",
       "required": false,
       "doc": "ranged weapons: EQUIP_PARAM_WEAPON_ST row id of the ammunition (a stack whose count falls when the weapon fires)"
+    },
+    "live_name": {
+      "type": "string",
+      "required": false,
+      "doc": "the name the in-memory rename (hook, features.rename) writes over ds3_base_name in the running game: it is written in place, so it has at most as many characters as ds3_base_name (shorter ones are padded with spaces). Empty = this weapon is not renamed in memory"
+    },
+    "ammo_base_name": {
+      "type": "string",
+      "required": false,
+      "doc": "ranged weapons: the ammunition row's name in Dark Souls III (English)"
+    },
+    "ammo_display_name": {
+      "type": "string",
+      "required": false,
+      "doc": "ranged weapons: the ammunition's name in the item-text file"
+    },
+    "ammo_live_name": {
+      "type": "string",
+      "required": false,
+      "doc": "ranged weapons: the ammunition's name for the in-memory rename (at most as many characters as ammo_base_name)"
     }
   },
   "rows": [
@@ -82,7 +102,8 @@
       "stats_source": null,
       "milestone": 3,
       "ds3_base_row": 2000000,
-      "ds3_base_name": "Shortsword"
+      "ds3_base_name": "Shortsword",
+      "live_name": "Chainsword"
     },
     {
       "id": "bolt_pistol",
@@ -97,7 +118,11 @@
       "milestone": 3,
       "ds3_base_row": 14090000,
       "ds3_base_name": "Avelyn",
-      "ammo_row": 404000
+      "ammo_row": 404000,
+      "live_name": "Bolter",
+      "ammo_base_name": "Standard Bolt",
+      "ammo_display_name": "Bolt Rounds",
+      "ammo_live_name": "Bolt Rounds"
     }
   ]
 }
