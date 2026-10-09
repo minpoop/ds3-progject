@@ -7,5 +7,6 @@ pub mod mix;
 pub mod pak;
 pub mod render;
 pub mod texture;
+pub mod tpl;
 pub mod wem;
 pub mod wwvorbis;
