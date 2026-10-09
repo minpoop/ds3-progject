@@ -14,6 +14,7 @@
 //! * [`bhd5`], [`archive`], [`install`] - the archive header, one archive, and the whole install
 //! * [`dcx`], [`bnd4`], [`fmg`] - the containers inside the archives; `bnd4::replace_file` changes one file of a BND4 and
 //!   nothing else
+//! * [`discover`] - finds the text bundles by what the files contain, when the path hash finds nothing
 //! * [`msgpatch`] - changes item names and descriptions in `item.msgbnd.dcx`, failing closed
 //! * [`scan`] - recognises archive keys and decrypted tables of contents in raw bytes (the running game's memory, the program
 //!   file); the test kit's collector in the hook uses it, this crate reads nothing from a process itself
@@ -23,6 +24,7 @@ pub mod archive;
 pub mod bhd5;
 pub mod bnd4;
 pub mod dcx;
+pub mod discover;
 pub mod fmg;
 pub mod hash;
 pub mod install;

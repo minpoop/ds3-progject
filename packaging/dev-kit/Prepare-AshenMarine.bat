@@ -6,6 +6,16 @@ if not exist "ashenmarine\ashenmarine-setup.exe" (
   pause
   exit /b 1
 )
+rem Take over the key cache of an older kit folder next to this one, so that the game does not have to be started once more.
+if not exist "ashenmarine\cache\ds3-keys.pem" (
+  for /d %%D in ("..\AshenMarine-*") do (
+    if exist "%%~fD\ashenmarine\cache\ds3-keys.pem" if not exist "ashenmarine\cache\ds3-keys.pem" (
+      if not exist "ashenmarine\cache" mkdir "ashenmarine\cache"
+      copy /y "%%~fD\ashenmarine\cache\ds3-keys.pem" "ashenmarine\cache\ds3-keys.pem" >nul
+      echo  Took over the key cache of an older kit folder.
+    )
+  )
+)
 echo.
 echo  ASHEN MARINE - prepare
 echo  ----------------------
@@ -13,21 +23,23 @@ echo  This READS your Space Marine 2 and Dark Souls III files (on your PC only; 
 echo  game is changed) and makes:
 echo    1. the Space Marine 2 chainsword and bolt pistol sounds, as ordinary .wav files in  ashenmarine\assets
 echo    2. a copy of Dark Souls III's item text with the names Chainsword / Bolt Pistol / Bolt Rounds, in  ashenmarine\mod
-echo       (the very first time this part cannot finish: the game must be started once to show the kit how to read its
-echo       files. That is expected. Play-AshenMarine.bat then does this part by itself when you quit the game.)
-echo    3. a report about how the weapon models are stored (no copies of the models)
+echo    3. a report that lists where Dark Souls III keeps the files the mod needs (no copies of them)
+echo    4. a report about how the weapon models are stored (no copies of the models)
 echo  It takes a few minutes. Please wait for "Done" at the end.
 echo  If Space Marine 2 is not in a normal Steam library, put its folder on the first line of a new text file called
 echo  ashenmarine\sm2-folder.txt (and Dark Souls III's, the folder that contains Game\DarkSoulsIII.exe, in
 echo  ashenmarine\game-folder.txt) and run this again.
 echo.
-echo  ===== 1 of 3: Space Marine 2 sounds =====
+echo  ===== 1 of 4: Space Marine 2 sounds =====
 "ashenmarine\ashenmarine-setup.exe" prepare
 echo.
-echo  ===== 2 of 3: Dark Souls III item names =====
+echo  ===== 2 of 4: Dark Souls III item names =====
 "ashenmarine\ashenmarine-setup.exe" ds3-prepare
 echo.
-echo  ===== 3 of 3: model reports =====
+echo  ===== 3 of 4: where Dark Souls III keeps its files (report only) =====
+"ashenmarine\ashenmarine-setup.exe" ds3-probe
+echo.
+echo  ===== 4 of 4: model reports =====
 "ashenmarine\ashenmarine-setup.exe" sm2-mesh-probe
 echo.
 echo  Done. You can listen to any .wav in  ashenmarine\assets\sounds  (set A) and  ashenmarine\assets\sounds-exact  (set B).

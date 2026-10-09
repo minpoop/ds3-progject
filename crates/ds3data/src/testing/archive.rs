@@ -180,6 +180,12 @@ impl ArchiveBuilder {
 
     /// `(bhd, bdt)` bytes. The `.bdt` starts with a 16-byte `BDF4` header, files follow at multiples of 16.
     pub fn build(&self, key: &TestKey) -> (Vec<u8>, Vec<u8>) {
+        let (plain, bdt) = self.build_plain();
+        (key.encrypt_header(&plain), bdt)
+    }
+
+    /// `(bhd, bdt)` with a PLAIN `.bhd` (not encrypted, as Dark Souls III's `Data0.bhd` is).
+    pub fn build_plain(&self) -> (Vec<u8>, Vec<u8>) {
         let mut bdt = vec![0u8; 16];
         bdt[..4].copy_from_slice(b"BDF4");
         bdt[8] = 1;
@@ -199,8 +205,15 @@ impl ArchiveBuilder {
             }
             specs.push(spec);
         }
-        let plain = Bhd5Spec { salt: self.salt.clone(), buckets: self.buckets, files: specs }.build();
-        (key.encrypt_header(&plain), bdt)
+        (Bhd5Spec { salt: self.salt.clone(), buckets: self.buckets, files: specs }.build(), bdt)
+    }
+
+    /// Writes `<dir>/<name>.bhd` (plain) and `<dir>/<name>.bdt`.
+    pub fn write_plain(&self, dir: &Path, name: &str) {
+        let (bhd, bdt) = self.build_plain();
+        std::fs::create_dir_all(dir).expect("create the archive folder");
+        std::fs::write(dir.join(format!("{name}.bhd")), bhd).expect("write the .bhd");
+        std::fs::write(dir.join(format!("{name}.bdt")), bdt).expect("write the .bdt");
     }
 
     /// Writes `<dir>/<name>.bhd` and `<dir>/<name>.bdt`.

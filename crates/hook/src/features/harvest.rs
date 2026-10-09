@@ -56,13 +56,19 @@ struct Slot {
     key: Option<String>,
     /// The saved plain table: (files, declared size).
     header: Option<(usize, usize)>,
-    /// How many times its encrypted start was seen in memory (a hint at how the game handles the file).
+    /// How many times its encrypted start was seen in memory outside this collector's own copy (a hint at how the game handles
+    /// the file).
     cipher_seen: usize,
 }
 
 impl Slot {
+    /// The `.bhd` is a plain table of contents (Dark Souls III's `Data0.bhd`): there is nothing to find for it.
+    fn plain(&self) -> bool {
+        self.block.starts_with(b"BHD5")
+    }
+
     fn covered(&self) -> bool {
-        self.key.is_some() || self.header.is_some()
+        self.plain() || self.key.is_some() || self.header.is_some()
     }
 }
 
@@ -94,6 +100,8 @@ struct Harvester<'a> {
     slots: Vec<Slot>,
     /// Every distinct key seen, by any shape.
     keys: Vec<RsaPublicKey>,
+    /// The ones among them that open an archive (only these are saved, unless an archive's start cannot be read).
+    proven: Vec<RsaPublicKey>,
     keys_dirty: bool,
     /// Fingerprints of the moduli that were already tried (found through big-number structures).
     tried: HashSet<String>,
@@ -162,6 +170,7 @@ impl<'a> Harvester<'a> {
             scanner: Scanner::new(),
             slots,
             keys: Vec::new(),
+            proven: Vec::new(),
             keys_dirty: false,
             tried: HashSet::new(),
             places: HashMap::new(),
@@ -210,14 +219,21 @@ impl<'a> Harvester<'a> {
         let new = !self.keys.contains(key);
         if new {
             self.keys.push(key.clone());
-            self.keys_dirty = true;
         }
         let mut opens = Vec::new();
         for slot in &mut self.slots {
-            if slot.key.is_none() && first_block_starts_with(key, &slot.block, b"BHD5") {
+            if slot.key.is_none() && !slot.plain() && first_block_starts_with(key, &slot.block, b"BHD5") {
                 slot.key = Some(key.fingerprint());
                 opens.push(slot.name.clone());
             }
+        }
+        if !opens.is_empty() && !self.proven.contains(key) {
+            self.proven.push(key.clone());
+            self.keys_dirty = true;
+        }
+        // when an archive's start cannot be read, no key can be proven for it: then every key found is kept for the setup tool to try
+        if new && self.slots.iter().any(|s| s.block.is_empty()) {
+            self.keys_dirty = true;
         }
         if (new && say) || !opens.is_empty() {
             self.log.log(&format!("key {} ({} bits, found as {form}){}", key.fingerprint(), key.bits(), if opens.is_empty() { String::new() } else { format!(": it OPENS {}", opens.join(", ")) }));
@@ -231,13 +247,14 @@ impl<'a> Harvester<'a> {
             return;
         }
         self.keys_dirty = false;
+        let keep: &[RsaPublicKey] = if self.slots.iter().any(|s| s.block.is_empty()) { &self.keys } else { &self.proven };
         let mut text = String::new();
-        for k in &self.keys {
+        for k in keep {
             text.push_str(&k.to_pem());
         }
         let _ = std::fs::create_dir_all(&self.cache);
         match write_atomic(&self.keys_file(), text.as_bytes()) {
-            Ok(()) => self.log.log(&format!("{} key(s) saved to cache\\ds3-keys.pem", self.keys.len())),
+            Ok(()) => self.log.log(&format!("{} key(s) that open an archive saved to cache\\ds3-keys.pem ({} other public keys were seen and not kept)", keep.len(), self.keys.len().saturating_sub(keep.len()))),
             Err(e) => self.log.log(&format!("could not save cache\\ds3-keys.pem: {e}")),
         }
     }
@@ -302,9 +319,11 @@ impl<'a> Harvester<'a> {
         }
         // hints at how the game holds the files, for the report (a few passes are enough for these)
         for slot in &mut self.slots {
-            if slot.cipher_seen == 0 && self.pass_id <= INTEL_PASSES {
+            if slot.cipher_seen == 0 && self.pass_id <= INTEL_PASSES && !slot.plain() {
                 if let Some(head) = slot.block.get(..64) {
-                    let n = memchr::memmem::find_iter(data, head).count();
+                    // not the collector's own copy of the block
+                    let own = slot.block.as_ptr() as usize..slot.block.as_ptr() as usize + slot.block.len();
+                    let n = memchr::memmem::find_iter(data, head).filter(|at| !own.contains(&(base + at))).count();
                     if n > 0 {
                         slot.cipher_seen += n;
                         st.cipher_hits += n;
@@ -504,6 +523,7 @@ impl<'a> Harvester<'a> {
             .iter()
             .map(|s| {
                 let how = match (&s.key, &s.header) {
+                    _ if s.plain() => "plain table of contents (nothing to find)".to_string(),
                     (Some(k), Some((n, _))) => format!("key {k} + table of {n} files"),
                     (Some(k), None) => format!("key {k}"),
                     (None, Some((n, _))) => format!("table of {n} files"),
@@ -554,8 +574,9 @@ fn loaded_crypto_modules() -> Vec<&'static str> {
 fn pause_after(elapsed: Duration) -> Duration {
     match elapsed.as_secs() {
         0..=29 => Duration::from_millis(250),
-        30..=179 => Duration::from_secs(5),
-        _ => Duration::from_secs(30),
+        30..=119 => Duration::from_millis(1500),
+        120..=299 => Duration::from_secs(10),
+        _ => Duration::from_secs(60),
     }
 }
 
@@ -880,7 +901,8 @@ mod tests {
         assert_eq!(region_text(&Region { protect: 0x20, kind: 0x1000000, ..r }), "module rx");
         assert_eq!(hex(&[0, 1, 0xAB]), "00 01 ab");
         assert_eq!(pause_after(Duration::from_secs(1)), Duration::from_millis(250));
-        assert_eq!(pause_after(Duration::from_secs(60)), Duration::from_secs(5));
-        assert_eq!(pause_after(Duration::from_secs(600)), Duration::from_secs(30));
+        assert_eq!(pause_after(Duration::from_secs(60)), Duration::from_millis(1500));
+        assert_eq!(pause_after(Duration::from_secs(200)), Duration::from_secs(10));
+        assert_eq!(pause_after(Duration::from_secs(600)), Duration::from_secs(60));
     }
 }

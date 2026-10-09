@@ -38,6 +38,67 @@ fn flat(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+#[test]
+fn an_item_text_stored_under_an_unexpected_name_is_found_by_what_it_contains() {
+    let env = Env::new(&FakeOptions { item_msg: ItemMsg::UnexpectedPath, ..FakeOptions::default() });
+    let before = tree(&env.fake.root);
+    let outcome = env.prepare(None);
+    assert!(outcome.ok(), "{outcome:?}\n{}", env.report());
+    let report = flat(&env.report());
+    assert!(report.contains("no archive has a file whose path hashes to 50b424bf"), "{report}");
+    assert!(report.contains("Looking at the start of every file in the archives"), "{report}");
+    assert!(report.contains("which is NOT the hash of msg/ENGLISH/item.msgbnd.dcx") && report.contains("recognised by its text"), "{report}");
+    // the same names as when the text is where it is expected
+    let expected = Env::new(&FakeOptions::default());
+    assert!(expected.prepare(None).ok());
+    let (got, want) = (texts_of(&env.override_path()), texts_of(&expected.override_path()));
+    assert_eq!(got.len(), want.len());
+    for (id, table) in &got {
+        assert_eq!(table.iter().collect::<Vec<_>>(), want[id].iter().collect::<Vec<_>>(), "table {id}");
+    }
+    assert_eq!(texts_of(&env.override_path())[&11].get(2_000_000), Some("Chainsword"));
+    assert_eq!(tree(&env.fake.root), before, "the install is untouched");
+    // the usual place is not searched when the name works: the fast way stays fast
+    assert!(!flat(&expected.report()).contains("Looking at the start of every file"), "{}", flat(&expected.report()));
+}
+
+#[test]
+fn text_containers_that_are_not_the_english_item_text_are_not_used() {
+    let env = Env::new(&FakeOptions { item_msg: ItemMsg::UnexpectedPathWrongName, ..FakeOptions::default() });
+    let outcome = env.prepare(None);
+    assert!(!outcome.ok());
+    let reason = outcome.reason.clone().unwrap_or_default();
+    assert!(reason.contains("neither under its name nor by looking at what the files contain"), "{reason}");
+    let report = flat(&env.report());
+    assert!(report.contains("None of the 1 containers of text tables that were tried has the English item text"), "{report}");
+    assert!(!env.mod_dir().exists(), "nothing is written");
+}
+
+#[test]
+fn a_missing_item_text_names_the_archives_that_could_not_be_opened() {
+    let env = Env::new(&FakeOptions { item_msg: ItemMsg::Missing, broken_archives: true, ..FakeOptions::default() });
+    let outcome = env.prepare(None);
+    let reason = outcome.reason.clone().unwrap_or_default();
+    assert!(!outcome.ok() && reason.contains("It is probably in Data8 or Data9, which could not be opened"), "{reason}");
+}
+
+#[test]
+fn the_probe_lists_the_text_containers_it_found_by_content() {
+    let env = Env::new(&FakeOptions { item_msg: ItemMsg::UnexpectedPath, ..FakeOptions::default() });
+    assert!(env.probe(None));
+    let report = flat(&env.report());
+    assert!(report.contains("5/7 The text files, found by what they contain"), "{report}");
+    assert!(report.contains("1 containers of text tables found"), "{report}");
+    assert!(report.contains("hash ") && report.contains("WeaponName.fmg"), "{report}");
+    assert!(report.contains("what the files start with: DCX>BND4"), "{report}");
+    assert!(report.contains("recognised by its text"), "{report}");
+    // and for a normal install the container is named
+    let normal = Env::new(&FakeOptions::default());
+    assert!(normal.probe(None));
+    let report = flat(&normal.report());
+    assert!(!report.contains("recognised by its text"), "{report}");
+}
+
 /// A fake install, the folder of the "program" (where the report and the mod folder go) and what a run needs.
 struct Env {
     _t: tempfile::TempDir,
@@ -113,7 +174,7 @@ fn probe_reads_a_fake_install_and_leaves_it_untouched() {
         "/msg/ENGLISH/item.msgbnd.dcx               hash 50b424bf  Data0: 40 B stored, 40 B unpadded; also Data0: ",
         "/regulation.bin",
         "/parts/wp_a_1419.partsbnd.dcx",
-        "9 of 40 paths exist in the archives",
+        "9 of 50 paths exist in the archives",
         "/msg/FRENCH/item.msgbnd.dcx",
         "DCX variant DCX_DFLT_10000_44_9",
         "container: BND4 version \"07D7R6\", format 0x2e (IDs|Names1|Names2|Compression) (stored as 0x74)",
@@ -583,5 +644,34 @@ fn saved_headers_that_do_not_fit_the_install_are_ignored_with_a_clear_message() 
     assert!(!outcome.ok());
     let reason = outcome.reason.unwrap_or_default();
     assert!(reason.contains("none of them fits an archive of this install") && reason.contains("cache\\bhd5"), "{reason}");
+    assert!(!env.mod_dir().exists());
+}
+
+#[test]
+fn a_plain_data0_that_holds_the_item_text_needs_neither_a_key_nor_a_saved_table() {
+    let env = Env::new(&FakeOptions { exe_keys: vec![], plain_data0: true, ..FakeOptions::default() });
+    let before = tree(&env.fake.root);
+    let outcome = env.prepare(None);
+    assert!(outcome.ok(), "{outcome:?}\n{}", env.report());
+    let report = flat(&env.report());
+    assert!(report.contains("Data0 2.4 KB .bhd, plain header (the .bhd is not encrypted)"), "{report}");
+    // the other two archives are listed with what their files look like from the outside
+    assert!(report.contains("no key to try") && report.contains("whole 256-byte blocks"), "{report}");
+    assert!(report.contains("NOTE: 2 of 3 archives could not be opened"), "{report}");
+    let keyed = Env::new(&FakeOptions::default());
+    assert!(keyed.prepare(None).ok());
+    assert_eq!(fs::read(env.override_path()).unwrap(), fs::read(keyed.override_path()).unwrap(), "the same file whichever way Data0 was opened");
+    assert_eq!(tree(&env.fake.root), before);
+}
+
+#[test]
+fn a_failed_prepare_carries_the_diagnosis_in_the_same_report() {
+    let env = Env::new(&FakeOptions { item_msg: ItemMsg::Missing, ..FakeOptions::default() });
+    let outcome = env.prepare(None);
+    assert!(!outcome.ok());
+    let report = flat(&env.report());
+    assert!(report.contains("Where the files are (for the diagnosis)"), "{report}");
+    assert!(report.contains("/msg/ENGLISH/menu.msgbnd.dcx") && report.contains("The English item text was not found under the expected name. Other spellings:"), "{report}");
+    assert!(report.contains("No item.msgbnd.dcx was found for any language"), "{report}");
     assert!(!env.mod_dir().exists());
 }

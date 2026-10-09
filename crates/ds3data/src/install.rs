@@ -128,6 +128,20 @@ pub struct ArchiveSlot {
     /// Size of the partner `.bdt`, if there is one.
     pub bdt_size: Option<u64>,
     pub archive: Result<Archive, ArchiveError>,
+    /// For an archive that could not be opened: what its `.bhd` looks like from the outside (size, first bytes), to tell what
+    /// kind of file it is. Empty for an opened archive.
+    pub hint: String,
+}
+
+/// What a `.bhd` that could not be opened looks like: whether its size is a whole number of encrypted blocks, and how it starts.
+fn bhd_hint(path: &Path, size: u64) -> String {
+    let mut first = [0u8; 4];
+    let read = std::fs::File::open(path).and_then(|mut f| std::io::Read::read_exact(&mut f, &mut first));
+    let blocks = if size.is_multiple_of(crate::scan::BLOCK as u64) { format!("{} whole 256-byte blocks", size / crate::scan::BLOCK as u64) } else { "NOT a whole number of 256-byte blocks".to_string() };
+    match read {
+        Ok(()) => format!("{size} bytes, {blocks}; starts with {}{}", crate::util::hex(&first), if first == *b"BHD5" { " (BHD5)" } else { "" }),
+        Err(_) => format!("{size} bytes, {blocks}; its start cannot be read"),
+    }
 }
 
 /// A file found in an archive.
@@ -243,7 +257,8 @@ impl Ds3Install {
                 Ok(a) => format!("opened {stem} ({}/{}): {} files, {:.1}s", i + 1, bhds.len(), a.entries().len(), started.elapsed().as_secs_f32()),
                 Err(e) => format!("could not open {stem} ({}/{}): {e}", i + 1, bhds.len()),
             });
-            slots.push(ArchiveSlot { name: stem, bhd_size, bdt_size, archive });
+            let hint = if archive.is_err() { bhd_hint(bhd, bhd_size) } else { String::new() };
+            slots.push(ArchiveSlot { name: stem, bhd_size, bdt_size, archive, hint });
         }
         Ok(Ds3Install { game_dir, exe, keys, slots })
     }

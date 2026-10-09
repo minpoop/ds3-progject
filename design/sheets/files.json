@@ -267,6 +267,15 @@
       "milestone": 3
     },
     {
+      "id": "ds3_probe_report",
+      "path": "{data}/ds3-probe/ds3-report.txt",
+      "purpose": "Where Dark Souls III keeps the files the mod needs (path hashes with the archive they are in, file sizes, a dry run of the name change, the weapon model containers); private, key fingerprints only",
+      "access": "write",
+      "system": "item_names",
+      "guarded": false,
+      "milestone": 3
+    },
+    {
       "id": "ds3_header_cache",
       "path": "{data}/cache/bhd5",
       "purpose": "The plain table of contents of each archive (<name>.bin), saved by the test kit's collector from the running game's memory when it lies there whole and checks out (parses completely, fits the .bhd, every file inside the .bdt); ds3-prepare uses it when no key opens an archive",

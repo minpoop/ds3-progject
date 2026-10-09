@@ -137,8 +137,18 @@ pub fn decode(bytes: &[u8]) -> Result<(Vec<u8>, DcxInfo), DcxError> {
     decode_limited(bytes, MAX_DECODED)
 }
 
-/// Like [`decode`], refusing files that declare more than `max_out` bytes.
-pub fn decode_limited(bytes: &[u8], max_out: u64) -> Result<(Vec<u8>, DcxInfo), DcxError> {
+/// What the 0x4C bytes of a DCX header say.
+struct Header {
+    unk04: u32,
+    unk10: u32,
+    level: u8,
+    unk38: u8,
+    uncompressed: u32,
+    compressed: u32,
+}
+
+/// Checks every constant of the header (`DFLT` only) and reads the two sizes.
+fn parse_header(bytes: &[u8]) -> Result<Header, DcxError> {
     if bytes.starts_with(b"DCP\0") {
         return Err(DcxError::Unsupported { variant: "DCP header without DCX".to_string() });
     }
@@ -200,9 +210,24 @@ pub fn decode_limited(bytes: &[u8], max_out: u64) -> Result<(Vec<u8>, DcxInfo), 
     if word(0x48) != 8 {
         return Err(bad(0x48));
     }
+    Ok(Header { unk04, unk10, level, unk38, uncompressed: word(0x1C), compressed: word(0x20) })
+}
 
-    let uncompressed = word(0x1C);
-    let compressed = word(0x20);
+/// The CMF/FLG bytes of the zlib stream: deflate with a window of at most 32 KiB, a multiple of 31, no preset dictionary.
+fn check_zlib_start(stream: &[u8]) -> Result<(), DcxError> {
+    let (Some(&cmf), Some(&flg)) = (stream.first(), stream.get(1)) else { return Err(DcxError::Truncated { what: "zlib stream" }) };
+    if cmf & 0x0F != 8 || cmf >> 4 > 7 || (u16::from(cmf) << 8 | u16::from(flg)) % 31 != 0 {
+        return Err(DcxError::Inflate("not a zlib stream"));
+    }
+    if flg & 0x20 != 0 {
+        return Err(DcxError::Inflate("the zlib stream wants a preset dictionary"));
+    }
+    Ok(())
+}
+
+/// Like [`decode`], refusing files that declare more than `max_out` bytes.
+pub fn decode_limited(bytes: &[u8], max_out: u64) -> Result<(Vec<u8>, DcxInfo), DcxError> {
+    let Header { unk04, unk10, level, unk38, uncompressed, compressed } = parse_header(bytes)?;
     if u64::from(uncompressed) > max_out {
         return Err(DcxError::TooLarge { declared: u64::from(uncompressed) });
     }
@@ -211,14 +236,7 @@ pub fn decode_limited(bytes: &[u8], max_out: u64) -> Result<(Vec<u8>, DcxInfo), 
     }
     let stream = get(bytes, HEADER_LEN, compressed as usize).ok_or(DcxError::Truncated { what: "compressed data" })?;
     let trailing = bytes.len().saturating_sub(HEADER_LEN).saturating_sub(compressed as usize);
-    // zlib: CMF = deflate with a window of at most 32 KiB, a multiple of 31 with FLG, no preset dictionary
-    let (Some(&cmf), Some(&flg)) = (stream.first(), stream.get(1)) else { return Err(DcxError::Truncated { what: "zlib stream" }) };
-    if cmf & 0x0F != 8 || cmf >> 4 > 7 || (u16::from(cmf) << 8 | u16::from(flg)) % 31 != 0 {
-        return Err(DcxError::Inflate("not a zlib stream"));
-    }
-    if flg & 0x20 != 0 {
-        return Err(DcxError::Inflate("the zlib stream wants a preset dictionary"));
-    }
+    check_zlib_start(stream)?;
     let adler_at = stream.len().saturating_sub(4);
     let body = stream.get(2..adler_at).ok_or(DcxError::Truncated { what: "zlib stream" })?;
     let stored_adler = u32_be(stream, adler_at).ok_or(DcxError::Truncated { what: "zlib stream" })?;
@@ -235,6 +253,43 @@ pub fn decode_limited(bytes: &[u8], max_out: u64) -> Result<(Vec<u8>, DcxInfo), 
         return Err(DcxError::ChecksumMismatch { stored: stored_adler, computed });
     }
     Ok((out, DcxInfo { unk04, unk10, level, unk38, declared_uncompressed: uncompressed, declared_compressed: compressed, trailing }))
+}
+
+/// What the start of a DCX file shows without reading the rest of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DcxPeek {
+    pub info: DcxInfo,
+    /// The first bytes of the decoded data (at most the `want` asked for; fewer when the given bytes end first).
+    pub start: Vec<u8>,
+}
+
+/// Looks at the start of a DCX file: checks the header and inflates as much as `head` (the first bytes of the file) allows,
+/// up to `want` bytes. Nothing is verified beyond the header (there is no checksum for a part of the stream).
+pub fn peek(head: &[u8], want: usize) -> Result<DcxPeek, DcxError> {
+    let Header { unk04, unk10, level, unk38, uncompressed, compressed } = parse_header(head)?;
+    if compressed < 6 {
+        return Err(DcxError::Truncated { what: "zlib stream" });
+    }
+    let stream = head.get(HEADER_LEN..).unwrap_or(&[]);
+    // never read past the end of the compressed data the header declares
+    let stream = stream.get(..(compressed as usize).min(stream.len())).unwrap_or(stream);
+    check_zlib_start(stream)?;
+    let body = stream.get(2..).unwrap_or(&[]);
+    // inflate into a buffer of the size asked for; the streaming interface says how much of it was really written (the
+    // one-call helpers hand back the whole buffer, zeros included, when the input ends early)
+    use miniz_oxide::inflate::core::{decompress, inflate_flags, DecompressorOxide};
+    use miniz_oxide::inflate::TINFLStatus;
+    let mut state = DecompressorOxide::new();
+    let mut out = vec![0u8; want];
+    let (status, _read, written) = decompress(&mut state, body, &mut out, 0, inflate_flags::TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    match status {
+        // finished, the output buffer is full, or the given bytes ended: what came out so far is what there is to see
+        TINFLStatus::Done | TINFLStatus::HasMoreOutput | TINFLStatus::NeedsMoreInput | TINFLStatus::FailedCannotMakeProgress => {}
+        _ => return Err(DcxError::Inflate("invalid compressed data")),
+    }
+    out.truncate(written);
+    let start = out;
+    Ok(DcxPeek { info: DcxInfo { unk04, unk10, level, unk38, declared_uncompressed: uncompressed, declared_compressed: compressed, trailing: 0 }, start })
 }
 
 /// For input that may or may not be wrapped: DCX is decoded, anything else is returned as it is with `None`.
@@ -471,5 +526,47 @@ mod tests {
         let mut x = encode(&big, &DcxInfo::ds3_default()).unwrap();
         x[0x1C..0x20].copy_from_slice(&100u32.to_be_bytes());
         assert_eq!(decode(&x).unwrap_err(), DcxError::TooMuchData { declared: 100 });
+    }
+
+    #[test]
+    fn peek_shows_the_start_of_a_file_without_the_rest() {
+        // text-like bytes (a small alphabet from a simple generator): compresses to about half, so a cut file is a real cut
+        let mut x = 0x2545_F491u32;
+        let data: Vec<u8> = (0..200_000u32)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                b'a' + (x >> 24) as u8 % 24
+            })
+            .collect();
+        let file = encode(&data, &DcxInfo::ds3_default()).unwrap();
+        assert!(file.len() > 60_000, "{}", file.len());
+        // the whole file
+        let p = peek(&file, 100).unwrap();
+        assert_eq!(p.start, &data[..100]);
+        assert_eq!((p.info.declared_uncompressed, p.info.declared_compressed as usize + HEADER_LEN), (200_000, file.len()));
+        assert_eq!(p.info.variant_name(), "DCX_DFLT_10000_44_9");
+        // only the first bytes of the file: what could be inflated is the true start of the data
+        for cut in [HEADER_LEN + 40, 1000, 3000, 20_000] {
+            let p = peek(&file[..cut], 50_000).unwrap();
+            assert_eq!(&p.start[..], &data[..p.start.len()], "cut at {cut}");
+            assert!(cut < 3000 || p.start.len() > 1000, "cut at {cut}: only {} bytes", p.start.len());
+        }
+        // a header and the two bytes that start the zlib stream: recognised, nothing inside yet; the header alone is too little
+        assert!(peek(&file[..HEADER_LEN + 2], 10).unwrap().start.is_empty());
+        assert!(matches!(peek(&file[..HEADER_LEN], 10), Err(DcxError::Truncated { .. })));
+        // asked for more than there is
+        let small = encode(b"hello world, hello world", &DcxInfo::ds3_default()).unwrap();
+        assert_eq!(peek(&small, 1000).unwrap().start, b"hello world, hello world");
+        // not what it should be
+        assert_eq!(peek(b"BND4 not a dcx file at all, but long enough to have a header, really, more than 76 bytes", 10), Err(DcxError::NotDcx));
+        assert!(matches!(peek(&file[..20], 10), Err(DcxError::Truncated { .. }) | Err(DcxError::BadHeader { .. })));
+        let mut krak = file.clone();
+        krak[0x28..0x2C].copy_from_slice(b"KRAK");
+        assert!(matches!(peek(&krak, 10), Err(DcxError::Unsupported { .. })));
+        let mut bad = file.clone();
+        bad[HEADER_LEN] = 0x00;
+        assert!(matches!(peek(&bad, 10), Err(DcxError::Inflate(_))));
     }
 }

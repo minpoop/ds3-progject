@@ -67,6 +67,8 @@ pub enum HeaderSource {
     Key(String),
     /// A plain table of contents that the running game held in its memory (the label names the file it was saved as).
     GameMemory(String),
+    /// The `.bhd` itself is a plain `BHD5` file (it is not encrypted at all, as `Data0.bhd` is in Dark Souls III).
+    Plain,
 }
 
 impl fmt::Display for HeaderSource {
@@ -74,6 +76,7 @@ impl fmt::Display for HeaderSource {
         match self {
             HeaderSource::Key(fp) => write!(f, "key {fp}"),
             HeaderSource::GameMemory(label) => write!(f, "header saved from the running game ({label})"),
+            HeaderSource::Plain => write!(f, "plain header (the .bhd is not encrypted)"),
         }
     }
 }
@@ -112,11 +115,15 @@ impl Archive {
     /// block only), decrypts and parses it. Nothing is written anywhere.
     pub fn open(bhd: &Path, bdt: &Path, keys: &[RsaPublicKey]) -> Result<Archive, ArchiveError> {
         let bytes = read_all(bhd, ".bhd file", MAX_BHD)?;
+        let name = bhd.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        if bytes.starts_with(b"BHD5") {
+            // some archives (Dark Souls III's Data0) have a plain table of contents: no key is needed
+            return Archive::from_plain_file(name, bytes, bdt);
+        }
         if !keys.is_empty() && keys.iter().all(|k| bytes.len() < k.modulus_len()) {
             return Err(ArchiveError::HeaderTooShort);
         }
         let key = keys.iter().find(|k| first_block_starts_with(k, &bytes, b"BHD5")).ok_or(ArchiveError::NoKeyMatched { tried: keys.len() })?;
-        let name = bhd.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         Archive::from_header_bytes(name, &bytes, key, bdt)
     }
 
@@ -126,6 +133,14 @@ impl Archive {
         let summary = Bhd5::describe(&plain);
         let header = Bhd5::parse(plain).map_err(|error| ArchiveError::Header { error, summary })?;
         Archive::finish(name, header, HeaderSource::Key(key.fingerprint()), bhd_bytes.len() as u64, trailing, bdt)
+    }
+
+    /// An archive whose `.bhd` is a plain `BHD5` file (not encrypted): `bytes` is the whole file.
+    pub fn from_plain_file(name: String, bytes: Vec<u8>, bdt: &Path) -> Result<Archive, ArchiveError> {
+        let bhd_len = bytes.len() as u64;
+        let summary = Bhd5::describe(&bytes);
+        let header = Bhd5::parse(bytes).map_err(|error| ArchiveError::Header { error, summary })?;
+        Archive::finish(name, header, HeaderSource::Plain, bhd_len, 0, bdt)
     }
 
     /// An archive whose table of contents is already plain: the running game held it in memory and the test kit saved it
@@ -163,7 +178,7 @@ impl Archive {
     pub fn key_fingerprint(&self) -> &str {
         match &self.source {
             HeaderSource::Key(fp) => fp,
-            HeaderSource::GameMemory(_) => "",
+            HeaderSource::GameMemory(_) | HeaderSource::Plain => "",
         }
     }
 
@@ -247,6 +262,73 @@ impl Archive {
         if let Some(n) = entry.unpadded() {
             bytes.truncate(n as usize);
         }
+        Ok(bytes)
+    }
+}
+
+impl Archive {
+    /// How many files sit in the bucket their hash points to (`hash % bucket count`), and how many files there are. A table
+    /// that was read correctly is a hash table, so all of them do; if only a few do, the entries were not read as the game
+    /// lays them out. (Only a check for the report: lookups never rely on the buckets.)
+    pub fn bucket_agreement(&self) -> (usize, usize) {
+        let buckets = self.header.bucket_count().max(1) as u64;
+        let total = self.header.entries().len();
+        let agree = self.header.entries().iter().filter(|e| u64::from(e.hash) % buckets == u64::from(e.bucket)).count();
+        (agree, total)
+    }
+
+    /// Opens the `.bdt` once for many calls of [`BdtReader::head`] (looking at the start of many files).
+    pub fn bdt_reader(&self) -> Result<BdtReader<'_>, ArchiveError> {
+        let file = std::fs::File::open(&self.bdt_path).map_err(|e| ArchiveError::Io { what: ".bdt file", reason: io_reason(&e) })?;
+        Ok(BdtReader { archive: self, file })
+    }
+}
+
+/// An archive's `.bdt`, open for reading the start of files.
+pub struct BdtReader<'a> {
+    archive: &'a Archive,
+    file: std::fs::File,
+}
+
+impl BdtReader<'_> {
+    /// The first `n` bytes of a file (fewer if it is shorter), decrypted where its AES ranges cover them: enough to see what
+    /// kind of file it is without reading all of it. Reads whole 16-byte blocks, so only a few KB are touched.
+    pub fn head(&mut self, entry: &Entry, n: usize) -> Result<Vec<u8>, ArchiveError> {
+        let size = u64::from(entry.padded_size);
+        let a = self.archive;
+        match entry.offset.checked_add(size) {
+            Some(end) if end <= a.bdt_size => {}
+            _ => return Err(ArchiveError::OutOfRange { offset: entry.offset, size: entry.padded_size, bdt_size: a.bdt_size }),
+        }
+        let aes = a.header.aes_record(entry).map_err(|error| ArchiveError::Header { error, summary: format!("the AES record of the file at {}", entry.offset) })?;
+        let want = size.min(n as u64);
+        // whole blocks are read so that the encrypted ranges can be decrypted; the result is cut to `want` again below
+        let read_len = (want.div_ceil(16) * 16).min(size) as usize;
+        let mut bytes = vec![0u8; read_len];
+        self.file.seek(SeekFrom::Start(entry.offset)).map_err(|e| ArchiveError::Io { what: ".bdt file", reason: io_reason(&e) })?;
+        self.file.read_exact(&mut bytes).map_err(|e| ArchiveError::Io { what: ".bdt file", reason: io_reason(&e) })?;
+        if let Some(aes) = aes {
+            let cipher = Aes128::new(GenericArray::from_slice(&aes.key));
+            for (start, end) in aes.ranges {
+                if start == -1 || end == -1 || start == end {
+                    continue;
+                }
+                let range = usize::try_from(start).ok().zip(usize::try_from(end).ok()).filter(|(s, e)| s < e && (e - s) % 16 == 0 && *e as u64 <= size);
+                let Some((s, e)) = range else { return Err(ArchiveError::BadRange { start, end, size: entry.padded_size }) };
+                // only the blocks that lie wholly inside what was read
+                let e = e.min(read_len / 16 * 16);
+                if s >= e {
+                    continue;
+                }
+                if let Some(part) = bytes.get_mut(s..e) {
+                    for block in part.chunks_exact_mut(16) {
+                        cipher.decrypt_block(GenericArray::from_mut_slice(block));
+                    }
+                }
+            }
+        }
+        let keep = entry.unpadded().map_or(want, |u| u.min(want));
+        bytes.truncate(keep as usize);
         Ok(bytes)
     }
 }
@@ -398,5 +480,38 @@ mod tests {
         let e = a.find(path_hash("/msg/ENGLISH/item.msgbnd.dcx")).next().unwrap();
         assert!(a.read_limited(e, 100).is_err());
         assert_eq!(a.read_limited(e, 200).unwrap().len(), 200);
+    }
+
+    #[test]
+    fn head_reads_the_start_of_a_file_decrypted_and_cut_to_the_size_asked() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path();
+        let files = sample(dir);
+        let a = Archive::open(&dir.join("Data0.bhd"), &dir.join("Data0.bdt"), &[test_key(0).public]).unwrap();
+        let mut reader = a.bdt_reader().unwrap();
+        for (path, data) in &files {
+            let entry = a.find(path_hash(path)).find(|e| a.read(e).as_deref() == Ok(&data[..])).unwrap();
+            for n in [0usize, 1, 15, 16, 17, 31, 32, 33, 47, 48, 50, 64, 65, 79, 80, 100, 300] {
+                let head = reader.head(entry, n).unwrap();
+                assert_eq!(head, &data[..n.min(data.len())], "{path}: first {n} bytes");
+            }
+        }
+        // a file that is not inside the .bdt cannot be looked at
+        let bdt = std::fs::read(dir.join("Data0.bdt")).unwrap();
+        std::fs::write(dir.join("Cut.bhd"), std::fs::read(dir.join("Data0.bhd")).unwrap()).unwrap();
+        std::fs::write(dir.join("Cut.bdt"), &bdt[..bdt.len() / 2]).unwrap();
+        let cut = Archive::open(&dir.join("Cut.bhd"), &dir.join("Cut.bdt"), &[test_key(0).public]).unwrap();
+        let mut reader = cut.bdt_reader().unwrap();
+        let outside = cut.entries().iter().find(|e| e.offset + u64::from(e.padded_size) > cut.bdt_size()).unwrap();
+        assert!(matches!(reader.head(outside, 16), Err(ArchiveError::OutOfRange { .. })));
+    }
+
+    #[test]
+    fn the_buckets_agree_with_the_hashes_in_a_well_formed_table() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path();
+        sample(dir);
+        let a = Archive::open(&dir.join("Data0.bhd"), &dir.join("Data0.bdt"), &[test_key(0).public]).unwrap();
+        assert_eq!(a.bucket_agreement(), (5, 5));
     }
 }

@@ -198,6 +198,37 @@ round-trips, `replace_file` with identical data gives identical bytes, garbage a
   or 256-byte slots; (c) a header's declared size lies between "fills the last block" and the `.bhd` size; (d) the 64-bit OpenSSL / mbed TLS structure layouts. If nothing is found, the log still says what was seen (counts per shape, near misses, path-hash neighbourhoods,
   encrypted `.bhd` starts in memory) - the next step would then be to hook the file reads of the `.bhd` files or to ask the owner whether the community-published public keys may be used.
 
+## Kit 0.6 results (owner's PC, 2026-10-09) - what they showed
+
+- Owner: **"names did not change"**, plus the optional model files (`wpn_chainsword_01.tpl`, `wpn_bolt_pistol_01.tpl`: 4 template files each) - see the SM2 section below.
+- **The collector works.** In the first second after the hook loads, the game opens all 8 `.bhd` / `.bdt` pairs (`ARCHIVE opened by the game [fs_createfilew]` at +53 ms). Public RSA keys appear as **plain PEM text in the game's memory only for a moment**:
+  `Data1`..`Data5` at about +1.3 s (all five caught in pass 4), `DLC2` at +25 s in one of the two sessions. Each key was proven by decrypting the first block of its `.bhd` to `BHD5`; 6 of 8 archives got a key. 63 key candidates were saved to
+  `cache/ds3-keys.pem` (only proven ones are meant to be kept; unproven ones were kept because some blocks were unreadable). No whole decrypted table was found in memory (`table-like places 0`): the game parses the header and frees it.
+- **`Data0.bhd` is not encrypted.** It is a plain `BHD5` file of 2212 bytes (not a multiple of 256, unlike the other seven), which is why no key ever matched ("no key matched (63 tried)"). `Data0.bdt` is 796 KB: it is probably the regulation (the parameter
+  tables) plus a few small files. `DLC1.bhd` (139.8 KB) is the only archive that is still locked; its key was not seen (its encrypted start was in memory once, at the very beginning).
+- Archive facts verified on the real game: `Data1` 2377 files / 347 buckets / salt 11, `Data2` 2344 / 337 / 7, `Data3` 721 / 103 / 9, `Data4` 963 / 137 / 7, `Data5` 7214 / 1031 / 7, `DLC2` 1264 / 181 / 8; `.bdt` of `Data5` starts `BDF4`, the others "UNEXPECTED" because
+  they start with data (the check was only a hint; offsets in the `.bhd` are absolute).
+- **The English item text was not found by the hash of `/msg/ENGLISH/item.msgbnd.dcx` (0x50b424bf) in any of the six archives that were open.** The hash rule is the one of SoulsFormats' `SFUtil.FromPathHash` (`reference read`: trim, `\`->`/`, lower case,
+  leading `/`, `h*37 + c` as u32). *Correction to an earlier note:* the "path hash is in memory" lines of `harvest.txt` are the hook's **own** needle table (the 40 bytes after each hit are a Rust `(u32, &str)` array with a pointer into the hook DLL), not
+  evidence about how the game keeps its files.
+- Candidates for why: (a) the text is in `Data0` or `DLC1`; (b) it has another name/hash than assumed. Kit 0.7 answers it from the data instead of guessing (see below).
+
+## Kit 0.7 - plain Data0, finding the text by what it contains
+
+- `Archive::open` accepts a `.bhd` that already starts with `BHD5` (`HeaderSource::Plain`): no key needed. `Data0` should now open; the archive line says "plain header". Per-archive report lines also print the bucket check (`hash % buckets` equals the bucket the
+  file is listed in, for all files if the table was read right).
+- **Content search** (`crates/ds3data/src/discover.rs`): when the path hash finds nothing, `ds3-prepare` reads the first 16 KB of every file (4 KB - 24 MB stored size) of every opened archive in disk order (AES ranges decrypted), checks `DCX` + DFLT, inflates the first
+  64 KB (streaming, `dcx::peek`), reads the BND4 header and the names of its files (`bnd4::peek`), and keeps the containers with `.fmg` names. The English item text is then chosen **by its text** (the same `patch_item_msgbnd_detailed` check as the real run:
+  "Shortsword" at id 2000000, "Avelyn" at 14090000, "Standard Bolt" at 404000), whatever its hash. Time budget 240 s. `ds3-probe` always runs the search and lists every text container with its hash (and the path it would be, if it matches a known
+  `msg/<language>/<file>.msgbnd.dcx`), per-archive counts, and what the files start with (`DCX>BND4 1200, TPF. 30, ...`) - this teaches the archive layout.
+- If the found container's hash is not that of `/msg/ENGLISH/item.msgbnd.dcx`, the override is still written to `msg/ENGLISH/item.msgbnd.dcx` (the path every DS3 text mod uses) and the report says so loudly. If the game then still shows the old names, the hash rule or
+  the name is what to fix next.
+- If the text is in no opened archive, the message names the archives that could not be opened ("probably in DLC1").
+- `hook.log` gets a line **`MOD FILE opened by the game [...]: <path>`** the first time the game opens a `.dcx` below a folder called `mod` (what ModEngine2 serves instead of an archived file) or any `*.msgbnd.dcx` from disk: if the new item text is
+  there after Play, ModEngine2 does serve it; if the names still do not change, the game reads the text from somewhere else or replaces it later.
+- The collector pauses less in the middle phase (1.5 s between passes from 30 s to 2 min, 10 s up to 5 min) to improve the chance of catching `DLC1`'s key.
+- **Still assumed (first real data will tell):** the DCX header constants of the item text (`DCX_DFLT_10000_44_9`), BND4 raw format 0x74 with files in order at one alignment, FMG version 2, `ModEngine2` picking up `mod/msg/ENGLISH/item.msgbnd.dcx`, and that the `.fmg` names the container's files carry (the search keys on the extension).
+
 ## Space Marine 2 sound events found (kit 0.3 report)
 
 - `wpn.bnk` v150: 7186 sounds, 838 events; media in `wpn.zip` (3642 `.wem`). Names recovered by hashing words: chainsword (`chswd`) events - `wpn_melee_chswd_light_1hit..4hit` (12-16 sounds each),

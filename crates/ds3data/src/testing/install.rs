@@ -24,6 +24,11 @@ pub enum ItemMsg {
     DamagedDcx,
     /// The BND4 inside is laid out in a way that cannot be patched.
     UnpatchableLayout,
+    /// The right item text, but stored under a path nobody expects (`/msg/zzTEXT/item.msgbnd.dcx`): only a look at what the
+    /// files contain finds it.
+    UnexpectedPath,
+    /// ... and with "Shortsword" renamed, so that it is not the text the mod needs.
+    UnexpectedPathWrongName,
 }
 
 #[derive(Clone, Debug)]
@@ -35,11 +40,13 @@ pub struct FakeOptions {
     pub collide: bool,
     /// Add a `Data9.bhd` without a `.bdt` and a `Data8.bhd`/`.bdt` that no key opens.
     pub broken_archives: bool,
+    /// `Data0.bhd` is a plain (not encrypted) table of contents, as in the real game.
+    pub plain_data0: bool,
 }
 
 impl Default for FakeOptions {
     fn default() -> Self {
-        FakeOptions { exe_keys: vec![0, 1], item_msg: ItemMsg::Good, collide: true, broken_archives: false }
+        FakeOptions { exe_keys: vec![0, 1], item_msg: ItemMsg::Good, collide: true, broken_archives: false, plain_data0: false }
     }
 }
 
@@ -54,6 +61,8 @@ pub struct FakeDs3 {
 }
 
 pub const ITEM_PATH: &str = "/msg/ENGLISH/item.msgbnd.dcx";
+/// Where [`ItemMsg::UnexpectedPath`] puts the item text.
+pub const UNEXPECTED_ITEM_PATH: &str = "/msg/zzTEXT/item.msgbnd.dcx";
 pub const MODEL_PATHS: [&str; 5] = [
     "/parts/wp_a_0200.partsbnd.dcx",
     "/parts/wp_a_0200_l.partsbnd.dcx",
@@ -107,10 +116,22 @@ fn small_msg_dcx(table_name: &str, text: &str) -> Vec<u8> {
     dcx::encode(&bnd, &DcxInfo::ds3_default()).expect("encode")
 }
 
+/// The item container with a made-up file of `pad` bytes in it (the game's real ones are big; a search that skips small
+/// files needs the fake to be big, too).
+fn padded_item_dcx(tables: &[items::Table], pad: usize) -> Vec<u8> {
+    dcx::encode(&bnd4_of(tables, &[(99, "Readme.txt", noise(0xAD, pad))]), &DcxInfo::ds3_default()).expect("encode")
+}
+
 /// The DCX bytes of the item text for an option.
 pub fn item_msg_dcx(kind: ItemMsg) -> Vec<u8> {
     match kind {
         ItemMsg::Good | ItemMsg::FrenchOnly => items::item_dcx(),
+        ItemMsg::UnexpectedPath => padded_item_dcx(&item_tables(), 6000),
+        ItemMsg::UnexpectedPathWrongName => {
+            let mut tables = item_tables();
+            tables[1].fmg.set(2_000_000, "Broadsword");
+            padded_item_dcx(&tables, 6000)
+        }
         ItemMsg::Missing => Vec::new(),
         ItemMsg::WrongName => {
             let mut tables = item_tables();
@@ -165,7 +186,11 @@ pub fn build(root: &Path, opts: &FakeOptions) -> FakeDs3 {
         data0.add_hashed(0x1000_0000u32.wrapping_mul(i as u32 + 1) ^ 0x5555, &noise(i + 1, 8 + (i as usize % 5) * 8));
     }
     let item_dcx = item_msg_dcx(opts.item_msg);
-    let item_path = if opts.item_msg == ItemMsg::FrenchOnly { "/msg/FRENCH/item.msgbnd.dcx" } else { ITEM_PATH };
+    let item_path = match opts.item_msg {
+        ItemMsg::FrenchOnly => "/msg/FRENCH/item.msgbnd.dcx",
+        ItemMsg::UnexpectedPath | ItemMsg::UnexpectedPathWrongName => UNEXPECTED_ITEM_PATH,
+        _ => ITEM_PATH,
+    };
     if opts.collide && opts.item_msg != ItemMsg::Missing {
         data0.add_hashed(crate::hash::path_hash(item_path), b"this is not the file you are looking for");
     }
@@ -174,7 +199,11 @@ pub fn build(root: &Path, opts: &FakeOptions) -> FakeDs3 {
     }
     data0.add("/msg/ENGLISH/menu.msgbnd.dcx", &small_msg_dcx("MenuText.fmg", "Menu"));
     add_encrypted(&mut data0, "/regulation.bin", &noise(77, 3000), 0x17);
-    data0.write(&game, "Data0", &k0);
+    if opts.plain_data0 {
+        data0.write_plain(&game, "Data0");
+    } else {
+        data0.write(&game, "Data0", &k0);
+    }
 
     // Data1: weapon models, under the other key
     let mut data1 = ArchiveBuilder::new(7);
@@ -391,6 +420,27 @@ mod tests {
         let install = Ds3Install::open_with_sources(big.game.clone(), crate::install::ExeInfo::scan(&big.exe).unwrap(), &[], &one, &mut |_| {}).unwrap();
         assert_eq!(install.open_archives().count(), 0, "every file of Data1 now lies outside its .bdt");
         assert!(PlainHeader::load_dir(&other.path().join("nothing")).is_empty());
+    }
+
+    #[test]
+    fn a_plain_data0_opens_without_any_key_and_the_other_archives_keep_needing_theirs() {
+        use crate::archive::HeaderSource;
+        let t = tempfile::tempdir().unwrap();
+        let fake = build(&t.path().join("DS3"), &FakeOptions { exe_keys: vec![], plain_data0: true, ..FakeOptions::default() });
+        assert!(std::fs::read(fake.game.join("Data0.bhd")).unwrap().starts_with(b"BHD5"));
+        let install = Ds3Install::open(&fake.root, &[]).unwrap();
+        let state: Vec<(String, bool)> = install.archives().iter().map(|a| (a.name.clone(), a.archive.is_ok())).collect();
+        assert_eq!(state, vec![("Data0".to_string(), true), ("Data1".to_string(), false), ("DLC1".to_string(), false)]);
+        let data0 = install.archives()[0].archive.as_ref().unwrap();
+        assert_eq!(data0.source(), &HeaderSource::Plain);
+        assert_eq!((data0.key_fingerprint(), data0.files_outside_bdt()), ("", 0));
+        // the item text (which the fake keeps in Data0) is there and reads the same as when the table was encrypted
+        let hits = install.lookup(ITEM_PATH);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(install.read_hit(&hits[1]).unwrap(), items::item_dcx());
+        // with the keys the other archives open too
+        let all = Ds3Install::open(&fake.root, &[test_key(0).public, test_key(1).public]).unwrap();
+        assert_eq!(all.open_archives().count(), 3);
     }
 
     #[test]

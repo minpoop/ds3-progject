@@ -6,11 +6,14 @@
 //!   ashenmarine-setup ds3-prepare --ds3 <folder> --mod <mod folder> --out <report folder>
 //!
 //! Options (to make the situations the tests and the Wine test need):
-//!   --variant good|wrong-name|no-item|french-only|damaged|unpatchable   what the item text is like (default: good)
+//!   --variant good|wrong-name|no-item|french-only|damaged|unpatchable|unexpected-path|unexpected-wrong-name
+//!                                what the item text is like (default: good); the last two store it under a name nobody expects
+//!                                (only a look at what the files contain finds it)
 //!   --no-exe-keys                the program file holds no key as text (give the keys with  --keys, see --write-keys)
 //!   --write-keys <file>          also write the two test keys to a PEM file
 //!   --save-headers <folder>      also write the plain table of contents of every archive there, as `<name>.bin` - what the
 //!                                test kit's collector saves from the running game (`ashenmarine/cache/bhd5`)
+//!   --plain-data0                Data0.bhd is a plain (not encrypted) table of contents, as in the real game
 //!   --broken                     add a .bhd without a .bdt and one that no key opens
 use ashen_ds3data::testing::install::{build, FakeOptions, ItemMsg};
 use ashen_ds3data::testing::keys::test_key;
@@ -32,12 +35,15 @@ fn main() {
                     "french-only" => ItemMsg::FrenchOnly,
                     "damaged" => ItemMsg::DamagedDcx,
                     "unpatchable" => ItemMsg::UnpatchableLayout,
+                    "unexpected-path" => ItemMsg::UnexpectedPath,
+                    "unexpected-wrong-name" => ItemMsg::UnexpectedPathWrongName,
                     other => panic!("unknown variant {other}"),
                 }
             }
             "--no-exe-keys" => opts.exe_keys.clear(),
             "--write-keys" => write_keys = Some(PathBuf::from(args.next().expect("--write-keys needs a file"))),
             "--save-headers" => save_headers = Some(PathBuf::from(args.next().expect("--save-headers needs a folder"))),
+            "--plain-data0" => opts.plain_data0 = true,
             "--broken" => opts.broken_archives = true,
             other => panic!("unknown option {other}"),
         }

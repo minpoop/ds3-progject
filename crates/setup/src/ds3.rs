@@ -18,9 +18,11 @@ use crate::report::{panic_text, Report};
 use crate::{find_ds3, human};
 use anyhow::{anyhow, bail, Result};
 use ashen_common::VERSION;
-use ashen_ds3data::archive::ArchiveError;
+use ashen_ds3data::archive::{Archive, ArchiveError};
+use ashen_ds3data::bhd5::Entry;
 use ashen_ds3data::bnd4::{self, Bnd4};
 use ashen_ds3data::dcx::{self, DcxInfo};
+use ashen_ds3data::discover::{self, Bundle, Limits, Search};
 use ashen_ds3data::fmg::{FmgError, FmgFile};
 use ashen_ds3data::hash::path_hash;
 use ashen_ds3data::install::{exe_path, find_game_dir, Ds3Install, ExeInfo, PlainHeader};
@@ -71,7 +73,21 @@ const ALTERNATIVE_ITEM_PATHS: [&str; 9] = [
     "/msg/ENGLISH/item_patch.msgbnd.dcx",
     "/msg/ENGLISH/itemname.msgbnd.dcx",
 ];
-const EXTRA_PATHS: [&str; 3] = ["/msg/ENGLISH/item_dlc1.msgbnd.dcx", "/msg/ENGLISH/item_dlc2.msgbnd.dcx", "/regulation.bin"];
+const EXTRA_PATHS: [&str; 13] = [
+    "/msg/ENGLISH/item_dlc1.msgbnd.dcx",
+    "/msg/ENGLISH/item_dlc2.msgbnd.dcx",
+    "/regulation.bin",
+    "/param/gameparam/gameparam.parambnd.dcx",
+    "/param/gameparam/gameparam_dlc1.parambnd.dcx",
+    "/chr/c0000.chrbnd.dcx",
+    "/chr/c0000.anibnd.dcx",
+    "/event/common.emevd.dcx",
+    "/menu/hi/00_solo.tpf.dcx",
+    "/facegen/facegen.fgbnd.dcx",
+    "/other/graphicsconfig.xml",
+    "/map/mapstudio/m30_00_00_00.msb.dcx",
+    "/parts/wp_a_0100.partsbnd.dcx",
+];
 /// The weapon models the mod will want to swap later.
 const MODEL_PATHS: [&str; 5] = [
     "/parts/wp_a_0200.partsbnd.dcx",
@@ -353,6 +369,7 @@ fn archives_step(rep: &mut Report, src: Sources) -> Result<Ds3Install> {
         match &slot.archive {
             Ok(a) => {
                 let magic = if a.bdt_magic() == *b"BDF4" { "BDF4".to_string() } else { format!("UNEXPECTED start {:02x?}", a.bdt_magic()) };
+                let (agree, total) = a.bucket_agreement();
                 rep.say(format!(
                     "  {:<8} {} .bhd, {}, salt {} characters, {} buckets, {} files; {bdt} ({magic})",
                     slot.name,
@@ -362,6 +379,8 @@ fn archives_step(rep: &mut Report, src: Sources) -> Result<Ds3Install> {
                     a.header().bucket_count(),
                     a.entries().len()
                 ));
+                // a table that was read correctly is a hash table: every file sits in the bucket its hash points to
+                rep.detail(format!("           check: {agree} of {total} file hashes sit in the bucket hash % {} points to", a.header().bucket_count()));
                 if a.trailing_bhd_bytes() != 0 {
                     rep.say(format!("           note: {} bytes at the end of the .bhd are not a whole encrypted block (ignored)", a.trailing_bhd_bytes()));
                 }
@@ -369,9 +388,9 @@ fn archives_step(rep: &mut Report, src: Sources) -> Result<Ds3Install> {
                     rep.say(format!("           WARNING: {} of the files lie outside the .bdt (damaged or incomplete download); they cannot be read", a.files_outside_bdt()));
                 }
             }
-            Err(ArchiveError::NoKeyMatched { tried: 0 }) => rep.say(format!("  {:<8} {} .bhd, no key to try; {bdt}", slot.name, human(slot.bhd_size))),
-            Err(ArchiveError::NoKeyMatched { tried }) => rep.say(format!("  {:<8} {} .bhd, no key matched ({tried} tried); {bdt}", slot.name, human(slot.bhd_size))),
-            Err(e) => rep.say(format!("  {:<8} {} .bhd, cannot be opened: {e}; {bdt}", slot.name, human(slot.bhd_size))),
+            Err(ArchiveError::NoKeyMatched { tried: 0 }) => rep.say(format!("  {:<8} {} .bhd, no key to try; {bdt} [{}]", slot.name, human(slot.bhd_size), slot.hint)),
+            Err(ArchiveError::NoKeyMatched { tried }) => rep.say(format!("  {:<8} {} .bhd, no key matched ({tried} tried); {bdt} [{}]", slot.name, human(slot.bhd_size), slot.hint)),
+            Err(e) => rep.say(format!("  {:<8} {} .bhd, cannot be opened: {e}; {bdt} [{}]", slot.name, human(slot.bhd_size), slot.hint)),
         }
     }
     // what else is in the folder (names and sizes only): tells at a glance whether this is the game and which parts it has
@@ -417,6 +436,14 @@ struct Found {
     bnd: Bnd4,
 }
 
+/// One file of an archive, read as DCX holding a BND4.
+fn load_found(archive: &Archive, entry: &Entry, hit_count: usize, max_read: u64) -> Result<Found, String> {
+    let bytes = archive.read_limited(entry, max_read).map_err(|e| format!("cannot be read: {e}"))?;
+    let (decoded, info) = dcx::decode_limited(&bytes, MAX_MSG_DECODED).map_err(|e| format!("is not usable DCX: {e}"))?;
+    let bnd = Bnd4::parse(&decoded).map_err(|e| format!("is DCX but not a usable BND4: {e} [{}]", Bnd4::describe_header(&decoded)))?;
+    Ok(Found { archive: archive.name().to_string(), stored: entry.padded_size, unpadded: entry.unpadded(), hit_count, rejected: Vec::new(), dcx_len: bytes.len(), dcx_info: info, decoded, bnd })
+}
+
 /// Several files can share a path hash; the first one that reads as DCX holding a BND4 is used.
 fn read_valid(install: &Ds3Install, path: &str, max_read: u64) -> Result<Found, String> {
     let hits = install.lookup(path);
@@ -426,23 +453,7 @@ fn read_valid(install: &Ds3Install, path: &str, max_read: u64) -> Result<Found, 
     let mut rejected = Vec::new();
     for (i, hit) in hits.iter().enumerate() {
         let who = hit.archive.name().to_string();
-        let attempt: Result<Found, String> = (|| {
-            let bytes = hit.archive.read_limited(hit.entry, max_read).map_err(|e| format!("cannot be read: {e}"))?;
-            let (decoded, info) = dcx::decode_limited(&bytes, MAX_MSG_DECODED).map_err(|e| format!("is not usable DCX: {e}"))?;
-            let bnd = Bnd4::parse(&decoded).map_err(|e| format!("is DCX but not a usable BND4: {e} [{}]", Bnd4::describe_header(&decoded)))?;
-            Ok(Found {
-                archive: who.clone(),
-                stored: hit.entry.padded_size,
-                unpadded: hit.entry.unpadded(),
-                hit_count: hits.len(),
-                rejected: Vec::new(),
-                dcx_len: bytes.len(),
-                dcx_info: info,
-                decoded,
-                bnd,
-            })
-        })();
-        match attempt {
+        match load_found(hit.archive, hit.entry, hits.len(), max_read) {
             Ok(mut found) => {
                 found.rejected = std::mem::take(&mut rejected);
                 for (j, other) in hits.iter().enumerate() {
@@ -780,6 +791,103 @@ fn manifest_json(archive: &str, sha256: &str, applied: &[(u32, String, String)])
     )
 }
 
+// ------------------------------------------------------------------------------------------------ finding text by content
+
+/// The names a text bundle might have in the archives (language folder times file name), to put a name to a hash.
+fn known_bundle_names() -> Vec<String> {
+    let mut names = Vec::new();
+    for lang in LANGUAGES {
+        for file in ["item", "menu", "item_dlc1", "item_dlc2", "menu_dlc1", "menu_dlc2"] {
+            names.push(format!("/msg/{lang}/{file}.msgbnd.dcx"));
+        }
+    }
+    names.extend(ALTERNATIVE_ITEM_PATHS.iter().map(|p| p.to_string()));
+    names
+}
+
+/// One line about a text bundle found by its content.
+fn bundle_line(b: &Bundle, names: &[String]) -> String {
+    let called = names.iter().find(|n| path_hash(n) == b.hash).map_or(String::new(), |n| format!("  = {n}"));
+    let inside: Vec<&str> = b.names.iter().map(|n| leaf(n)).take(6).collect();
+    format!(
+        "{:<8} hash {:08x}  {} B stored{}  {}  {} files ({} text tables): {}{}{called}",
+        b.archive,
+        b.hash,
+        b.stored,
+        b.decoded_size.map_or(String::new(), |d| format!(", {d} B decoded")),
+        b.dcx_variant.as_deref().unwrap_or("no DCX"),
+        b.file_count,
+        b.tables,
+        inside.join(", "),
+        if b.names.len() > 6 { ", ..." } else { "" }
+    )
+}
+
+/// Looks at the start of every file of every opened archive for containers of text tables, and writes what it saw.
+fn bundle_search(rep: &mut Report, install: &Ds3Install) -> Search {
+    let archives: Vec<&Archive> = install.open_archives().collect();
+    rep.say_wrapped("  ", "Looking at the start of every file in the archives (a few KB each, nothing is copied) for containers of text tables - this finds the item text even if its name is not what this program expects. It takes from a few seconds to a minute or two.");
+    let search = discover::find_text_bundles(&archives, &Limits::default(), &mut |m| rep.progress(&format!("  {m}")));
+    for st in &search.archives {
+        rep.say(format!(
+            "  {:<8} {} files: {} looked at ({} too small or too big, {} unreadable); DCX {} (+{} of another kind, {} damaged); containers {}; containers of text tables {}",
+            st.name, st.files, st.looked_at, st.skipped_by_size, st.unreadable, st.dcx, st.other_dcx, st.damaged_dcx, st.bnd4, st.bundles
+        ));
+        let mut kinds: Vec<(&String, &usize)> = st.kinds.iter().collect();
+        kinds.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        let shown: Vec<String> = kinds.iter().take(14).map(|(k, n)| format!("{k} {n}")).collect();
+        rep.detail_wrapped("           ", &format!("what the files start with: {}{}", shown.join(", "), if kinds.len() > 14 { ", ..." } else { "" }));
+    }
+    if let Some(why) = &search.stopped {
+        rep.say_wrapped("  ", &format!("NOTE: the search stopped early: {why}. What follows is what was seen up to then."));
+    }
+    rep.say(format!("  {} containers of text tables found in {:.1} s", search.bundles.len(), search.elapsed.as_secs_f32()));
+    let names = known_bundle_names();
+    for (i, b) in search.bundles.iter().enumerate() {
+        let line = format!("    {}", bundle_line(b, &names));
+        if i < 12 {
+            rep.say(line);
+        } else {
+            rep.detail(line);
+        }
+    }
+    if search.bundles.len() > 12 {
+        rep.say(format!("    ... and {} more (all of them are in the report)", search.bundles.len() - 12));
+    }
+    search
+}
+
+/// Of the text bundles found by content, the one that is Dark Souls III's English item text: it has "Shortsword" at id
+/// 2000000 and the other texts the edits expect (the same check that protects the real run), whatever its name.
+fn find_item_text_by_content(rep: &mut Report, install: &Ds3Install, search: &Search) -> Option<Found> {
+    let edits = item_edits();
+    let known = path_hash(ENGLISH_ITEM_PATH);
+    // the ones with the usual name first, then the biggest (the item text is one of the bigger bundles)
+    let mut order: Vec<&Bundle> = search.bundles.iter().collect();
+    order.sort_by_key(|b| (b.hash != known, std::cmp::Reverse(b.stored)));
+    let mut tried = 0;
+    for b in order.into_iter().take(80) {
+        let Some(archive) = install.open_archives().find(|a| a.name() == b.archive) else { continue };
+        let Some(entry) = archive.entries().get(b.entry_index) else { continue };
+        tried += 1;
+        let Ok(found) = load_found(archive, entry, 1, MAX_MSG_FILE) else { continue };
+        if patch_item_msgbnd_detailed(&found.decoded, &edits).is_ok() {
+            rep.say_wrapped(
+                "  ",
+                &format!(
+                    "The English item text is the container in {} with the path hash {:08x}{}.",
+                    b.archive,
+                    b.hash,
+                    if b.hash == known { " (the hash of msg/ENGLISH/item.msgbnd.dcx)".to_string() } else { format!(", which is NOT the hash of msg/ENGLISH/item.msgbnd.dcx ({known:08x}); it was recognised by its text (\"Shortsword\", \"Avelyn\" and \"Standard Bolt\" at the ids the mod changes)") }
+                ),
+            );
+            return Some(found);
+        }
+    }
+    rep.say_wrapped("  ", &format!("None of the {tried} containers of text tables that were tried has the English item text (\"Shortsword\" at id 2000000 and so on)."));
+    None
+}
+
 // ------------------------------------------------------------------------------------------------ ds3-probe
 
 fn step(rep: &mut Report, title: &str, f: impl FnOnce(&mut Report) -> Result<()>) {
@@ -895,18 +1003,25 @@ pub fn probe(opts: &ProbeOpts) -> bool {
     rep.say("  This only READS your Dark Souls III files. It never changes, moves or uploads anything of the game.");
     rep.say_wrapped("  ", &format!("A report of what it found is written to:  {}", shown(&report, opts.out.parent().unwrap_or(&opts.out))));
 
-    let Ok(root) = stage(&mut rep, "1/6 Finding Dark Souls III", |rep| find_step(rep, opts.ds3.as_deref())) else { return finish_probe(rep, false) };
-    let Ok(sources) = stage(&mut rep, "2/6 The program file and the archive keys", |rep| keys_step(rep, &root, opts.keys.as_deref(), &opts.data)) else { return finish_probe(rep, false) };
-    let Ok(install) = stage(&mut rep, "3/6 The game archives", |rep| archives_step(rep, sources)) else { return finish_probe(rep, false) };
-    step(&mut rep, "4/6 Where the files the mod needs are", |rep| {
+    let Ok(root) = stage(&mut rep, "1/7 Finding Dark Souls III", |rep| find_step(rep, opts.ds3.as_deref())) else { return finish_probe(rep, false) };
+    let Ok(sources) = stage(&mut rep, "2/7 The program file and the archive keys", |rep| keys_step(rep, &root, opts.keys.as_deref(), &opts.data)) else { return finish_probe(rep, false) };
+    let Ok(install) = stage(&mut rep, "3/7 The game archives", |rep| archives_step(rep, sources)) else { return finish_probe(rep, false) };
+    step(&mut rep, "4/7 Where the files the mod needs are", |rep| {
         path_table(rep, &install);
         Ok(())
     });
-    step(&mut rep, "5/6 The item text (names and descriptions of weapons)", |rep| {
+    step(&mut rep, "5/7 The text files, found by what they contain", |rep| {
+        let search = bundle_search(rep, &install);
+        if install.lookup(ENGLISH_ITEM_PATH).is_empty() {
+            let _ = find_item_text_by_content(rep, &install, &search);
+        }
+        Ok(())
+    });
+    step(&mut rep, "6/7 The item text (names and descriptions of weapons)", |rep| {
         item_text_probe(rep, &install);
         Ok(())
     });
-    step(&mut rep, "6/6 Weapon models (groundwork for swapping them later)", |rep| {
+    step(&mut rep, "7/7 Weapon models (groundwork for swapping them later)", |rep| {
         models_probe(rep, &install);
         Ok(())
     });
@@ -974,7 +1089,21 @@ pub fn prepare(opts: &PrepareOpts) -> Outcome {
     let root = try_stage!(stage(&mut rep, "1/5 Finding Dark Souls III", |rep| find_step(rep, opts.ds3.as_deref())));
     let sources = try_stage!(stage(&mut rep, "2/5 The program file and the archive keys", |rep| keys_step(rep, &root, opts.keys.as_deref(), &opts.data)));
     let install = try_stage!(stage(&mut rep, "3/5 The game archives", |rep| archives_step(rep, sources)));
-    let plan = try_stage!(stage(&mut rep, "4/5 Reading the item text and checking the name change", |rep| plan_step(rep, &install)));
+    let plan = match stage(&mut rep, "4/5 Reading the item text and checking the name change", |rep| plan_step(rep, &install)) {
+        Ok(plan) => plan,
+        Err(why) => {
+            // one run should tell everything: where the files the mod needs are, in the same report
+            step(&mut rep, "Where the files are (for the diagnosis)", |rep| {
+                path_table(rep, &install);
+                Ok(())
+            });
+            step(&mut rep, "The item text, if it is found under any language", |rep| {
+                item_text_probe(rep, &install);
+                Ok(())
+            });
+            return give_up(rep, outcome, &opts.mod_dir, why, &report, &opts.out);
+        }
+    };
 
     // the last stage: write. Everything above passed.
     let written = stage(&mut rep, "5/5 Writing the item text for the mod", |rep| write_step(rep, &opts.mod_dir, &plan));
@@ -1002,15 +1131,30 @@ struct Plan {
 
 /// Stage 4: finds the English item text, and only returns a plan if the dry run passed.
 fn plan_step(rep: &mut Report, install: &Ds3Install) -> Result<Plan> {
-    if install.lookup(ENGLISH_ITEM_PATH).is_empty() {
-        let others: Vec<&str> = LANGUAGES.iter().skip(1).copied().filter(|l| !install.lookup(&format!("/msg/{l}/item.msgbnd.dcx")).is_empty()).collect();
-        if others.is_empty() {
-            bail!("the item text of the game (msg/ENGLISH/item.msgbnd.dcx) was not found in any Dark Souls III archive; the archives may be laid out differently than this program expects. Run ds3-probe and send me its report");
+    let found = if install.lookup(ENGLISH_ITEM_PATH).is_empty() {
+        rep.say_wrapped("  ", &format!("The English item text is not in the archives under the name msg/ENGLISH/item.msgbnd.dcx (no archive has a file whose path hashes to {:08x}).", path_hash(ENGLISH_ITEM_PATH)));
+        let search = bundle_search(rep, install);
+        match find_item_text_by_content(rep, install, &search) {
+            Some(found) => found,
+            None => {
+                let others: Vec<&str> = LANGUAGES.iter().skip(1).copied().filter(|l| !install.lookup(&format!("/msg/{l}/item.msgbnd.dcx")).is_empty()).collect();
+                if !others.is_empty() {
+                    let list: Vec<String> = others.iter().map(|l| l.to_lowercase()).collect();
+                    bail!("the item text was found only for {} but not for English, and this program only changes the English text. Is the game set to another language? Run ds3-probe and send me its report", list.join(", "));
+                }
+                let unopened = install.archives().iter().filter(|s| s.archive.is_err()).map(|s| s.name.clone()).collect::<Vec<_>>();
+                if unopened.is_empty() {
+                    bail!("the item text of the game was not found in any Dark Souls III archive, neither under its name nor by looking at what the files contain. Please send me the report");
+                }
+                bail!(
+                    "the item text of the game was not found in the archives that could be opened, neither under its name nor by looking at what the files contain. It is probably in {}, which could not be opened (the lines about the archives above say why). Please send me the report",
+                    unopened.join(" or ")
+                );
+            }
         }
-        let list: Vec<String> = others.iter().map(|l| l.to_lowercase()).collect();
-        bail!("the item text was found only for {} but not for English, and this program only changes the English text. Is the game set to another language? Run ds3-probe and send me its report", list.join(", "));
-    }
-    let found = read_valid(install, ENGLISH_ITEM_PATH, MAX_MSG_FILE).map_err(|why| anyhow!("the English item text could not be used: {why}"))?;
+    } else {
+        read_valid(install, ENGLISH_ITEM_PATH, MAX_MSG_FILE).map_err(|why| anyhow!("the English item text could not be used: {why}"))?
+    };
     let mut out = Out { rep: &mut *rep, loud: true };
     out.line(format!("  {}", dcx_line(&found)));
     if found.hit_count > 1 {

@@ -386,6 +386,59 @@ impl Bnd4 {
     }
 }
 
+/// What the start of a BND4 shows: its format and the names of its files, as far as the bytes given reach.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bnd4Peek {
+    pub version: String,
+    pub format: Format,
+    pub format_raw: u8,
+    pub unicode: bool,
+    pub file_count: usize,
+    /// The names that could be read, in header order (fewer than `file_count` when the bytes ended first).
+    pub names: Vec<String>,
+}
+
+/// Looks at the first bytes of a BND4 (`src` may be cut anywhere after the header): the format, the number of files and as
+/// many names as the bytes reach. Used to tell what a file in an archive is without reading all of it; it does not check
+/// the data offsets and sizes the way [`Bnd4::parse`] does.
+pub fn peek(src: &[u8]) -> Result<Bnd4Peek, Bnd4Error> {
+    if !src.starts_with(b"BND4") {
+        return Err(Bnd4Error::NotBnd4);
+    }
+    let head = src.get(..HEADER_LEN).ok_or(Bnd4Error::Truncated { what: "header" })?;
+    if head[9] == 1 {
+        return Err(Bnd4Error::BigEndian);
+    }
+    let bit_big_endian = head[10] == 0;
+    let file_count = i32_le(head, 0x0C).and_then(|c| usize::try_from(c).ok()).filter(|c| *c <= MAX_FILES).ok_or(Bnd4Error::Malformed("the file count is impossible"))?;
+    if i64_le(head, 0x10) != Some(0x40) {
+        return Err(Bnd4Error::Malformed("the header size is not 0x40"));
+    }
+    let version_len = head[0x18..0x20].iter().position(|b| *b == 0).unwrap_or(8);
+    let version = head[0x18..0x18 + version_len].iter().map(|b| if b.is_ascii() { *b as char } else { '?' }).collect();
+    let file_header_len = i64_le(head, 0x20).and_then(|v| usize::try_from(v).ok()).ok_or(Bnd4Error::Malformed("the file header size is impossible"))?;
+    let unicode = head[0x30] == 1;
+    let format_raw = head[0x31];
+    let format = Format::from_raw(format_raw, bit_big_endian);
+    if file_header_len != format.file_header_len() {
+        return Err(Bnd4Error::Malformed("the file header size does not fit the format"));
+    }
+    let mut names = Vec::new();
+    if format.has_names() {
+        // where the name offset sits in a file header (see `parse`)
+        let name_at = 16 + if format.has_compression_field() { 8 } else { 0 } + if format.long_offsets() { 8 } else { 4 } + if format.has_ids() { 4 } else { 0 };
+        for index in 0..file_count {
+            let Some(fh) = get(src, HEADER_LEN + index * file_header_len, file_header_len) else { break };
+            let Some(offset) = u32_le(fh, name_at) else { break };
+            match read_name(src, offset as usize, unicode) {
+                Ok(name) => names.push(name),
+                Err(_) => break,
+            }
+        }
+    }
+    Ok(Bnd4Peek { version, format, format_raw, unicode, file_count, names })
+}
+
 fn hash_table_info(src: &[u8], offset: u64, headers_end: u64, file_count: usize) -> HashTableInfo {
     let at = usize::try_from(offset).unwrap_or(usize::MAX);
     let hashes_offset = i64_le(src, at).and_then(|v| u64::try_from(v).ok()).unwrap_or(0);
@@ -916,5 +969,50 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn peek_reads_the_names_of_a_cut_off_file() {
+        for raw in RAW_FORMATS {
+            for hash_table in [true, false] {
+                let bytes = sample(raw, hash_table);
+                let b = Bnd4::parse(&bytes).unwrap();
+                let ctx = format!("raw {raw:#x} hash table {hash_table}");
+                let whole = peek(&bytes).unwrap();
+                assert_eq!((whole.file_count, whole.format_raw, whole.unicode, whole.version.as_str()), (5, raw, true, "07D7R6"), "{ctx}");
+                let expected: Vec<String> = if b.format.has_names() { sample_files().into_iter().map(|f| f.1).collect() } else { Vec::new() };
+                assert_eq!(whole.names, expected, "{ctx}");
+                // only the headers and names: all the names are there
+                assert_eq!(peek(&bytes[..b.headers_end as usize]).unwrap().names, expected, "{ctx}");
+                // only the file headers: no names yet; only the 64-byte header: none either
+                let headers_only = HEADER_LEN + 5 * b.format.file_header_len();
+                assert!(peek(&bytes[..headers_only]).unwrap().names.is_empty() || !b.format.has_names() || headers_only >= b.headers_end as usize, "{ctx}");
+                assert!(peek(&bytes[..HEADER_LEN]).unwrap().names.is_empty(), "{ctx}");
+                // cut through the middle of the names: the names that are whole come back, in order, and no cut-off name
+                if b.format.has_names() {
+                    let names_start = headers_only;
+                    let cut = (names_start + b.headers_end as usize) / 2;
+                    let partial = peek(&bytes[..cut]).unwrap().names;
+                    assert!(partial.len() <= expected.len() && partial[..] == expected[..partial.len()], "{ctx}: {partial:?}");
+                }
+            }
+        }
+        assert_eq!(peek(b"BND3 not this"), Err(Bnd4Error::NotBnd4));
+        assert!(matches!(peek(&sample(0x74, true)[..0x30]), Err(Bnd4Error::Truncated { .. })));
+        // a big-endian file, an impossible file count, a header size that does not fit
+        let mut x = sample(0x74, true);
+        x[9] = 1;
+        assert_eq!(peek(&x), Err(Bnd4Error::BigEndian));
+        let mut x = sample(0x74, true);
+        x[0x0C..0x10].copy_from_slice(&i32::MAX.to_le_bytes());
+        assert!(matches!(peek(&x), Err(Bnd4Error::Malformed(_))));
+        let mut x = sample(0x74, true);
+        x[0x20] = 0x55;
+        assert!(matches!(peek(&x), Err(Bnd4Error::Malformed(_))));
+        // names that point outside the bytes stop the list instead of failing
+        let mut x = sample(0x74, true);
+        let name_at = HEADER_LEN + 0x10 + 8 + 4 + 4; // the first file header: after flags, size, uncompressed size, offset, id
+        x[name_at..name_at + 4].copy_from_slice(&0x00FF_FFFFu32.to_le_bytes());
+        assert!(peek(&x).unwrap().names.is_empty());
     }
 }

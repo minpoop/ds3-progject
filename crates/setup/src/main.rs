@@ -30,7 +30,7 @@ fn usage() {
     println!("  OPTIONAL. Copies the chainsword and bolt pistol model files of your Space Marine 2 (read-only on the game) into a folder");
     println!("  (default: model-files next to this program) that you can choose to send me. Nothing is uploaded by this program.");
     println!("ashenmarine-setup ds3-probe   [--ds3 \"<Dark Souls III folder>\"] [--keys \"<key file>\"] [--out \"<report folder>\"]");
-    println!("  Looks into your Dark Souls III archives (read-only) and writes ds3-prepare\\ds3-report.txt next to this program.");
+    println!("  Looks into your Dark Souls III archives (read-only) and writes ds3-probe\\ds3-report.txt next to this program.");
     println!("ashenmarine-setup ds3-prepare [--ds3 \"<Dark Souls III folder>\"] [--keys \"<key file>\"] [--mod \"<mod folder>\"] [--out \"<report folder>\"]");
     println!("  Reads the game's item text from its archives (read-only) and writes a copy with the test weapons' new names to");
     println!("  <mod folder>\\msg\\ENGLISH\\item.msgbnd.dcx (default: the folder \"mod\" next to this program), only if every check passes.");
@@ -145,10 +145,11 @@ fn main() -> ExitCode {
         Command::Ds3Probe | Command::Ds3Prepare => {
             // the same idea for Dark Souls III: first line of game-folder.txt next to the exe (the launcher reads it, too)
             let ds3 = args.ds3.or_else(|| ds3_hint(&dir));
-            let out = args.out.unwrap_or_else(|| dir.join("ds3-prepare"));
             if args.command == Command::Ds3Probe {
+                let out = args.out.unwrap_or_else(|| dir.join("ds3-probe"));
                 ds3::probe(&ds3::ProbeOpts { ds3, keys: args.keys, data: dir, out })
             } else {
+                let out = args.out.unwrap_or_else(|| dir.join("ds3-prepare"));
                 let mod_dir = args.mod_dir.unwrap_or_else(|| dir.join("mod"));
                 ds3::prepare(&ds3::PrepareOpts { ds3, keys: args.keys, data: dir, out, mod_dir }).ok()
             }

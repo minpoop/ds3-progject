@@ -20,8 +20,11 @@
 #   L  ds3-prepare started from its own folder, game named in game-folder.txt (the double-click way)
 #   M  a mod folder inside the game folder is refused (nothing is ever written there)
 #   N  bad command lines for the Dark Souls III commands (exit code 64)
+#   R  Data0.bhd is a plain (not encrypted) table of contents and holds the item text: no key and no saved table needed
 #   Q  sm2-export-models (the optional model-file copy): exact copies of the two weapons' template files, nothing in the game
 #   P  no key anywhere, but the plain tables of contents the running game held were saved (ashenmarine/cache/bhd5): exit code 0
+#   S  the item text is stored under a name nobody expects: ds3-prepare finds it by what the files contain (and refuses a text
+#      container that is not the English item text)
 #
 #   tools/wine-setup-test.sh            # needs: wine64, xvfb-run, mingw-w64, rust target x86_64-pc-windows-gnu, python3
 set -u
@@ -213,7 +216,7 @@ sed 's/^/    /' "$D3/h.out" | head -40
 check "H exit code 0" '[ "$(cat "$D3/h.rc")" = "0" ]'
 check "H the install is byte-identical afterwards" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
 check "H the report lists the keys by fingerprint and the archives" 'grep -q "archive keys found in the program file: 2 (87febfc8, b2969406)" "$D3/out-h/ds3-report.txt" && grep -q "key 87febfc8" "$D3/out-h/ds3-report.txt" && grep -q "key b2969406" "$D3/out-h/ds3-report.txt"'
-check "H the report has the path table with the item text" 'grep -q "^  /msg/ENGLISH/item.msgbnd.dcx .*hash 50b424bf" "$D3/out-h/ds3-report.txt" && grep -q "9 of 40 paths exist" "$D3/out-h/ds3-report.txt"'
+check "H the report has the path table with the item text" 'grep -q "^  /msg/ENGLISH/item.msgbnd.dcx .*hash 50b424bf" "$D3/out-h/ds3-report.txt" && grep -q "9 of 50 paths exist" "$D3/out-h/ds3-report.txt"'
 check "H the report lists the item text container and the texts at the test ids" 'grep -q "DCX variant DCX_DFLT_10000_44_9" "$D3/out-h/ds3-report.txt" && grep -q "id 2000000: WeaponName.fmg \"Shortsword\"" "$D3/out-h/ds3-report.txt"'
 check "H the dry run passed" 'grep -q "\[ok\] the edits: 3 edits" "$D3/out-h/ds3-report.txt" && ! grep -q "FAILED\|PROBLEM\|CRASHED" "$D3/out-h/ds3-report.txt"'
 check "H the report lists the weapon model containers" 'grep -q "wp_a_0200.flver" "$D3/out-h/ds3-report.txt" && grep -q "wp_a_1409.hkx" "$D3/out-h/ds3-report.txt"'
@@ -293,6 +296,34 @@ check "P the install is untouched" '[ "$(treehash "$D3/memory-only/DARK SOULS II
 rm -rf "$D3/kit-p/cache"
 wine_ds3 "$(winpath "$D3/kit-p/ashenmarine-setup.exe")" p2 ds3-prepare --ds3 "$(winpath "$D3/memory-only/DARK SOULS III")" --mod "$(winpath "$D3/mod-p2")" --out "$(winpath "$D3/out-p2")"
 check "P2 without the saved tables: exit code 2, nothing written, the plain-words hint" '[ "$(cat "$D3/p2.rc")" = "2" ] && [ ! -e "$D3/mod-p2" ] && flat_out "$D3/p2.out" | grep -q "start the game once with Play-AshenMarine.bat"'
+
+echo; echo "== R: a plain Data0.bhd that holds the item text needs no key =="
+"$FAKE_DS3" "$D3/plain-data0/DARK SOULS III" --no-exe-keys --plain-data0 > /dev/null || { echo "cannot build the fake Dark Souls III install (plain Data0)"; exit 1; }
+D3_PLAIN_BEFORE="$(treehash "$D3/plain-data0/DARK SOULS III")"
+mkdir -p "$D3/kit-r"; cp "$BIN/ashenmarine-setup.exe" "$D3/kit-r/"
+wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" r ds3-prepare --ds3 "$(winpath "$D3/plain-data0/DARK SOULS III")" --mod "$(winpath "$D3/mod-r")" --out "$(winpath "$D3/out-r")"
+sed 's/^/    /' "$D3/r.out" | sed -n 8,26p
+check "R exit code 0" '[ "$(cat "$D3/r.rc")" = "0" ]'
+check "R the report says Data0 was opened as a plain header and what the others need" 'grep -q "Data0 .*plain header (the .bhd is not encrypted)" "$D3/out-r/ds3-report.txt" && grep -q "NOTE: 2 of 3 archives could not be opened" "$D3/out-r/ds3-report.txt" && grep -q "whole 256-byte blocks" "$D3/out-r/ds3-report.txt"'
+check "R the override is right and the same file the keys gave" 'ds3_manifest_ok "$D3/mod-r" && ds3_override_ok "$D3/mod-r/msg/ENGLISH/item.msgbnd.dcx" && cmp -s "$D3/mod-r/msg/ENGLISH/item.msgbnd.dcx" "$D3/mod-k/msg/ENGLISH/item.msgbnd.dcx"'
+check "R the install is untouched" '[ "$(treehash "$D3/plain-data0/DARK SOULS III")" = "$D3_PLAIN_BEFORE" ]'
+# a failed prepare writes the diagnosis (path table) into the same report
+"$FAKE_DS3" "$D3/no-item/DARK SOULS III" --variant no-item > /dev/null || { echo "cannot build the fake Dark Souls III install (no item text)"; exit 1; }
+wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" r2 ds3-prepare --ds3 "$(winpath "$D3/no-item/DARK SOULS III")" --mod "$(winpath "$D3/mod-r2")" --out "$(winpath "$D3/out-r2")"
+check "R2 a missing item text: exit code 2, nothing written, and the report carries the path table for the diagnosis" '[ "$(cat "$D3/r2.rc")" = "2" ] && [ ! -e "$D3/mod-r2" ] && grep -q "Where the files are (for the diagnosis)" "$D3/out-r2/ds3-report.txt" && grep -q "/msg/ENGLISH/item.msgbnd.dcx .*hash 50b424bf" "$D3/out-r2/ds3-report.txt"'
+
+echo; echo "== S: an item text stored under a name nobody expects is found by what it contains =="
+"$FAKE_DS3" "$D3/unexpected/DARK SOULS III" --variant unexpected-path > /dev/null || { echo "cannot build the fake Dark Souls III install (unexpected path)"; exit 1; }
+D3_UNEXP_BEFORE="$(treehash "$D3/unexpected/DARK SOULS III")"
+wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" s ds3-prepare --ds3 "$(winpath "$D3/unexpected/DARK SOULS III")" --mod "$(winpath "$D3/mod-s")" --out "$(winpath "$D3/out-s")"
+sed 's/^/    /' "$D3/s.out" | sed -n 8,30p
+check "S exit code 0" '[ "$(cat "$D3/s.rc")" = "0" ]'
+check "S the report says it looked at the files and recognised the text by its content" 'grep -q "Looking at the start of every file in the archives" "$D3/out-s/ds3-report.txt" && grep -q "recognised by its text" "$D3/out-s/ds3-report.txt" && ! grep -q "PROBLEM" "$D3/out-s/ds3-report.txt"'
+check "S the override is right" 'ds3_manifest_ok "$D3/mod-s" && ds3_override_ok "$D3/mod-s/msg/ENGLISH/item.msgbnd.dcx"'
+check "S the install is untouched" '[ "$(treehash "$D3/unexpected/DARK SOULS III")" = "$D3_UNEXP_BEFORE" ]'
+"$FAKE_DS3" "$D3/unexpected-wrong/DARK SOULS III" --variant unexpected-wrong-name > /dev/null || { echo "cannot build the fake Dark Souls III install (unexpected path, wrong name)"; exit 1; }
+wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" s2 ds3-prepare --ds3 "$(winpath "$D3/unexpected-wrong/DARK SOULS III")" --mod "$(winpath "$D3/mod-s2")" --out "$(winpath "$D3/out-s2")"
+check "S2 a text container that is not the English item text: exit code 2 and nothing written" '[ "$(cat "$D3/s2.rc")" = "2" ] && [ ! -e "$D3/mod-s2" ] && grep -q "has the English item text" "$D3/out-s2/ds3-report.txt"'
 
 echo; echo "== O: sm2-mesh-probe under Wine against the synthetic Space Marine 2 =="
 (cd "$OUT" && WINEDEBUG=-all timeout 120 xvfb-run -a "$WINE" "$BIN/ashenmarine-setup.exe" sm2-mesh-probe --sm2 "$(winpath "$OUT/Space Marine 2")" --out "$(winpath "$OUT/out-o")" > "$OUT/run-o.out" 2>&1; echo $? > "$OUT/run-o.rc")
