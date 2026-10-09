@@ -25,22 +25,27 @@ echo    1. the Space Marine 2 chainsword and bolt pistol sounds, as ordinary .wa
 echo    2. a copy of Dark Souls III's item text with the names Chainsword / Bolt Pistol / Bolt Rounds, in  ashenmarine\mod
 echo    3. a report that lists where Dark Souls III keeps the files the mod needs (no copies of them)
 echo    4. a report about how the weapon models are stored (no copies of the models)
+echo    5. a TRIAL RUN of the new weapon models: they are built in memory, checked and drawn (a report and a picture
+echo       in  ashenmarine\ds3-models ); nothing is put where Dark Souls III would load it
 echo  It takes a few minutes. Please wait for "Done" at the end.
 echo  If Space Marine 2 is not in a normal Steam library, put its folder on the first line of a new text file called
 echo  ashenmarine\sm2-folder.txt (and Dark Souls III's, the folder that contains Game\DarkSoulsIII.exe, in
 echo  ashenmarine\game-folder.txt) and run this again.
 echo.
-echo  ===== 1 of 4: Space Marine 2 sounds =====
+echo  ===== 1 of 5: Space Marine 2 sounds =====
 "ashenmarine\ashenmarine-setup.exe" prepare
 echo.
-echo  ===== 2 of 4: Dark Souls III item names =====
+echo  ===== 2 of 5: Dark Souls III item names =====
 "ashenmarine\ashenmarine-setup.exe" ds3-prepare
 echo.
-echo  ===== 3 of 4: where Dark Souls III keeps its files (report only) =====
+echo  ===== 3 of 5: where Dark Souls III keeps its files (report only) =====
 "ashenmarine\ashenmarine-setup.exe" ds3-probe
 echo.
-echo  ===== 4 of 4: model reports =====
+echo  ===== 4 of 5: model reports =====
 "ashenmarine\ashenmarine-setup.exe" sm2-mesh-probe
+echo.
+echo  ===== 5 of 5: the new weapon models, TRIAL RUN (nothing is put in the game) =====
+"ashenmarine\ashenmarine-setup.exe" ds3-models
 echo.
 echo  Done. You can listen to any .wav in  ashenmarine\assets\sounds  (set A) and  ashenmarine\assets\sounds-exact  (set B).
 echo  Next: double-click Play-AshenMarine.bat.

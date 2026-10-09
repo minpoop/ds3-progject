@@ -25,6 +25,9 @@
 #   P  no key anywhere, but the plain tables of contents the running game held were saved (ashenmarine/cache/bhd5): exit code 0
 #   S  the item text is stored under a name nobody expects: ds3-prepare finds it by what the files contain (and refuses a text
 #      container that is not the English item text)
+#   U  ds3-models (the weapon model swap) against both synthetic games: a trial run (report, pictures, candidates; nothing where the
+#      game loads it) and an install run (the containers in the mod folder, listed in ashenmarine-models.json); a mod folder inside
+#      a game is refused
 #   T  ds3-export-models (the optional copy of the five weapon containers): exact copies, a report, nothing in the game; no key:
 #      exit code 2 and nothing copied; an output folder inside the game is refused
 #
@@ -340,6 +343,30 @@ wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" t2 ds3-export-models --ds3
 check "T2 no key: exit code 2, nothing copied" '[ "$(cat "$D3/t2.rc")" = "2" ] && [ ! -e "$D3/out-t2/wp_a_0200.partsbnd.dcx" ] && grep -q "Nothing was copied" "$D3/out-t2/ds3-export-report.txt"'
 wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" t3 ds3-export-models --ds3 "$(winpath "$GAME")" --out "$(winpath "$GAME/Game/copies")"
 check "T3 an output folder inside the game is refused (exit code 2) and nothing is created there" '[ "$(cat "$D3/t3.rc")" = "2" ] && flat_out "$D3/t3.out" | grep -q "is inside your Dark Souls III folder" && [ ! -e "$GAME/Game/copies" ] && [ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
+
+echo; echo "== U: ds3-models under Wine against both synthetic games =="
+"$ROOT/target/debug/examples/make_fake_sm2" "$D3/sm2-weapons/Space Marine 2" --weapons > /dev/null || { echo "cannot build the fake Space Marine 2 with weapons"; exit 1; }
+D3_SM2W_BEFORE="$(treehash "$D3/sm2-weapons/Space Marine 2")"
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" u ds3-models --ds3 "$(winpath "$GAME")" --sm2 "$(winpath "$D3/sm2-weapons/Space Marine 2")" --mod "$(winpath "$D3/mod-u")" --out "$(winpath "$D3/out-u")"
+sed 's/^/    /' "$D3/u.out" | tail -14
+check "U exit code 0" '[ "$(cat "$D3/u.rc")" = "0" ]'
+check "U both games are byte-identical afterwards" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ] && [ "$(treehash "$D3/sm2-weapons/Space Marine 2")" = "$D3_SM2W_BEFORE" ]'
+check "U a trial run puts nothing where the game loads it" '[ ! -e "$D3/mod-u" ]'
+check "U the report, the pictures and the candidates are in the report folder" '[ -f "$D3/out-u/ds3-models-report.txt" ] && [ -f "$D3/out-u/wp_a_0200-overlay.png" ] && [ -f "$D3/out-u/candidates/wp_a_0200.partsbnd.dcx" ] && [ -f "$D3/out-u/candidates/wp_a_1409.partsbnd.dcx" ] && [ "$(head -c 4 "$D3/out-u/candidates/wp_a_1409.partsbnd.dcx")" = "DCX" ] && [ "$(head -c 4 "$D3/out-u/wp_a_1409-overlay.png" | tail -c 3)" = "PNG" ]'
+check "U the report says it is a trial run and every check passed" 'grep -q "TRIAL RUN" "$D3/out-u/ds3-models-report.txt" && grep -q "the model written again is byte-identical to the game" "$D3/out-u/ds3-models-report.txt" && grep -q "check: packed as DCX" "$D3/out-u/ds3-models-report.txt" && grep -q "3 model file(s) made, 0 not made" "$D3/out-u/ds3-models-report.txt" && ! grep -q "PROBLEM\|NOT DONE\|BEGIN RSA" "$D3/out-u/ds3-models-report.txt"'
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" u2 ds3-models --install --ds3 "$(winpath "$GAME")" --sm2 "$(winpath "$D3/sm2-weapons/Space Marine 2")" --mod "$(winpath "$D3/mod-u")" --out "$(winpath "$D3/out-u2")"
+check "U2 an install run: exit code 0, the containers are in mod/parts and listed" '[ "$(cat "$D3/u2.rc")" = "0" ] && [ -f "$D3/mod-u/parts/wp_a_0200.partsbnd.dcx" ] && [ -f "$D3/mod-u/parts/wp_a_1409.partsbnd.dcx" ] && [ -f "$D3/mod-u/ashenmarine-models.json" ] && cmp -s "$D3/mod-u/parts/wp_a_0200.partsbnd.dcx" "$D3/out-u/candidates/wp_a_0200.partsbnd.dcx"'
+check "U2 the manifest lists each file with its size and hash" 'python3 -I - "$D3/mod-u" <<PY
+import hashlib, json, os, sys
+mod = sys.argv[1]
+m = json.load(open(os.path.join(mod, "ashenmarine-models.json")))
+assert m["format"] == 1 and len(m["files"]) == 3, m
+for f in m["files"]:
+    b = open(os.path.join(mod, f["path"]), "rb").read()
+    assert f["bytes"] == len(b) and f["sha256"] == hashlib.sha256(b).hexdigest(), f
+PY'
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" u3 ds3-models --install --ds3 "$(winpath "$GAME")" --sm2 "$(winpath "$D3/sm2-weapons/Space Marine 2")" --mod "$(winpath "$GAME/Game/mods")" --out "$(winpath "$D3/out-u3")"
+check "U3 a mod folder inside the game is refused (exit code 2) and nothing is created there" '[ "$(cat "$D3/u3.rc")" = "2" ] && flat_out "$D3/u3.out" | grep -q "is inside a game" && [ ! -e "$GAME/Game/mods" ] && [ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
 
 echo; echo "== O: sm2-mesh-probe under Wine against the synthetic Space Marine 2 =="
 (cd "$OUT" && WINEDEBUG=-all timeout 120 xvfb-run -a "$WINE" "$BIN/ashenmarine-setup.exe" sm2-mesh-probe --sm2 "$(winpath "$OUT/Space Marine 2")" --out "$(winpath "$OUT/out-o")" > "$OUT/run-o.out" 2>&1; echo $? > "$OUT/run-o.rc")

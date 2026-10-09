@@ -37,7 +37,7 @@ fn template_folder(name: &str) -> String {
 }
 
 /// The file name of a pak entry without the folders and the `.pct.resource` ending.
-fn texture_stem(entry: &str) -> &str {
+pub fn texture_stem(entry: &str) -> &str {
     let leaf = entry.rsplit('/').next().unwrap_or(entry);
     leaf.strip_suffix(".pct.resource").unwrap_or(leaf)
 }

@@ -245,6 +245,25 @@ both templates read to the last byte (every chunk that names its end offset ends
   7721 / 9640) are the full-detail static meshes; the next ones halve the triangles (LOD 1..5). Materials are typed property lists (`shadingMtl_Tex`, `layer0 = {texName, tint, tiling, blending, ...}`) - the textures `wpn_chainsword_01`, `chainsword_blade_01`, `shp_sc_grey_98` are separate `.pct` files (not in the sent model files).
 - Not done yet: textures, the animated teeth (own objects with matrices), tangent / bone weights use, the DS3 side (FLVER2 + TPF writer).
 
+## Kit 0.8 - the weapon model swap: what is built, what is assumed
+
+**Built (all tested with made-up data; Wine suites cover the shipped programs):**
+
+- `ds3data::flver` / `tpf` - FLVER2 (0x20013/0x20014) and PC TPF readers/writers that give back the very same bytes; `ds3-probe` step 7 reports the structure of `wp_a_0200` (Shortsword) and `wp_a_1409` (Avelyn): bones, dummies, materials with texture slots,
+  layouts, per-member vertex statistics (unit-length tests of the 4-byte members, ranges of floats and shorts, raw first vertices), and "written again it is byte-identical" for the model and the textures. `ds3-export-models` (optional, `Send-Model-Files.bat`)
+  copies the five containers (`wp_a_0200`, `_0200_l`, `_1404`, `_1409`, `_1419`) as stored; `sm2-export-models` now also copies the textures the full-detail material names.
+- `ds3data::vertex` (one vertex of a layout: positions, normals, tangents, bitangents, uvs in every storage type, bone numbers/weights, colours; writing starts from a template vertex so padding bytes stay the game's), `modelswap` (new shape into the biggest mesh; keeps
+  bones, dummy points, materials, layout; **first checks that the community's vertex notes fit the game's own vertices and that re-encoding them gives the same bytes**; reads the result back), `dds` (RGBA, area-average resize, mip chains, BC1/BC3/BC4/BC5 encoders, plain-colour
+  textures in every format incl. BC7 as a constant block, mean-colour reader), `weaponswap` (the whole container: model, colour map from a picture, the other maps as the average colour of the map they replace, all other files carried over; refuses unless the writers
+  reproduce the game's own files exactly). `setup::weaponmodel` + `ds3-models` command (trial run by default; `--install` writes `{mod}/parts/*.partsbnd.dcx` and `ashenmarine-models.json`, removing an earlier run's files first).
+- SM2 side facts (real files): the templates keep the weapon twice - as separate parts (base + 14 chain teeth / base + magazine + bolt + cartridge, each with LODs) and as **one merged static mesh per level whose object is the one `LodDef` index 0 names** (object 120 -> sub mesh 90 for the
+  chainsword, 14834 triangles = base 10326 + 14 x 322 teeth; object 52 -> sub mesh 38 for the pistol, 9640 triangles). That merged mesh is "the full-detail model" (`Template::full_detail_sub_meshes`). It sits in the space of its parts, displaced from the model space (hand at the origin) by the
+  centre of the `rb_wpn` rigid body box minus the mesh centre (chainsword (-0.029, -0.019, +0.62), checked against the matrices of `chainsword_base_geo`), which is how the grip is found. The chainsword is 1.71 m long (z), the pistol 0.67 m.
+
+**Assumed until real DS3 data is seen (kit 0.8 asks for it; every assumption is a check that fails closed):** member type meanings and the uv factor 2048 (`vertex.rs`), which byte of a 4-byte vector is padding (kept from a template vertex, never invented), the texture formats of the weapon maps and
+what the engine does with a different mip count or a different DDS flavour, whether `bnd4::replace_file` accepts the real containers' layout, that ModEngine2 serves `mod/parts/*.partsbnd.dcx`, the axis/side/scale fit (longest axis to longest axis, bulk side from the centroid against the grip, same length as the weapon replaced,
+proper turn only), the winding fix, and that the picture's v must be flipped for DS3 (`FLIP_V`). The first in-game test will show orientation, scale and texture side; each is one constant.
+
 ## Space Marine 2 sound events found (kit 0.3 report)
 
 - `wpn.bnk` v150: 7186 sounds, 838 events; media in `wpn.zip` (3642 `.wem`). Names recovered by hashing words: chainsword (`chswd`) events - `wpn_melee_chswd_light_1hit..4hit` (12-16 sounds each),

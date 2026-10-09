@@ -14,6 +14,8 @@
 //!
 //! The game's folder is only ever read. Reports show key fingerprints, never keys, and name paths relative to the game
 //! folder or the program's folder, so they never carry the player's user name.
+mod models;
+pub use models::{models, ModelsOpts, ModelsOutcome, MODELS_MANIFEST_FILE, MODELS_REPORT_FILE};
 use crate::report::{panic_text, Report};
 use crate::{find_ds3, human};
 use anyhow::{anyhow, bail, Result};

@@ -202,3 +202,23 @@ pub fn sound_install(root: &Path, bank: Vec<u8>, wems: &[(&str, Vec<u8>)]) {
     make_zip(zip.path(), wems, true);
     make_zip(&root.join("client_pc/root/paks/client/default/default_sound_0.pak"), &[("sounds/desktop/wpn.bnk", bank), ("sounds/desktop/wpn.zip", fs::read(zip.path()).unwrap())], true);
 }
+
+/// Adds made-up templates of a chainsword and a bolt pistol (one square each, full-detail level defined) and the picture
+/// their material names (an 8x8 red picture) to a fake install.
+pub fn add_made_up_weapons(sm2: &Path) {
+    let (tpl, data) = ashen_sm2::testing::made_up_weapon();
+    let red: Vec<u8> = [0x00u8, 0xF8, 0x1F, 0x00, 0, 0, 0, 0].iter().cycle().take(32).copied().collect();
+    make_zip(
+        &sm2.join("client_pc/root/paks/client/default/default_tpl_2.pak"),
+        &[
+            ("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl", tpl.clone()),
+            ("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl_data", data.clone()),
+            ("tpl/wpn_bolt_pistol_00.tpl/wpn_bolt_pistol_00.tpl", tpl),
+            ("tpl/wpn_bolt_pistol_00.tpl/wpn_bolt_pistol_00.tpl_data", data),
+            ("pct/square_tex.pct.resource", descriptor("square_tex", 12, 8, 2)),
+            ("pct/square_tex_1.pct_mip", red.clone()),
+            ("pct/square_tex_2.pct_mip", red[..8].to_vec()),
+        ],
+        true,
+    );
+}
