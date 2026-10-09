@@ -9,6 +9,7 @@ pub mod modelexport;
 pub mod prepare;
 pub mod probe;
 pub mod report;
+pub mod weaponmodel;
 
 use crate::report::Report;
 use anyhow::{anyhow, bail, Result};

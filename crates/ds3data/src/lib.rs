@@ -17,6 +17,10 @@
 //! * [`discover`] - finds the text bundles by what the files contain, when the path hash finds nothing
 //! * [`flver`] - the model format (weapons, characters): read, and written again in the game's own order
 //! * [`tpf`] - the texture container of a model (PC files)
+//! * [`weaponswap`] - the whole swap for one weapon container (model, colour map, other maps; every other file carried over)
+//! * [`dds`] - pictures: resizing, mip levels, block compression (BC1/BC3/BC4/BC5) and plain-colour textures
+//! * [`vertex`], [`modelswap`] - the values of one vertex in a model layout, and putting a new shape into a weapon model while
+//!   its bones, dummy points, materials and layout stay the game's own (every step checked, failing closed)
 //! * [`msgpatch`] - changes item names and descriptions in `item.msgbnd.dcx`, failing closed
 //! * [`scan`] - recognises archive keys and decrypted tables of contents in raw bytes (the running game's memory, the program
 //!   file); the test kit's collector in the hook uses it, this crate reads nothing from a process itself
@@ -26,16 +30,20 @@ pub mod archive;
 pub mod bhd5;
 pub mod bnd4;
 pub mod dcx;
+pub mod dds;
 pub mod discover;
 pub mod flver;
 pub mod fmg;
 pub mod hash;
 pub mod install;
 pub mod keys;
+pub mod modelswap;
 pub mod msgpatch;
 pub mod rsa;
 pub mod scan;
 pub mod tpf;
+pub mod weaponswap;
+pub mod vertex;
 mod util;
 
 pub use util::{hex, sha256_hex, snippet};

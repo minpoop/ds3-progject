@@ -7,6 +7,7 @@ pub mod mesh;
 pub mod mix;
 pub mod pak;
 pub mod render;
+#[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod texture;
 pub mod tpl;

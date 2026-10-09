@@ -183,6 +183,22 @@ impl Tpf {
 }
 
 impl Tpf {
+    /// The position of the texture with this name (names are compared without regard to upper and lower case).
+    pub fn index_of(&self, name: &str) -> Option<usize> {
+        self.textures.iter().position(|t| t.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Puts another `.dds` file into texture `index`, and the number of mip levels its header names; the game's format
+    /// number, the type and the flags of the entry stay.
+    pub fn replace_dds(&mut self, index: usize, dds: Vec<u8>) -> Result<()> {
+        let info = dds_info(&dds).ok_or_else(|| TpfError::Malformed("the new file is not a DDS file".to_string()))?;
+        let levels = u8::try_from(info.mip_levels.max(1)).map_err(|_| TpfError::Malformed("too many mip levels".to_string()))?;
+        let t = self.textures.get_mut(index).ok_or_else(|| TpfError::Malformed(format!("there is no texture {index}")))?;
+        t.bytes = dds;
+        t.mipmaps = levels;
+        Ok(())
+    }
+
     /// One line per texture for reports: name, the game's format number, type, mip maps, flags and what the DDS header says.
     pub fn describe(&self) -> Vec<String> {
         let mut out = vec![format!("TPF with {} textures (flag 2: {}, names in encoding {})", self.textures.len(), self.flag2, self.encoding)];
