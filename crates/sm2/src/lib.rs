@@ -3,6 +3,7 @@
 pub mod bnk;
 pub mod geom;
 pub mod hirc;
+pub mod mesh;
 pub mod mix;
 pub mod pak;
 pub mod render;

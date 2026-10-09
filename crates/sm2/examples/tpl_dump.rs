@@ -35,6 +35,11 @@ fn main() {
                 }
                 for (i, s) in g.sub_meshes.iter().enumerate() {
                     println!("  submesh {i}: mesh {} verts {}+{} faces {}+{} node {} skin {} bones {} uv {:?} tf {:?}", s.mesh, s.vertex_offset, s.vertex_count, s.face_offset, s.face_count, s.node, s.skin_compound, s.bone_ids.len(), s.uv_scaling, s.transform);
+                    if std::env::var_os("TPL_MATERIALS").is_some() {
+                        for (k, v) in &s.material {
+                            println!("      {k} = {}", v.show());
+                        }
+                    }
                 }
             }
         }

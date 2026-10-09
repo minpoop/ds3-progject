@@ -229,6 +229,22 @@ round-trips, `replace_file` with identical data gives identical bytes, garbage a
 - The collector pauses less in the middle phase (1.5 s between passes from 30 s to 2 min, 10 s up to 5 min) to improve the chance of catching `DLC1`'s key.
 - **Still assumed (first real data will tell):** the DCX header constants of the item text (`DCX_DFLT_10000_44_9`), BND4 raw format 0x74 with files in order at one alignment, FMG version 2, `ModEngine2` picking up `mod/msg/ENGLISH/item.msgbnd.dcx`, and that the `.fmg` names the container's files carry (the search keys on the extension).
 
+## Space Marine 2 model files (`.tpl` + `.tpl_data`): what is verified on the owner's chainsword and bolt pistol
+
+Own reader in `crates/sm2/src/tpl.rs` (template) and `crates/sm2/src/mesh.rs` (vertices and triangles); the layout facts were cross-checked against the published community notes (Saber "1SER" lists) and, above all, **against the real files**:
+both templates read to the last byte (every chunk that names its end offset ends exactly there), and the decoded sub meshes render as the recognisable chainsword / bolt pistol (`examples/mesh_preview` writes an OBJ and a three-view PNG; `examples/tpl_dump` prints everything read).
+
+- `.tpl`: 0x40-byte header (`1SER`, `tpl\0`, counters, a 16-character id `S3DRESOURCE`, header strings = none), then `TPL1`, a flag set (`i32` bit count + bytes; chainsword/pistol: bits 0 name, 2 state, 5 skin, 6 track animation, 8 bounding box, 9 LOD
+  definitions, 10 texture list (empty), 11 geometry graph). Skin: bone count (78 / 30) and the number of bones each LOD keeps (78, 63, 48, 33, 18 / 30, 24, 18, 12, 6); no inverse bind matrices in weapons. Track animation: sequence names (`anim1`, `chain_anim`, `finisher1`, `IDLE`,
+  `RELOAD_FULL`, `SHOOT_1`, ...) plus object animations and splines (read by their end offsets; not used yet).
+- Geometry graph `OGM1`: header word (low 16 bits = number of properties; above 8 the flag word is 16 bits), then property lists (objects with names, parents, children, matrices; named objects; matrices; split info; object properties = 16 bytes each) and data sentinels
+  (`u16` id + `u32` absolute end offset): 0 header (root node, node / buffer / mesh / sub mesh counts), 5 references (skipped), 2 buffers, 3 meshes, 4 sub meshes, 0xFFFF end. Buffers: flags (16-bit bit count + bytes), strides, lengths; **the `.tpl_data` file is exactly the buffers
+  one after the other in this order** (sizes add up to the file size). Per LOD four buffers: positions (stride 8: 3 x i16 + packed normal i16), faces (stride 6: 3 x u16), bone numbers (stride 4: 4 x u8; teeth = bones 63..77 in the chainsword), interleaved (stride 8: compressed tangent 4 x i8 and
+  uv 2 x i16, or 12 with a colour). A mesh lists (buffer, byte offset inside it); a sub mesh = (first vertex, vertex span, first face, face count) where **face indices are absolute inside the mesh's vertex range** (the 14 chain teeth interleave their vertices: tooth i uses 7580 + i + 14 k).
+  Positions = `i16 / 32767 * scale + position` per sub mesh (the `i16` transform values are in metres: scale (1, 1, 1) gives the chainsword's 1.7 m length; positions are relative to the object, centred), uv = `i16 / 32767 * uv scale`, v flipped. Sub mesh 90 (chainsword, 11388 vertices, 14834 triangles) and 38 (bolt pistol,
+  7721 / 9640) are the full-detail static meshes; the next ones halve the triangles (LOD 1..5). Materials are typed property lists (`shadingMtl_Tex`, `layer0 = {texName, tint, tiling, blending, ...}`) - the textures `wpn_chainsword_01`, `chainsword_blade_01`, `shp_sc_grey_98` are separate `.pct` files (not in the sent model files).
+- Not done yet: textures, the animated teeth (own objects with matrices), tangent / bone weights use, the DS3 side (FLVER2 + TPF writer).
+
 ## Space Marine 2 sound events found (kit 0.3 report)
 
 - `wpn.bnk` v150: 7186 sounds, 838 events; media in `wpn.zip` (3642 `.wem`). Names recovered by hashing words: chainsword (`chswd`) events - `wpn_melee_chswd_light_1hit..4hit` (12-16 sounds each),

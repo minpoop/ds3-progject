@@ -301,6 +301,31 @@ pub struct Mesh {
     pub buffers: Vec<(i32, i32)>,
 }
 
+/// A value in a material description (the files use a small typed tree: numbers, text, lists and nested property lists).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Int(i32),
+    Float(f32),
+    Bool(bool),
+    Text(String),
+    List(Vec<Value>),
+    Class(Vec<(String, Value)>),
+}
+
+impl Value {
+    /// A short text for reports: `name=value` pairs of a class, comma separated lists, plain numbers and text.
+    pub fn show(&self) -> String {
+        match self {
+            Value::Int(v) => v.to_string(),
+            Value::Float(v) => format!("{v}"),
+            Value::Bool(v) => v.to_string(),
+            Value::Text(v) => format!("{v:?}"),
+            Value::List(items) => format!("[{}]", items.iter().map(Value::show).collect::<Vec<_>>().join(", ")),
+            Value::Class(props) => format!("{{{}}}", props.iter().map(|(k, v)| format!("{k}={}", v.show())).collect::<Vec<_>>().join(", ")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SubMesh {
     pub vertex_offset: u16,
@@ -316,8 +341,8 @@ pub struct SubMesh {
     pub uv_scaling: Vec<(u8, i16)>,
     /// Position and scale (as 16-bit numbers) the vertex positions are relative to, when stored.
     pub transform: Option<([i16; 3], [i16; 3])>,
-    /// The material as the file stores it (names of the textures and numbers), one text line per property.
-    pub material: Vec<String>,
+    /// The material as the file stores it: a list of named values (texture names, numbers, flags).
+    pub material: Vec<(String, Value)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -366,6 +391,12 @@ const MAGIC_1SER: &[u8; 4] = b"1SER";
 const MAGIC_TPL: &[u8; 4] = b"tpl\0";
 const MAGIC_TPL1: &[u8; 4] = b"TPL1";
 const MAGIC_OGM1: &[u8; 4] = b"OGM1";
+
+/// Bits of a mesh's flag set that say which per-sub-mesh tables follow (they mirror the vertex format: compressed positions
+/// need a position and scale, bone indices need the list of bones, compressed texture coordinates need a scale).
+const MESH_HAS_TRANSFORM: usize = 3;
+const MESH_HAS_BONE_IDS: usize = 9;
+const MESH_HAS_UV_SCALING: usize = 30;
 
 impl Template {
     /// Reads a `.tpl` file.
@@ -1096,8 +1127,8 @@ fn read_buffers(c: &mut Cur, g: &mut Geometry) -> Result<()> {
     }
     let mut buffers = vec![Buffer::default(); n];
     while c.pos() < section_end {
-        let id = c.i32()?;
-        let end = c.i32()? as usize;
+        let id = c.u16()?;
+        let end = c.u32()? as usize;
         match id {
             0 => {
                 for b in &mut buffers {
@@ -1145,8 +1176,8 @@ fn read_meshes(c: &mut Cur, g: &mut Geometry) -> Result<()> {
     }
     let mut meshes = vec![Mesh::default(); n];
     while c.pos() < section_end {
-        let id = c.i32()?;
-        let end = c.i32()? as usize;
+        let id = c.u16()?;
+        let end = c.u32()? as usize;
         match id {
             0 => {
                 for m in &mut meshes {
@@ -1172,6 +1203,70 @@ fn read_meshes(c: &mut Cur, g: &mut Geometry) -> Result<()> {
     Ok(())
 }
 
+/// A list of named, typed values: a count, then for every property a name, a type number and the value. Types: 1 integer,
+/// 2 float, 3 boolean (one byte), 4 text, 6 list (a count, then a type number and a value for each item), 7 nested list of
+/// properties. `dynamic` = names have a length in front; else they end with a zero byte and are followed by a number.
+fn read_property_list(c: &mut Cur, dynamic: bool) -> Result<Vec<(String, Value)>> {
+    read_property_list_deep(c, dynamic, 0)
+}
+
+fn read_property_list_deep(c: &mut Cur, dynamic: bool, depth: usize) -> Result<Vec<(String, Value)>> {
+    if depth > 8 {
+        return c.err("property lists nested too deeply");
+    }
+    let count = c.u32()? as usize;
+    if count > 4096 {
+        return c.err(format!("a property list of {count} entries is not believable"));
+    }
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let name = if dynamic {
+            c.lps32()?
+        } else {
+            let mut bytes = Vec::new();
+            loop {
+                let b = c.u8()?;
+                if b == 0 {
+                    break;
+                }
+                bytes.push(b);
+                if bytes.len() > 1024 {
+                    return c.err("a property name without an end");
+                }
+            }
+            c.u32()?;
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        let kind = c.u32()?;
+        let value = read_typed_value(c, kind, dynamic, depth)?;
+        out.push((name, value));
+    }
+    Ok(out)
+}
+
+fn read_typed_value(c: &mut Cur, kind: u32, dynamic: bool, depth: usize) -> Result<Value> {
+    Ok(match kind {
+        1 => Value::Int(c.i32()?),
+        2 => Value::Float(c.f32()?),
+        3 => Value::Bool(c.u8()? != 0),
+        4 => Value::Text(c.lps32()?),
+        6 => {
+            let n = c.u32()? as usize;
+            if n > 65536 {
+                return c.err(format!("a list of {n} items is not believable"));
+            }
+            let mut items = Vec::with_capacity(n);
+            for _ in 0..n {
+                let k = c.u32()?;
+                items.push(read_typed_value(c, k, dynamic, depth + 1)?);
+            }
+            Value::List(items)
+        }
+        7 => Value::Class(read_property_list_deep(c, dynamic, depth + 1)?),
+        other => return c.err(format!("unknown property type {other}")),
+    })
+}
+
 fn read_sub_meshes(c: &mut Cur, g: &mut Geometry) -> Result<()> {
     let section_end = c.i32()? as usize;
     let n = usize::try_from(g.sub_mesh_count).map_err(|_| TplError { at: c.pos(), what: "a negative sub mesh count".to_string() })?;
@@ -1180,8 +1275,8 @@ fn read_sub_meshes(c: &mut Cur, g: &mut Geometry) -> Result<()> {
     }
     let mut subs = vec![SubMesh::default(); n];
     while c.pos() < section_end {
-        let id = c.i32()?;
-        let end = c.i32()? as usize;
+        let id = c.u16()?;
+        let end = c.u32()? as usize;
         match id {
             0 => {
                 // 12 bytes each, and when the section is bigger than that, a flag word and pairs of floats per set flag
@@ -1216,7 +1311,7 @@ fn read_sub_meshes(c: &mut Cur, g: &mut Geometry) -> Result<()> {
             }
             3 => {
                 for s in &mut subs {
-                    let has = g.meshes.get(s.mesh as usize).is_some_and(|m| m.flags.get(0));
+                    let has = g.meshes.get(s.mesh as usize).is_some_and(|m| m.flags.get(MESH_HAS_BONE_IDS));
                     if !has {
                         continue;
                     }
@@ -1228,7 +1323,7 @@ fn read_sub_meshes(c: &mut Cur, g: &mut Geometry) -> Result<()> {
             }
             4 => {
                 for s in &mut subs {
-                    let has = g.meshes.get(s.mesh as usize).is_some_and(|m| m.flags.get(1));
+                    let has = g.meshes.get(s.mesh as usize).is_some_and(|m| m.flags.get(MESH_HAS_UV_SCALING));
                     if !has {
                         continue;
                     }
@@ -1242,7 +1337,7 @@ fn read_sub_meshes(c: &mut Cur, g: &mut Geometry) -> Result<()> {
             }
             5 => {
                 for s in &mut subs {
-                    let has = g.meshes.get(s.mesh as usize).is_some_and(|m| m.flags.get(2));
+                    let has = g.meshes.get(s.mesh as usize).is_some_and(|m| m.flags.get(MESH_HAS_TRANSFORM));
                     if !has {
                         continue;
                     }
@@ -1251,8 +1346,16 @@ fn read_sub_meshes(c: &mut Cur, g: &mut Geometry) -> Result<()> {
                     s.transform = Some((position, scale));
                 }
             }
-            // materials: left for the next step (their layout is read from the file by position)
-            6..=8 => c.set_pos(end),
+            // materials: for every sub mesh the node it belongs to and a list of named values. Chunk 6 is a text form that is not
+            // read here; 7 and 8 are binary lists (7 with null-terminated names and a number in front of each type, 8 with
+            // length-prefixed names), the usual one is 8
+            6 => c.set_pos(end),
+            7 | 8 => {
+                for s in &mut subs {
+                    s.node = c.u16()? as i16;
+                    s.material = read_property_list(c, id == 8)?;
+                }
+            }
             other => return c.err(format!("unknown sub mesh chunk {other}")),
         }
         c.expect_pos(end, &format!("sub mesh chunk {id}"))?;
@@ -1291,6 +1394,241 @@ mod tests {
         assert_eq!(set.low64(), 0xF65);
         let short = BitSet::read(&mut Cur::new(&[3, 0, 0b101]), 2).unwrap();
         assert!(short.get(0) && !short.get(1) && short.get(2) && !short.get(3) && !short.get(99));
+    }
+
+    /// A small byte writer for building made-up template files in the tests (no game data anywhere).
+    #[derive(Default)]
+    pub(crate) struct W(pub Vec<u8>);
+
+    impl W {
+        pub fn u8(&mut self, v: u8) {
+            self.0.push(v);
+        }
+        pub fn u16(&mut self, v: u16) {
+            self.0.extend(v.to_le_bytes());
+        }
+        pub fn i16(&mut self, v: i16) {
+            self.0.extend(v.to_le_bytes());
+        }
+        pub fn u32(&mut self, v: u32) {
+            self.0.extend(v.to_le_bytes());
+        }
+        pub fn i32(&mut self, v: i32) {
+            self.0.extend(v.to_le_bytes());
+        }
+        pub fn f32(&mut self, v: f32) {
+            self.0.extend(v.to_le_bytes());
+        }
+        pub fn lps32(&mut self, s: &str) {
+            self.i32(s.len() as i32);
+            self.0.extend(s.as_bytes());
+        }
+        /// A flag set: a 16-bit bit count, then the bytes with the given bits on.
+        pub fn bits16(&mut self, count: u16, on: &[usize]) {
+            self.u16(count);
+            let mut bytes = vec![0u8; usize::from(count).div_ceil(8)];
+            for b in on {
+                bytes[b / 8] |= 1 << (b % 8);
+            }
+            self.0.extend(bytes);
+        }
+        /// A chunk: id, the offset at which it ends (patched afterwards), the content.
+        pub fn chunk(&mut self, id: u16, body: impl FnOnce(&mut W)) {
+            self.u16(id);
+            let at = self.0.len();
+            self.u32(0);
+            body(self);
+            let end = self.0.len() as u32;
+            self.0[at..at + 4].copy_from_slice(&end.to_le_bytes());
+        }
+        /// A section that starts with the offset at which it ends.
+        pub fn section(&mut self, body: impl FnOnce(&mut W)) {
+            let at = self.0.len();
+            self.i32(0);
+            body(self);
+            let end = self.0.len() as i32;
+            self.0[at..at + 4].copy_from_slice(&end.to_le_bytes());
+        }
+    }
+
+    /// A made-up model: one square (4 vertices, 2 triangles) with a compressed position stream, an interleaved stream with
+    /// one tangent and one texture coordinate set, a face stream and one material. Returns (.tpl, .tpl_data).
+    pub(crate) fn made_up_model() -> (Vec<u8>, Vec<u8>) {
+        let mut w = W::default();
+        // the 0x40 bytes in front: "1SER", "tpl\0", counters, flags, a 16-character id, three numbers, no strings
+        w.0.extend(b"1SERtpl\0");
+        w.0.extend([0u8; 24]);
+        w.u32(0);
+        w.0.extend(b"S3DRESOURCE     ");
+        w.i32(0);
+        w.i32(0);
+        w.i32(0);
+        assert_eq!(w.0.len(), 0x40);
+        w.0.extend(b"TPL1");
+        // properties: name (bit 0), geometry graph (bit 11)
+        w.i32(12);
+        w.u8(0b0000_0001);
+        w.u8(0b0000_1000);
+        w.lps32("made_up_square");
+        // the geometry graph: a header word that says 8 properties (so the flags are one byte), a version, no property lists
+        w.0.extend(b"OGM1");
+        w.u32(8);
+        w.u16(1);
+        w.u8(0);
+        w.chunk(0, |w| {
+            w.i16(0);
+            w.i32(1); // nodes
+            w.i32(4); // buffers
+            w.i32(1); // meshes
+            w.i32(1); // sub meshes
+            w.u32(0);
+            w.u32(0);
+        });
+        // four buffers: vertices, faces, bone numbers (none: absent), interleaved - here vertices, faces, interleaved + one spare
+        w.u16(2);
+        w.section(|w| {
+            w.chunk(0, |w| {
+                w.bits16(48, &[0, 3, 10, 11, 45]); // vertices: compressed position, packed normal in the fourth value
+                w.bits16(0, &[]); // faces
+                w.bits16(48, &[12, 17, 25, 30]); // interleaved: compressed tangent, compressed texture coordinates
+                w.bits16(48, &[9]); // bone numbers
+            });
+            w.chunk(1, |w| {
+                for stride in [8u16, 6, 8, 4] {
+                    w.u16(stride);
+                }
+            });
+            w.chunk(2, |w| {
+                for len in [32u32, 12, 32, 16] {
+                    w.u32(len);
+                }
+            });
+        });
+        w.u16(3);
+        w.section(|w| {
+            w.chunk(0, |w| w.bits16(48, &[3, 9, 30])); // compressed positions, bone numbers, compressed texture coordinates
+            w.chunk(2, |w| {
+                w.u8(4);
+                for (id, off) in [(0i32, 0i32), (1, 0), (2, 0), (3, 0)] {
+                    w.i32(id);
+                    w.i32(off);
+                }
+            });
+        });
+        w.u16(4);
+        w.section(|w| {
+            w.chunk(0, |w| {
+                for v in [0u16, 4, 0, 2] {
+                    w.u16(v);
+                }
+                w.i16(0);
+                w.i16(-1);
+            });
+            w.chunk(1, |w| w.i32(0));
+            w.chunk(3, |w| {
+                w.u8(2);
+                w.i16(7);
+                w.i16(9);
+            });
+            w.chunk(4, |w| {
+                w.u8(1);
+                w.u8(0);
+                w.i16(2);
+            });
+            w.chunk(5, |w| {
+                for v in [0i16, 0, 1, 2, 2, 2] {
+                    w.i16(v);
+                }
+            });
+            w.chunk(8, |w| {
+                w.u16(5);
+                w.u32(2);
+                w.lps32("shadingMtl_Tex");
+                w.u32(4);
+                w.lps32("square_tex");
+                w.lps32("tiling");
+                w.u32(2);
+                w.f32(1.5);
+            });
+        });
+        w.chunk(0xFFFF, |_| {});
+        // the data: vertices (x, y, z, packed normal), faces, interleaved (tangent, uv), bone numbers
+        let mut d = W::default();
+        for (x, y) in [(-32767i16, -32767i16), (32767, -32767), (32767, 32767), (-32767, 32767)] {
+            d.i16(x);
+            d.i16(y);
+            d.i16(0);
+            d.i16(0);
+        }
+        for t in [[0u16, 1, 2], [0, 2, 3]] {
+            for v in t {
+                d.u16(v);
+            }
+        }
+        for (u, v) in [(0i16, 0i16), (32767, 0), (32767, 32767), (0, 32767)] {
+            d.0.extend([127u8, 0, 0, 127]);
+            d.i16(u);
+            d.i16(v);
+        }
+        for b in 0..4u8 {
+            d.0.extend([b, 0, 0, 0]);
+        }
+        (w.0, d.0)
+    }
+
+    #[test]
+    fn a_made_up_model_reads_completely_and_decodes_to_the_square() {
+        let (tpl, data) = made_up_model();
+        let t = Template::parse(&tpl).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(t.name.as_deref(), Some("made_up_square"));
+        assert_eq!(t.end_at, tpl.len(), "everything was read");
+        let g = t.geometry.as_ref().unwrap();
+        assert_eq!((g.buffers.len(), g.meshes.len(), g.sub_meshes.len()), (4, 1, 1));
+        assert_eq!(g.buffers.iter().map(|b| (b.stride, b.length, b.start)).collect::<Vec<_>>(), vec![(8, 32, 0), (6, 12, 32), (8, 32, 44), (4, 16, 76)]);
+        let s = &g.sub_meshes[0];
+        assert_eq!((s.vertex_count, s.face_count, s.skin_compound, s.bone_ids.clone()), (4, 2, -1, vec![7, 9]));
+        assert_eq!(s.uv_scaling, vec![(0, 2)]);
+        assert_eq!(s.transform, Some(([0, 0, 1], [2, 2, 2])));
+        assert_eq!(s.material, vec![("shadingMtl_Tex".to_string(), Value::Text("square_tex".to_string())), ("tiling".to_string(), Value::Float(1.5))]);
+        assert_eq!(s.material[0].1.show(), "\"square_tex\"");
+        let m = crate::mesh::decode_sub_mesh(g, &data, 0).unwrap_or_else(|e| panic!("{e}"));
+        // positions: raw / 32767 * scale 2 + position (0, 0, 1)
+        assert_eq!(m.positions, vec![[-2.0, -2.0, 1.0], [2.0, -2.0, 1.0], [2.0, 2.0, 1.0], [-2.0, 2.0, 1.0]]);
+        assert_eq!(m.triangles, vec![[0, 1, 2], [0, 2, 3]]);
+        assert_eq!(m.uvs.len(), 4);
+        assert_eq!(m.uvs[0], [0.0, 1.0]);
+        assert_eq!(m.uvs[2], [2.0, -1.0], "texture coordinates are scaled by the sub mesh's uv scale (2) and v is flipped");
+        assert_eq!(m.tangents[0], [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(m.bones, vec![[0, 0, 0, 0], [1, 0, 0, 0], [2, 0, 0, 0], [3, 0, 0, 0]]);
+        assert_eq!(m.normals.len(), 4);
+    }
+
+    #[test]
+    fn damaged_copies_of_the_made_up_model_are_errors_not_crashes() {
+        let (tpl, data) = made_up_model();
+        // every cut-off copy either fails with a message or (for a cut after the last chunk) reads as much as it can
+        for cut in (0..tpl.len()).step_by(7) {
+            let (t, err) = Template::parse_partial(&tpl[..cut]);
+            if cut < tpl.len() {
+                assert!(err.is_some(), "a copy cut at {cut} should not read completely");
+            }
+            let _ = t;
+        }
+        // flipped bytes never panic (decoding included)
+        for i in (0x40..tpl.len()).step_by(3) {
+            let mut x = tpl.clone();
+            x[i] ^= 0xA5;
+            let (t, _) = Template::parse_partial(&x);
+            if let Some(g) = &t.geometry {
+                for k in 0..g.sub_meshes.len() {
+                    let _ = crate::mesh::decode_sub_mesh(g, &data, k);
+                }
+            }
+        }
+        // a short data file is an error
+        let t = Template::parse(&tpl).unwrap();
+        assert!(crate::mesh::decode_sub_mesh(t.geometry.as_ref().unwrap(), &data[..60], 0).is_err());
+        assert!(crate::mesh::decode_sub_mesh(t.geometry.as_ref().unwrap(), &data, 5).is_err());
     }
 
     #[test]
