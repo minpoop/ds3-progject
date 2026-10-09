@@ -41,6 +41,9 @@ const MAX_NEAR_MISS_LINES: usize = 12;
 const MAX_ENTRY_LINES: usize = 8;
 /// The most places where a known path hash was found at all (whatever follows it) that are described.
 const MAX_HASH_LINES: usize = 10;
+/// The hints about how the game holds its files (encrypted starts, path hashes) are looked for in this many passes, and
+/// after that only in every tenth: they cost as much as the rest of a pass together.
+const INTEL_PASSES: u32 = 4;
 
 /// One archive of the install.
 struct Slot {
@@ -289,16 +292,17 @@ impl<'a> Harvester<'a> {
             }
         }
         // a plain table of contents
-        st.magic_seen += memchr::memmem::find_iter(data, b"BHD5").count();
+        let (heads, magic) = self.scanner.headers_counted(data);
+        st.magic_seen += magic;
         if self.slots.iter().any(|s| s.header.is_none()) {
-            for h in self.scanner.headers(data) {
+            for h in heads {
                 st.header_hits += 1;
                 self.try_header(region, base + h.offset, &h, st);
             }
         }
-        // hints at how the game holds the files, for the report
+        // hints at how the game holds the files, for the report (a few passes are enough for these)
         for slot in &mut self.slots {
-            if slot.cipher_seen == 0 {
+            if slot.cipher_seen == 0 && self.pass_id <= INTEL_PASSES {
                 if let Some(head) = slot.block.get(..64) {
                     let n = memchr::memmem::find_iter(data, head).count();
                     if n > 0 {
@@ -308,7 +312,7 @@ impl<'a> Harvester<'a> {
                 }
             }
         }
-        if (self.entry_lines < MAX_ENTRY_LINES || self.hash_lines < MAX_HASH_LINES) && self.slots.iter().any(|s| s.header.is_none()) {
+        if (self.pass_id <= INTEL_PASSES || self.pass_id.is_multiple_of(10)) && (self.entry_lines < MAX_ENTRY_LINES || self.hash_lines < MAX_HASH_LINES) && self.slots.iter().any(|s| s.header.is_none()) {
             self.entry_intel(region, base, data);
         }
     }
@@ -841,6 +845,32 @@ mod tests {
         let mut h = Harvester::new(&log, &fake.game, &cache);
         h.adopt_saved();
         assert!(h.slots.iter().all(|s| s.header.is_none()), "a table that does not fit the archive of that name is not trusted");
+    }
+
+    /// How long a pass takes over a big heap (run by hand: `ashenmarine_hook-<hash>.exe --ignored --nocapture pass_speed`).
+    #[test]
+    #[ignore]
+    fn pass_speed() {
+        let _one = one_at_a_time();
+        let dir = temp_dir("speed");
+        let fake = build(&dir.join("DS3"), &FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+        // 1 GB of game-like data: noise, zeros and some repeated structure
+        let mut heap: Vec<Vec<u8>> = Vec::new();
+        for i in 0..64u64 {
+            let mut v = ashen_ds3data::testing::install::noise(i, 16 << 20);
+            for chunk in v.chunks_mut(4096).step_by(3) {
+                chunk.fill(0);
+            }
+            heap.push(v);
+        }
+        let log = Logger::open(&dir.join("harvest.txt"), "t");
+        let mut h = Harvester::new(&log, &fake.game, &dir.join("cache"));
+        for round in 1..=6 {
+            let started = Instant::now();
+            let st = h.pass(Duration::from_secs(600));
+            println!("pass {round}: {:.1} s for {} MB in {} regions", started.elapsed().as_secs_f32(), st.bytes >> 20, st.regions);
+        }
+        drop(heap);
     }
 
     #[test]

@@ -185,6 +185,12 @@ round-trips, `replace_file` with identical data gives identical bytes, garbage a
   3. a decrypted `BHD5` table of contents (contiguous or written in 256-byte slots): read whole, must parse completely, fit one `.bhd`'s block arithmetic and keep every file inside that archive's `.bdt`.
   Output: `cache/ds3-keys.pem`, `cache/bhd5/<archive>.bin`, `logs/harvest.txt` (fingerprints and places, never key text; per-pass counts; near misses with the first 32 bytes; places where the path hash of
   `msg/ENGLISH/item.msgbnd.dcx` / `menu.msgbnd.dcx` is followed by a plausible size and offset, with the neighbouring records - to learn a table layout if no whole table is found; which crypto libraries are loaded).
+- `hook.log` now has a line **`ARCHIVE opened by the game [...]: Data1.bhd (+N ms after the hook loaded; ...)`** the first time the game opens each `Data*.bhd` / `.bdt` through one of the hooked file functions
+  (`CreateFileW` & co.): it tells whether the game opens its archives before the hook is in place (then transient keys are gone and only things that stay in memory can be found; no such line at all = they were opened before the hook loaded or
+  through a function that is not hooked). The collector also looks again at once when a new archive file is opened.
+- Cost control: the hints about how the game holds its files (encrypted `.bhd` starts, path hashes with their neighbourhood) are looked for in the first 4 passes and then every tenth; a pass over 5 GB should take about 10 s.
+- `ashenmarine-setup sm2-export-models` + `Send-Model-Files.bat` (**optional, asks Y/N**): copies the chainsword / bolt pistol template files (~3 MB) out of the player's own Space Marine 2 into a zip on the Desktop; nothing is uploaded; for building the
+  mesh reader (the `.tpl` / `.tpl_data` formats cannot be learned from the numbers-only `mesh-report.txt`). Neither it nor the mesh probe ever writes inside the game folder (not even a report).
 - `ashenmarine-setup ds3-prepare` / `ds3-probe` read the cache: keys from `cache/ds3-keys.pem`, tables from `cache/bhd5/*.bin` (`Archive::from_plain_header`, `PlainHeader`, `Ds3Install::open_with_sources`); a key wins over a table; the report says per archive
   which was used. The program file is now also searched for keys in the other shapes.
 - `Play-AshenMarine.bat` runs the launcher **in the window** (it waits for the game to close) and then runs `ds3-prepare` by itself if no name file exists yet: names appear from the second Play.

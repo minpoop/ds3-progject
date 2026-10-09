@@ -405,8 +405,16 @@ impl Scanner {
     /// Places that start like a decrypted `BHD5` header. The header fields are checked for sense; whether it is a whole,
     /// sound table is for [`check_image`] to say (the caller reads `declared` bytes from the place first).
     pub fn headers(&self, buf: &[u8]) -> Vec<HeaderHit> {
+        self.headers_counted(buf).0
+    }
+
+    /// [`Scanner::headers`], and how many times the four letters `BHD5` occur at all (text, a table that is not at its start
+    /// ...): a count that says whether the game keeps anything like a table in memory.
+    pub fn headers_counted(&self, buf: &[u8]) -> (Vec<HeaderHit>, usize) {
         let mut out = Vec::new();
+        let mut seen = 0usize;
         for at in self.bhd5.find_iter(buf) {
+            seen += 1;
             let (Some(&endian), Some(&z1), Some(&z2)) = (buf.get(at + 4), buf.get(at + 6), buf.get(at + 7)) else { continue };
             if endian != 0xFF || z1 != 0 || z2 != 0 || i32_le(buf, at + 8) != Some(1) {
                 continue;
@@ -422,7 +430,7 @@ impl Scanner {
                 out.push(HeaderHit { offset: at, declared, buckets, zero_before: at.checked_sub(1).and_then(|p| buf.get(p)) == Some(&0) });
             }
         }
-        out
+        (out, seen)
     }
 
     /// Where `hash` (little-endian) is followed by an `i32` size in `1..=max_size` and an `i64` offset in `0..=max_offset`
