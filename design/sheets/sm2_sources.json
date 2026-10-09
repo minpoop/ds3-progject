@@ -45,8 +45,8 @@
       "asset_kind": "model",
       "pak_pattern": "tpl/wpn_<weapon>*.tpl/ {.tpl .tpl_data .geom_dbg .cdt .lods_base .tpl_markup}",
       "format": "Saber 1SER binary classes (changes with SM2 patches)",
-      "converter": "later upgrade: parse the mesh and write a Dark Souls III weapon model; not part of the first build",
-      "output": "{data}/assets/models (later)",
+      "converter": "ashenmarine-setup (milestone 5 build): crates/sm2 tpl + mesh readers decode the merged full-detail sub mesh (the one the level-of-detail 0 definition names), ashen-ds3data re-encodes it into the Dark Souls III weapon model; see the weapon_look system",
+      "output": "{data}/mod/parts/wp_a_XXXX.partsbnd.dcx",
       "milestone": 5
     },
     {
@@ -85,8 +85,8 @@
       "asset_kind": "model",
       "pak_pattern": "tpl/wpn_<weapon>*.tpl/ {.tpl .tpl_data .geom_dbg .cdt .lods_base .tpl_markup}",
       "format": "Saber 1SER binary classes (changes with SM2 patches)",
-      "converter": "later upgrade: parse the mesh and write a Dark Souls III weapon model; not part of the first build",
-      "output": "{data}/assets/models (later)",
+      "converter": "ashenmarine-setup (milestone 5 build): crates/sm2 tpl + mesh readers decode the merged full-detail sub mesh (the one the level-of-detail 0 definition names), ashen-ds3data re-encodes it into the Dark Souls III weapon model; see the weapon_look system",
+      "output": "{data}/mod/parts/wp_a_XXXX.partsbnd.dcx",
       "milestone": 5
     },
     {

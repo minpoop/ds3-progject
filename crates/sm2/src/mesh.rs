@@ -237,8 +237,8 @@ pub fn decode_sub_mesh(g: &Geometry, data: &[u8], index: usize) -> Result<Decode
             let mut w = [0f32; 4];
             for i in 0..n_w {
                 let v = f32::from(r.u8()?) / 255.0;
-                if i < 4 {
-                    w[i] = v;
+                if let Some(slot) = w.get_mut(i) {
+                    *slot = v;
                 }
             }
             out.weights.push(w);
@@ -248,8 +248,8 @@ pub fn decode_sub_mesh(g: &Geometry, data: &[u8], index: usize) -> Result<Decode
             let mut b = [0u16; 4];
             for i in 0..n_i {
                 let v = if pf.get(FVF_INDICES16) { r.u16()? } else { u16::from(r.u8()?) };
-                if i < 4 {
-                    b[i] = v;
+                if let Some(slot) = b.get_mut(i) {
+                    *slot = v;
                 }
             }
             out.bones.push(b);

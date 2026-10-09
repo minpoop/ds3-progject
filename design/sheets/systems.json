@@ -183,8 +183,8 @@
       "name": "Weapons look like SM2's",
       "game": "ds3",
       "what": "The chainsword and bolt pistol show SM2's models and textures in Dark Souls III.",
-      "mechanism": null,
-      "owner": "hook_dll",
+      "mechanism": "ashenmarine-setup (read-only on both games) reads the Dark Souls III weapon container (parts/wp_a_XXXX.partsbnd.dcx) from the archives and the Space Marine 2 template (tpl/wpn_*.tpl + .tpl_data) and its textures from the paks, and writes a copy of the DS3 container to {data}/mod/parts/ where ModEngine2 loads it instead of the archived one: the container keeps the DS3 weapon's skeleton, materials, dummy points and collision files; its model gets the SM2 full-detail geometry (the merged level-of-detail-0 sub mesh), re-encoded member by member in the DS3 model's own vertex layout and bound to the weapon's own bone; its texture container gets the SM2 colour map re-encoded as a DS3 texture. Every step is checked (the model and the container written again must read back; sizes, counts and bounds must fit), and when anything is wrong nothing is written and an older file is removed. The first kits only report the structure of the DS3 files and (optionally) copy them so the converter can be written against real data; the look is a clearly labelled later upgrade of the same build",
+      "owner": "setup_exe",
       "risk": "high",
       "oracle": "pc_visual",
       "milestone": 3

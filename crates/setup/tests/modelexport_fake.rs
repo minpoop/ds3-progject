@@ -2,7 +2,8 @@
 //! folder, byte for byte, and never touches the install or writes inside it.
 mod common;
 use ashen_setup::modelexport::{report_path, run, Opts};
-use common::{fake_install, make_zip, tree};
+use ashen_sm2::testing::made_up_weapon;
+use common::{descriptor, fake_install, make_zip, tree};
 use std::fs;
 
 fn install_with_models(root: &std::path::Path) -> Vec<(&'static str, Vec<u8>)> {
@@ -40,6 +41,46 @@ fn the_two_weapons_template_files_are_copied_exactly_and_nothing_else() {
         assert!(report.contains(needle), "report is missing {needle:?}:\n{report}");
     }
     assert!(!report.contains("STEP FAILED") && !report.contains("STEP CRASHED") && !report.contains("PROBLEM"), "{report}");
+}
+
+#[test]
+fn the_textures_the_full_detail_material_names_are_copied_with_their_data_files() {
+    let t = tempfile::tempdir().unwrap();
+    let sm2 = t.path().join("Space Marine 2");
+    let out = t.path().join("kit").join("model-files");
+    fake_install(&sm2);
+    let (tpl, data) = made_up_weapon();
+    let red: Vec<u8> = [0x00u8, 0xF8, 0x1F, 0x00, 0, 0, 0, 0].iter().cycle().take(32).copied().collect();
+    let entries: Vec<(&str, Vec<u8>)> = vec![
+        ("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl", tpl.clone()),
+        ("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl_data", data.clone()),
+        ("pct/square_tex.pct.resource", descriptor("square_tex", 12, 8, 2)),
+        ("pct/square_tex_nm.pct.resource", descriptor("square_tex_nm", 12, 8, 2)),
+        ("pct/square_tex_artificer_01_01_red.pct.resource", descriptor("square_tex_artificer_01_01_red", 12, 8, 2)),
+        ("pct/square_tex_1.pct_mip", red.clone()),
+        ("pct/square_tex_2.pct_mip", red[..8].to_vec()),
+        ("pct/square_tex_nm_1.pct_mip", red.clone()),
+        // the second size of the normal map is not shipped
+        ("pct/square_tex_artificer_01_01_red_1.pct_mip", red.clone()),
+    ];
+    make_zip(&sm2.join("client_pc/root/paks/client/default/default_tpl_2.pak"), &entries, true);
+    let before = tree(&sm2);
+
+    assert!(run(&Opts { sm2: Some(sm2.clone()), out: out.clone() }));
+
+    assert_eq!(tree(&sm2), before, "the install is untouched");
+    let dir = out.join("wpn_chainsword_00.tpl");
+    assert_eq!(fs::read(dir.join("wpn_chainsword_00.tpl")).unwrap(), tpl);
+    assert_eq!(fs::read(dir.join("wpn_chainsword_00.tpl_data")).unwrap(), data);
+    assert_eq!(fs::read(dir.join("pct/square_tex_1.pct_mip")).unwrap(), red);
+    assert_eq!(fs::read(dir.join("pct/square_tex_2.pct_mip")).unwrap(), red[..8].to_vec());
+    assert!(dir.join("pct/square_tex.pct.resource").exists() && dir.join("pct/square_tex_nm.pct.resource").exists() && dir.join("pct/square_tex_nm_1.pct_mip").exists());
+    assert!(!dir.join("pct/square_tex_artificer_01_01_red.pct.resource").exists(), "colour variants are not copied");
+    let report = fs::read_to_string(report_path(&out)).unwrap();
+    for needle in ["texture \"square_tex\": 2 descriptors in its family", "square_tex_nm_2.pct_mip: not in any pak", "square_tex.pct.resource", "3 files"] {
+        assert!(report.contains(needle), "report is missing {needle:?}:\n{report}");
+    }
+    assert!(!report.contains("STEP FAILED") && !report.contains("STEP CRASHED"), "{report}");
 }
 
 #[test]

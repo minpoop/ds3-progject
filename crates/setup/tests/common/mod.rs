@@ -37,7 +37,7 @@ pub fn tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 /// A texture descriptor in the shape the real game uses (`res_desc_pct`, one data file per mip, `_1` is the top mip).
-fn descriptor(name: &str, format: u32, size: u32, mips: usize) -> Vec<u8> {
+pub fn descriptor(name: &str, format: u32, size: u32, mips: usize) -> Vec<u8> {
     let block = if format == 51 || format == 36 { 16u64 } else { 8 };
     let mut levels = Vec::new();
     let (mut off, mut edge) = (0u64, size);

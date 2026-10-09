@@ -535,7 +535,7 @@ impl LoadedTexture {
 }
 
 /// Find the data file a descriptor names: as written, then below `pct/`, then by file name anywhere in the paks.
-fn find_mip_file(paks: &crate::pak::PakSet, name: &str) -> Option<String> {
+pub fn find_mip_file(paks: &crate::pak::PakSet, name: &str) -> Option<String> {
     let norm = name.replace('\\', "/");
     for cand in [norm.clone(), format!("pct/{norm}")] {
         if paks.contains(&cand) {

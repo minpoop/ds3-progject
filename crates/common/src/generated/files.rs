@@ -32,6 +32,10 @@ pub const DS3_PROBE_REPORT: &str = "ds3_probe_report";
 pub const DS3_HEADER_CACHE: &str = "ds3_header_cache";
 pub const HARVEST_LOG: &str = "harvest_log";
 pub const ASSETS_SOUNDS_EXACT_DIR: &str = "assets_sounds_exact_dir";
+pub const SM2_MESH_REPORT: &str = "sm2_mesh_report";
+pub const SM2_MODEL_EXPORT_DIR: &str = "sm2_model_export_dir";
+pub const DS3_MODEL_EXPORT_DIR: &str = "ds3_model_export_dir";
+pub const PARTS_OVERRIDE_DIR: &str = "parts_override_dir";
 
 pub static FILES: &[FileRule] = &[
     FileRule {
@@ -303,5 +307,41 @@ pub static FILES: &[FileRule] = &[
         system: "asset_convert",
         guarded: false,
         milestone: 2,
+    },
+    FileRule {
+        id: "sm2_mesh_report",
+        path: "{data}/probe-sm2-mesh/mesh-report.txt",
+        purpose: "How the chainsword and bolt pistol templates read: objects, detail levels, the merged full-detail sub mesh, its bounds, material and the textures it names with the descriptors found in the paks (names and numbers only, no copies); private",
+        access: Access::Write,
+        system: "sm2_probe",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "sm2_model_export_dir",
+        path: "{data}/model-files",
+        purpose: "OPTIONAL. Plain copies of the chainsword and bolt pistol template files and of the textures their full-detail material names, made only when the owner runs Send-Model-Files.bat and chooses yes; the owner decides whether to send them; never part of the mashup",
+        access: Access::Write,
+        system: "sm2_read",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "ds3_model_export_dir",
+        path: "{data}/model-files/ds3",
+        purpose: "OPTIONAL. Plain copies of five Dark Souls III weapon containers (parts/wp_a_0200, _0200_l, _1404, _1409, _1419 .partsbnd.dcx as the game stores them) and ds3-export-report.txt, made only when the owner runs Send-Model-Files.bat and chooses yes; the owner decides whether to send them; never part of the mashup",
+        access: Access::Write,
+        system: "item_names",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "parts_override_dir",
+        path: "{data}/mod/parts",
+        purpose: "The weapon containers the model swap writes (a copy of the game's container whose model carries the Space Marine 2 shape); ModEngine2 loads them instead of the archived ones; removed again when anything is wrong so a stale model never stays",
+        access: Access::Write,
+        system: "weapon_look",
+        guarded: false,
+        milestone: 3,
     },
 ];

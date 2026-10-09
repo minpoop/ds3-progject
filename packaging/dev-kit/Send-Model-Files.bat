@@ -1,6 +1,6 @@
 @echo off
-rem OPTIONAL. Copies the chainsword and bolt pistol MODEL FILES of YOUR Space Marine 2 into one zip on your Desktop, so that
-rem you can choose to send them for building the model converter. Nothing is uploaded by this file; nothing in the game is changed.
+rem OPTIONAL. Copies a few MODEL FILES of YOUR Space Marine 2 and YOUR Dark Souls III into one zip on your Desktop, so that
+rem you can choose to send them for building the model converter. Nothing is uploaded by this file; nothing in either game is changed.
 cd /d "%~dp0"
 if not exist "ashenmarine\ashenmarine-setup.exe" (
   echo Cannot find ashenmarine\ashenmarine-setup.exe - did you unzip the whole folder?
@@ -10,23 +10,35 @@ if not exist "ashenmarine\ashenmarine-setup.exe" (
 echo.
 echo  ASHEN MARINE - model files (OPTIONAL)
 echo  -------------------------------------
-echo  This copies the chainsword and bolt pistol MODEL FILES of your Space Marine 2 (about 3 MB, taken from the game's own
-echo  files; the game is only read) into ONE zip on your Desktop:  AshenMarine-model-files.zip
+echo  This copies these files into ONE zip on your Desktop:  AshenMarine-model-files.zip
+echo    - the chainsword and bolt pistol MODEL files of your Space Marine 2, and the pictures (textures) they use
+echo      (a few MB, taken from the game's own files),
+echo    - five WEAPON MODEL files of your Dark Souls III: the Shortsword, the Avelyn and three related ones
+echo      (a few MB, taken from the game's own archives).
+echo  Both games are only read.
 echo.
 echo  NOTHING IS UPLOADED. I only get the zip if you attach it to the chat yourself, and I only use it to write the
-echo  converter that will run on your own PC. The finished mashup will never contain any Space Marine 2 file.
-echo  You do not have to do this: the rest of the kit works without it.
+echo  converter that will run on your own PC. The finished mashup will never contain any Space Marine 2 or
+echo  Dark Souls III file. You do not have to do this: the rest of the kit works without it.
 echo.
 choice /c YN /m " Make the zip now (Y = yes, N = no)"
 if errorlevel 2 goto :eof
 echo.
+echo  ===== 1 of 2: Space Marine 2 =====
 "ashenmarine\ashenmarine-setup.exe" sm2-export-models
-if errorlevel 1 (
-  echo.
-  echo  The copy did not work - the message above says why. Nothing was put on your Desktop.
+set SM2_RESULT=%errorlevel%
+echo.
+echo  ===== 2 of 2: Dark Souls III =====
+"ashenmarine\ashenmarine-setup.exe" ds3-export-models
+set DS3_RESULT=%errorlevel%
+echo.
+if not "%SM2_RESULT%"=="0" if not "%DS3_RESULT%"=="0" (
+  echo  Neither copy worked - the messages above say why. Nothing was put on your Desktop.
   pause
   exit /b 1
 )
+if not "%SM2_RESULT%"=="0" echo  The Space Marine 2 part did not work (see above); the zip will hold the Dark Souls III part only.
+if not "%DS3_RESULT%"=="0" echo  The Dark Souls III part did not work (see above); the zip will hold the Space Marine 2 part only.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
  "$out = Join-Path ([Environment]::GetFolderPath('Desktop')) 'AshenMarine-model-files.zip'; if (Test-Path $out) { Remove-Item $out -Force };" ^
  "Compress-Archive -Path 'ashenmarine\model-files\*' -DestinationPath $out;" ^

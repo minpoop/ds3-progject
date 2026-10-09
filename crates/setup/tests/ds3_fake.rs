@@ -4,10 +4,10 @@
 use ashen_ds3data::bnd4::Bnd4;
 use ashen_ds3data::dcx;
 use ashen_ds3data::fmg::FmgFile;
-use ashen_ds3data::testing::install::{build, FakeDs3, FakeOptions, ItemMsg};
+use ashen_ds3data::testing::install::{build, model_dcx, model_dcx_of, FakeDs3, FakeOptions, ItemMsg, MODEL_PATHS};
 use ashen_ds3data::testing::items::item_bnd4;
 use ashen_ds3data::testing::keys::test_key;
-use ashen_setup::ds3::{self, Outcome, PrepareOpts, ProbeOpts, EDITS, MANIFEST_FILE};
+use ashen_setup::ds3::{self, ExportOpts, Outcome, PrepareOpts, ProbeOpts, EDITS, MANIFEST_FILE};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
@@ -135,6 +135,46 @@ fn files_in_the_weapon_containers_that_are_not_models_or_textures_are_reported_n
     assert!(!report.contains("byte-identical to the game's file") && !report.contains("CRASHED"), "{report}");
 }
 
+#[test]
+fn exporting_the_weapon_containers_copies_them_as_stored_and_touches_nothing_else() {
+    let env = Env::new(&FakeOptions::default());
+    let before = tree(&env.fake.root);
+    assert!(env.export(None));
+    assert_eq!(tree(&env.fake.root), before, "the export must not change anything in the install");
+    let out = env.export_dir();
+    for path in MODEL_PATHS {
+        let name = path.trim_start_matches("/parts/");
+        let model = name.trim_end_matches(".partsbnd.dcx");
+        assert_eq!(fs::read(out.join(name)).unwrap(), model_dcx(model), "{name} is the very file the game holds");
+    }
+    let report = fs::read_to_string(out.join(ds3::EXPORT_REPORT_FILE)).unwrap();
+    for needle in ["wp_a_0200.partsbnd.dcx", "wp_a_1409.partsbnd.dcx", "DCX_DFLT_10000_44_9", "Copied 5 files", "Nothing of the game was changed", "inside: wp_a_0200.flver (2160 B), wp_a_0200.tpf (5969 B), wp_a_0200.hkx (120 B)"] {
+        assert!(report.contains(needle), "report is missing {needle:?}:\n{report}");
+    }
+    assert!(!report.contains("PROBLEM") && !report.contains("not copied"), "{report}");
+    // nothing but the five copies and the report
+    assert_eq!(fs::read_dir(&out).unwrap().count(), 6);
+}
+
+#[test]
+fn the_export_copies_what_it_can_and_says_what_it_cannot() {
+    // files in the weapon containers that are not models are still copied as stored: the export does not judge them
+    let env = Env::new(&FakeOptions { junk_models: true, ..FakeOptions::default() });
+    assert!(env.export(None));
+    assert_eq!(fs::read(env.export_dir().join("wp_a_0200.partsbnd.dcx")).unwrap(), model_dcx_of("wp_a_0200", true));
+    // no keys: nothing can be read, nothing is copied, and the reason is in the report
+    let nokeys = Env::new(&FakeOptions { exe_keys: vec![], ..FakeOptions::default() });
+    assert!(!nokeys.export(None));
+    assert!(!nokeys.export_dir().join("wp_a_0200.partsbnd.dcx").exists());
+    let report = fs::read_to_string(nokeys.export_dir().join(ds3::EXPORT_REPORT_FILE)).unwrap();
+    assert!(flat(&report).contains(NO_KEYS_YET) && flat(&report).contains("Nothing was copied"), "{report}");
+    // a folder inside the game folder is refused before anything is written
+    let env = Env::new(&FakeOptions::default());
+    let inside = env.fake.game.join("copies");
+    assert!(!ds3::export_models(&ExportOpts { ds3: Some(env.fake.root.clone()), keys: None, data: env.data.clone(), out: inside.clone() }));
+    assert!(!inside.exists());
+}
+
 /// A fake install, the folder of the "program" (where the report and the mod folder go) and what a run needs.
 struct Env {
     _t: tempfile::TempDir,
@@ -165,6 +205,14 @@ impl Env {
 
     fn probe(&self, keys: Option<PathBuf>) -> bool {
         ds3::probe(&ProbeOpts { ds3: Some(self.fake.root.clone()), keys, data: self.data.clone(), out: self.out() })
+    }
+
+    fn export_dir(&self) -> PathBuf {
+        self.data.join("model-files").join("ds3")
+    }
+
+    fn export(&self, keys: Option<PathBuf>) -> bool {
+        ds3::export_models(&ExportOpts { ds3: Some(self.fake.root.clone()), keys, data: self.data.clone(), out: self.export_dir() })
     }
 
     fn prepare(&self, keys: Option<PathBuf>) -> Outcome {

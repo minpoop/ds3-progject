@@ -7,6 +7,7 @@
 //! ashenmarine-setup sm2-export-models [--sm2 "<folder>"] [--out "<folder>"]
 //! ashenmarine-setup ds3-probe      [--ds3 "<folder>"] [--keys "<pem file>"] [--out "<report folder>"]
 //! ashenmarine-setup ds3-prepare    [--ds3 "<folder>"] [--keys "<pem file>"] [--mod "<mod folder>"] [--out "<report folder>"]
+//! ashenmarine-setup ds3-export-models [--ds3 "<folder>"] [--keys "<pem file>"] [--out "<folder>"]
 //! ```
 //!
 //! `probe` is the default when no command is given (so a double-click works). Exit codes: 0 done, 2 nothing could be
@@ -36,6 +37,9 @@ fn usage() {
     println!("  <mod folder>\\msg\\ENGLISH\\item.msgbnd.dcx (default: the folder \"mod\" next to this program), only if every check passes.");
     println!("  Dark Souls III is only read. If it is not found, put its folder on the first line of game-folder.txt next to this program.");
     println!("  --keys names a text file with the archive keys (-----BEGIN RSA PUBLIC KEY-----), in case the game's program file has none.");
+    println!("ashenmarine-setup ds3-export-models [--ds3 \"<Dark Souls III folder>\"] [--keys \"<key file>\"] [--out \"<folder>\"]");
+    println!("  OPTIONAL. Copies five weapon model files of your Dark Souls III (read-only on the game) into a folder");
+    println!("  (default: model-files\\ds3 next to this program) that you can choose to send me. Nothing is uploaded by this program.");
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -46,6 +50,7 @@ enum Command {
     ExportModels,
     Ds3Probe,
     Ds3Prepare,
+    Ds3ExportModels,
 }
 
 impl Command {
@@ -57,11 +62,12 @@ impl Command {
             Command::ExportModels => "sm2-export-models",
             Command::Ds3Probe => "ds3-probe",
             Command::Ds3Prepare => "ds3-prepare",
+            Command::Ds3ExportModels => "ds3-export-models",
         }
     }
 
     fn is_ds3(self) -> bool {
-        matches!(self, Command::Ds3Probe | Command::Ds3Prepare)
+        matches!(self, Command::Ds3Probe | Command::Ds3Prepare | Command::Ds3ExportModels)
     }
 }
 
@@ -88,6 +94,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             "sm2-export-models" => Command::ExportModels,
             "ds3-probe" => Command::Ds3Probe,
             "ds3-prepare" => Command::Ds3Prepare,
+            "ds3-export-models" => Command::Ds3ExportModels,
             other => return Err(format!("unknown command {other:?}")),
         };
     }
@@ -109,9 +116,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     }
     if !c.is_ds3() && (parsed.ds3.is_some() || parsed.keys.is_some() || parsed.mod_dir.is_some()) {
         let which = if parsed.ds3.is_some() { "--ds3" } else if parsed.keys.is_some() { "--keys" } else { "--mod" };
-        return Err(format!("{which} is for the Dark Souls III commands (ds3-probe, ds3-prepare), not for {}", c.name()));
+        return Err(format!("{which} is for the Dark Souls III commands (ds3-probe, ds3-prepare, ds3-export-models), not for {}", c.name()));
     }
-    if c == Command::Ds3Probe && parsed.mod_dir.is_some() {
+    if matches!(c, Command::Ds3Probe | Command::Ds3ExportModels) && parsed.mod_dir.is_some() {
         return Err("--mod is only used by ds3-prepare".to_string());
     }
     Ok(parsed)
@@ -142,16 +149,23 @@ fn main() -> ExitCode {
                 _ => meshprobe::run(&meshprobe::Opts { sm2, out: args.out.unwrap_or_else(|| dir.join("probe-sm2-mesh")) }),
             }
         }
-        Command::Ds3Probe | Command::Ds3Prepare => {
+        Command::Ds3Probe | Command::Ds3Prepare | Command::Ds3ExportModels => {
             // the same idea for Dark Souls III: first line of game-folder.txt next to the exe (the launcher reads it, too)
             let ds3 = args.ds3.or_else(|| ds3_hint(&dir));
-            if args.command == Command::Ds3Probe {
-                let out = args.out.unwrap_or_else(|| dir.join("ds3-probe"));
-                ds3::probe(&ds3::ProbeOpts { ds3, keys: args.keys, data: dir, out })
-            } else {
-                let out = args.out.unwrap_or_else(|| dir.join("ds3-prepare"));
-                let mod_dir = args.mod_dir.unwrap_or_else(|| dir.join("mod"));
-                ds3::prepare(&ds3::PrepareOpts { ds3, keys: args.keys, data: dir, out, mod_dir }).ok()
+            match args.command {
+                Command::Ds3Probe => {
+                    let out = args.out.unwrap_or_else(|| dir.join("ds3-probe"));
+                    ds3::probe(&ds3::ProbeOpts { ds3, keys: args.keys, data: dir, out })
+                }
+                Command::Ds3ExportModels => {
+                    let out = args.out.unwrap_or_else(|| dir.join("model-files").join("ds3"));
+                    ds3::export_models(&ds3::ExportOpts { ds3, keys: args.keys, data: dir, out })
+                }
+                _ => {
+                    let out = args.out.unwrap_or_else(|| dir.join("ds3-prepare"));
+                    let mod_dir = args.mod_dir.unwrap_or_else(|| dir.join("mod"));
+                    ds3::prepare(&ds3::PrepareOpts { ds3, keys: args.keys, data: dir, out, mod_dir }).ok()
+                }
             }
         }
     };
@@ -204,6 +218,15 @@ mod tests {
         assert_eq!((a.command, a.out, a.sm2), (Command::ExportModels, Some(PathBuf::from("x")), Some(PathBuf::from("y"))));
         assert!(parse(&["sm2-export-models", "--ds3", "y"]).unwrap_err().contains("--ds3 is for the Dark Souls III commands"));
         assert!(!Command::ExportModels.is_ds3() && Command::ExportModels.name() == "sm2-export-models");
+    }
+
+    #[test]
+    fn exporting_the_dark_souls_weapon_files_is_a_command_of_its_own() {
+        let a = parse(&["ds3-export-models", "--out", "x", "--ds3", "y", "--keys", "k.pem"]).unwrap();
+        assert_eq!(a, Args { ds3: Some(PathBuf::from("y")), keys: Some(PathBuf::from("k.pem")), out: Some(PathBuf::from("x")), ..args(Command::Ds3ExportModels) });
+        assert!(Command::Ds3ExportModels.is_ds3() && Command::Ds3ExportModels.name() == "ds3-export-models");
+        assert_eq!(parse(&["ds3-export-models", "--sm2", "x"]), Err("--sm2 is for Space Marine 2, not for ds3-export-models".to_string()));
+        assert_eq!(parse(&["ds3-export-models", "--mod", "x"]), Err("--mod is only used by ds3-prepare".to_string()));
     }
 
     #[test]

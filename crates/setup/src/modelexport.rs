@@ -3,15 +3,21 @@
 //! them to the person who builds the converter for the models. Nothing is uploaded by this program; it only writes files
 //! next to itself. The game is only read, and the output can never be inside the game's folder.
 //!
+//! Next to the template files go the textures the full-detail material names (the colour map and its short-suffix companions
+//! such as `_nm` and `_spec`, with every data file their descriptors list), so the converter can be tried on real pictures.
+//!
 //! Why this exists: the structure of these files is not documented anywhere official, and a report of numbers and names (the
 //! `sm2-mesh-probe` command) is not enough to write a reader for them. The copies are for analysis only - the mashup never
 //! contains game files; the converter that comes out of this runs on the player's own PC.
+use crate::meshprobe::texture_family;
 use crate::report::{panic_text, Report};
 use crate::{find_sm2, human, open_paks};
 use anyhow::{bail, Result};
 use ashen_common::VERSION;
 use ashen_ds3data::sha256_hex;
 use ashen_sm2::pak::PakSet;
+use ashen_sm2::texture::{find_mip_file, TexDesc};
+use ashen_sm2::tpl::Template;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
@@ -105,6 +111,7 @@ fn weapon(rep: &mut Report, paks: &mut PakSet, kw: &str, out: &Path, total: &mut
     let dir = out.join(dir_name);
     std::fs::create_dir_all(&dir).map_err(|e| anyhow::anyhow!("cannot create the output folder: {e}"))?;
     let mut n = 0;
+    let mut tpl_bytes: Option<Vec<u8>> = None;
     for name in &own {
         let Some(leaf) = plain_name(name) else {
             rep.say(format!("  skipped {name:?}: not a plain file name"));
@@ -123,9 +130,81 @@ fn weapon(rep: &mut Report, paks: &mut PakSet, kw: &str, out: &Path, total: &mut
             }
         };
         std::fs::write(dir.join(leaf), &bytes).map_err(|e| anyhow::anyhow!("cannot write {leaf}: {e}"))?;
+        if leaf.ends_with(".tpl") {
+            tpl_bytes = Some(bytes.clone());
+        }
         *total += bytes.len() as u64;
         n += 1;
         rep.say(format!("  {:<44} {:>10}  sha256 {}", leaf, human(bytes.len() as u64), &sha256_hex(&bytes)[..16]));
+    }
+    if let Some(tpl) = tpl_bytes {
+        n += textures(rep, paks, &tpl, &dir, total)?;
+    }
+    Ok(n)
+}
+
+/// Copies the textures the full-detail material names and their short-suffix companions: each descriptor and every data
+/// file it lists, below `<template folder>/pct`. Returns how many files were written.
+fn textures(rep: &mut Report, paks: &mut PakSet, tpl: &[u8], dir: &Path, total: &mut u64) -> Result<usize> {
+    let names = Template::parse_partial(tpl).0.full_detail_texture_names();
+    if names.is_empty() {
+        rep.say("  the template names no texture for its full-detail model, so no textures are copied");
+        return Ok(0);
+    }
+    let pct = dir.join("pct");
+    let mut n = 0;
+    for name in &names {
+        let family = texture_family(paks, name);
+        rep.say(format!("  texture {name:?}: {} descriptors in its family", family.len()));
+        for resource in &family {
+            // the descriptor, then the data files it lists
+            let descriptor = match paks.read(resource, 1 << 20) {
+                Ok(b) => b,
+                Err(e) => {
+                    rep.say(format!("    {resource}: could not be read ({e:#})"));
+                    continue;
+                }
+            };
+            let mut entries: Vec<(String, Vec<u8>)> = vec![(resource.clone(), descriptor.clone())];
+            match TexDesc::parse(&String::from_utf8_lossy(&descriptor)) {
+                Err(e) => rep.say(format!("    {resource}: {e:#}; only the descriptor is copied")),
+                Ok(desc) => {
+                    for mip in &desc.mip_maps {
+                        let Some(entry) = find_mip_file(paks, mip) else {
+                            rep.say(format!("    {mip}: not in any pak (the game does not ship every size)"));
+                            continue;
+                        };
+                        match paks.info(&entry) {
+                            Ok(i) if i.size <= MAX_FILE && *total + i.size <= MAX_TOTAL => match paks.read(&entry, MAX_FILE) {
+                                Ok(b) => entries.push((entry, b)),
+                                Err(e) => rep.say(format!("    {entry}: could not be read ({e:#})")),
+                            },
+                            Ok(i) => rep.say(format!("    skipped {entry} ({}): too big", human(i.size))),
+                            Err(e) => rep.say(format!("    {entry}: {e:#}")),
+                        }
+                    }
+                }
+            }
+            let mut size = 0u64;
+            let mut count = 0;
+            for (entry, bytes) in &entries {
+                let Some(leaf) = plain_name(entry) else {
+                    rep.say(format!("    skipped {entry:?}: not a plain file name"));
+                    continue;
+                };
+                if *total + bytes.len() as u64 > MAX_TOTAL {
+                    rep.say(format!("    skipped {leaf}: the copies would be bigger than {}", human(MAX_TOTAL)));
+                    continue;
+                }
+                std::fs::create_dir_all(&pct).map_err(|e| anyhow::anyhow!("cannot create the output folder: {e}"))?;
+                std::fs::write(pct.join(leaf), bytes).map_err(|e| anyhow::anyhow!("cannot write {leaf}: {e}"))?;
+                *total += bytes.len() as u64;
+                size += bytes.len() as u64;
+                count += 1;
+            }
+            n += count;
+            rep.say(format!("    {:<52} {count} files, {}", resource.rsplit('/').next().unwrap_or(resource), human(size)));
+        }
     }
     Ok(n)
 }

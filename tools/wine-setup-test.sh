@@ -25,6 +25,8 @@
 #   P  no key anywhere, but the plain tables of contents the running game held were saved (ashenmarine/cache/bhd5): exit code 0
 #   S  the item text is stored under a name nobody expects: ds3-prepare finds it by what the files contain (and refuses a text
 #      container that is not the English item text)
+#   T  ds3-export-models (the optional copy of the five weapon containers): exact copies, a report, nothing in the game; no key:
+#      exit code 2 and nothing copied; an output folder inside the game is refused
 #
 #   tools/wine-setup-test.sh            # needs: wine64, xvfb-run, mingw-w64, rust target x86_64-pc-windows-gnu, python3
 set -u
@@ -220,6 +222,7 @@ check "H the report has the path table with the item text" 'grep -q "^  /msg/ENG
 check "H the report lists the item text container and the texts at the test ids" 'grep -q "DCX variant DCX_DFLT_10000_44_9" "$D3/out-h/ds3-report.txt" && grep -q "id 2000000: WeaponName.fmg \"Shortsword\"" "$D3/out-h/ds3-report.txt"'
 check "H the dry run passed" 'grep -q "\[ok\] the edits: 3 edits" "$D3/out-h/ds3-report.txt" && ! grep -q "FAILED\|PROBLEM\|CRASHED" "$D3/out-h/ds3-report.txt"'
 check "H the report lists the weapon model containers" 'grep -q "wp_a_0200.flver" "$D3/out-h/ds3-report.txt" && grep -q "wp_a_1409.hkx" "$D3/out-h/ds3-report.txt"'
+check "H the report describes the model and texture files inside the weapon containers" 'grep -q "wp_a_0200.flver: .* bytes; model with 2 meshes, 2 materials, 3 bones, 1 dummies; written again it is byte-identical to the game" "$D3/out-h/ds3-report.txt" && grep -q "wp_a_1409.tpf: .* bytes; 2 textures \[wp_a_9999_a, wp_a_9999_n\]; written again it is byte-identical" "$D3/out-h/ds3-report.txt" && grep -q "layout 0: 28 bytes per vertex: Position Float3, Normal Byte4C" "$D3/out-h/ds3-report.txt" && ! grep -q "NOT READABLE\|DIFFERS" "$D3/out-h/ds3-report.txt"'
 check "H the report has no key and no folder name" '! grep -q "BEGIN RSA\|BEGIN PUBLIC" "$D3/out-h/ds3-report.txt" && ! grep -qi "wine-test\|/home/\|Z:" "$D3/out-h/ds3-report.txt"'
 check "H only the report was written" '[ "$(find "$D3/out-h" -type f | wc -l)" = "1" ] && [ -f "$D3/out-h/ds3-report.txt" ]'
 
@@ -324,6 +327,19 @@ check "S the install is untouched" '[ "$(treehash "$D3/unexpected/DARK SOULS III
 "$FAKE_DS3" "$D3/unexpected-wrong/DARK SOULS III" --variant unexpected-wrong-name > /dev/null || { echo "cannot build the fake Dark Souls III install (unexpected path, wrong name)"; exit 1; }
 wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" s2 ds3-prepare --ds3 "$(winpath "$D3/unexpected-wrong/DARK SOULS III")" --mod "$(winpath "$D3/mod-s2")" --out "$(winpath "$D3/out-s2")"
 check "S2 a text container that is not the English item text: exit code 2 and nothing written" '[ "$(cat "$D3/s2.rc")" = "2" ] && [ ! -e "$D3/mod-s2" ] && grep -q "has the English item text" "$D3/out-s2/ds3-report.txt"'
+
+echo; echo "== T: ds3-export-models under Wine against the synthetic Dark Souls III install =="
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" t ds3-export-models --ds3 "$(winpath "$GAME")" --out "$(winpath "$D3/out-t")"
+sed 's/^/    /' "$D3/t.out" | tail -16
+check "T exit code 0" '[ "$(cat "$D3/t.rc")" = "0" ]'
+check "T the install is byte-identical afterwards" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
+check "T the five weapon containers and the report were written, nothing else" '[ "$(find "$D3/out-t" -type f | wc -l)" = "6" ] && [ -f "$D3/out-t/wp_a_0200.partsbnd.dcx" ] && [ -f "$D3/out-t/wp_a_1409.partsbnd.dcx" ] && [ -f "$D3/out-t/ds3-export-report.txt" ]'
+check "T each copy is a DCX file as the game stores it (and the two weapons differ)" '[ "$(head -c 4 "$D3/out-t/wp_a_0200.partsbnd.dcx")" = "DCX" ] && ! cmp -s "$D3/out-t/wp_a_0200.partsbnd.dcx" "$D3/out-t/wp_a_1409.partsbnd.dcx"'
+check "T the report lists the copies and the files inside" 'grep -q "Copied 5 files" "$D3/out-t/ds3-export-report.txt" && grep -q "inside: wp_a_0200.flver" "$D3/out-t/ds3-export-report.txt" && ! grep -q "PROBLEM\|not copied\|BEGIN RSA" "$D3/out-t/ds3-export-report.txt"'
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" t2 ds3-export-models --ds3 "$(winpath "$D3/no-key/DARK SOULS III")" --out "$(winpath "$D3/out-t2")"
+check "T2 no key: exit code 2, nothing copied" '[ "$(cat "$D3/t2.rc")" = "2" ] && [ ! -e "$D3/out-t2/wp_a_0200.partsbnd.dcx" ] && grep -q "Nothing was copied" "$D3/out-t2/ds3-export-report.txt"'
+wine_ds3 "$(winpath "$D3/kit/ashenmarine-setup.exe")" t3 ds3-export-models --ds3 "$(winpath "$GAME")" --out "$(winpath "$GAME/Game/copies")"
+check "T3 an output folder inside the game is refused (exit code 2) and nothing is created there" '[ "$(cat "$D3/t3.rc")" = "2" ] && flat_out "$D3/t3.out" | grep -q "is inside your Dark Souls III folder" && [ ! -e "$GAME/Game/copies" ] && [ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
 
 echo; echo "== O: sm2-mesh-probe under Wine against the synthetic Space Marine 2 =="
 (cd "$OUT" && WINEDEBUG=-all timeout 120 xvfb-run -a "$WINE" "$BIN/ashenmarine-setup.exe" sm2-mesh-probe --sm2 "$(winpath "$OUT/Space Marine 2")" --out "$(winpath "$OUT/out-o")" > "$OUT/run-o.out" 2>&1; echo $? > "$OUT/run-o.rc")

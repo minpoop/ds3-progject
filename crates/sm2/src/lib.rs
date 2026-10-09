@@ -7,6 +7,7 @@ pub mod mesh;
 pub mod mix;
 pub mod pak;
 pub mod render;
+pub mod testing;
 pub mod texture;
 pub mod tpl;
 pub mod wem;

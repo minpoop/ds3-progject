@@ -1101,6 +1101,107 @@ fn finish_probe(mut rep: Report, ok: bool) -> bool {
     ok
 }
 
+// ------------------------------------------------------------------------------------------------ ds3-export-models
+
+/// The report of `ds3-export-models`.
+pub const EXPORT_REPORT_FILE: &str = "ds3-export-report.txt";
+/// Together the copies are far smaller than this (a weapon container is a few hundred KB to a few MB).
+const MAX_EXPORT_TOTAL: u64 = 96 << 20;
+
+pub struct ExportOpts {
+    pub ds3: Option<PathBuf>,
+    pub keys: Option<PathBuf>,
+    pub data: PathBuf,
+    /// The folder the copies and the report go to.
+    pub out: PathBuf,
+}
+
+pub fn export_report_path(out: &Path) -> PathBuf {
+    out.join(EXPORT_REPORT_FILE)
+}
+
+/// Writes the weapon containers as the game stores them (still DCX) below `out`, one file per container. Returns how many.
+fn copy_weapon_containers(rep: &mut Report, install: &Ds3Install, out: &Path) -> usize {
+    let mut total = 0u64;
+    let mut copied = 0;
+    for path in MODEL_PATHS {
+        let name = leaf(path);
+        let hits = install.lookup(path);
+        if hits.is_empty() {
+            rep.say(format!("  {name}: not in any archive"));
+            continue;
+        }
+        // several files can share a path hash: the first one that is DCX holding a BND4 is the container
+        let mut chosen = None;
+        let mut why_not = Vec::new();
+        for hit in &hits {
+            match hit.archive.read_limited(hit.entry, MAX_MODEL_FILE) {
+                Err(e) => why_not.push(format!("{}: cannot be read ({e})", hit.archive.name())),
+                Ok(bytes) => match dcx::decode_limited(&bytes, MAX_MSG_DECODED).map_err(|e| e.to_string()).and_then(|(inner, info)| Bnd4::parse(&inner).map(|b| (inner, info, b)).map_err(|e| e.to_string())) {
+                    Ok((inner, info, bnd)) => {
+                        chosen = Some((hit.archive.name().to_string(), bytes, inner, info, bnd));
+                        break;
+                    }
+                    Err(e) => why_not.push(format!("{}: not a usable container ({e})", hit.archive.name())),
+                },
+            }
+        }
+        let Some((archive, bytes, inner, info, bnd)) = chosen else {
+            rep.say_wrapped("  ", &format!("{name}: not copied - {}", why_not.join("; ")));
+            continue;
+        };
+        if total + bytes.len() as u64 > MAX_EXPORT_TOTAL {
+            rep.say(format!("  {name}: not copied - the copies would be bigger than {}", human(MAX_EXPORT_TOTAL)));
+            continue;
+        }
+        if let Err(e) = std::fs::create_dir_all(out).and_then(|_| std::fs::write(out.join(name), &bytes)) {
+            rep.say_wrapped("  ", &format!("{name}: not copied - cannot write it ({e})"));
+            continue;
+        }
+        total += bytes.len() as u64;
+        copied += 1;
+        let inside: Vec<String> = bnd.files.iter().map(|f| format!("{} ({} B)", f.name.as_deref().map_or("?", leaf), bnd.file_bytes(&inner, f.index).map_or(0, |b| b.len()))).collect();
+        rep.say(format!("  {name:<34} {:>10}  from {archive}, {}, sha256 {}", human(bytes.len() as u64), info.variant_name(), &sha256_hex(&bytes)[..16]));
+        rep.detail(format!("      inside: {}", inside.join(", ")));
+    }
+    copied
+}
+
+/// `ds3-export-models`: OPTIONAL. Copies the five weapon containers the model swap will change into a folder so the player
+/// can choose to send them. Returns true when at least one was copied. The game is only read; nothing is uploaded.
+pub fn export_models(opts: &ExportOpts) -> bool {
+    if let Ok(root) = find_ds3(opts.ds3.as_deref()) {
+        if let Ok(game) = find_game_dir(&root) {
+            if crate::prepare::is_inside(&opts.out, &game) || crate::prepare::is_inside(&opts.out, &root) {
+                println!("Ashen Marine - copy the Dark Souls III weapon model files (version {VERSION})");
+                println!("  The output folder is inside your Dark Souls III folder. This program never writes anything into the game folder, so nothing was done.");
+                println!("  Please start it again with  --out \"<a folder somewhere else>\"  or move this program out of the game folder.");
+                return false;
+            }
+        }
+    }
+    let report = export_report_path(&opts.out);
+    let mut rep = Report::create(&report);
+    rep.say(format!("Ashen Marine - copy the Dark Souls III weapon model files (version {VERSION})"));
+    rep.say_wrapped("  ", "This READS five weapon files of your Dark Souls III (the Shortsword and the Avelyn, and the left-hand and related versions the mod may change) and writes plain copies of them into a folder next to this program. Nothing is uploaded and nothing in the game is changed. The copies are only for you to send me, if you want to, so that I can build the model converter.");
+    rep.say_wrapped("  ", &format!("The copies and a list of them go to:  {}", shown(&opts.out, opts.out.parent().unwrap_or(&opts.out))));
+    let Ok(root) = stage(&mut rep, "1/4 Finding Dark Souls III", |rep| find_step(rep, opts.ds3.as_deref())) else { return finish_export(rep, 0) };
+    let Ok(sources) = stage(&mut rep, "2/4 The program file and the archive keys", |rep| keys_step(rep, &root, opts.keys.as_deref(), &opts.data)) else { return finish_export(rep, 0) };
+    let Ok(install) = stage(&mut rep, "3/4 The game archives", |rep| archives_step(rep, sources)) else { return finish_export(rep, 0) };
+    let copied = stage(&mut rep, "4/4 Copying the weapon files", |rep| Ok(copy_weapon_containers(rep, &install, &opts.out))).unwrap_or(0);
+    finish_export(rep, copied)
+}
+
+fn finish_export(mut rep: Report, copied: usize) -> bool {
+    rep.section("Done");
+    if copied > 0 {
+        rep.say_wrapped("  ", &format!("Copied {copied} files in {:.0} s. They are in the folder named above. Nothing of the game was changed.", rep.elapsed()));
+    } else {
+        rep.say_wrapped("  ", "Nothing was copied; the message above says why. Nothing of the game was changed.");
+    }
+    copied > 0
+}
+
 // ------------------------------------------------------------------------------------------------ ds3-prepare
 
 /// Everything went wrong somewhere: say so, remove a stale override, and leave.

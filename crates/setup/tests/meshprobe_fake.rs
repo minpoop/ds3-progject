@@ -1,58 +1,41 @@
-//! Runs the model probe against a synthetic Space Marine 2 install: the template files hold made-up geometry, and the
-//! report must describe the files, find the buffers and leave the install untouched.
+//! Runs the model probe against a synthetic Space Marine 2 install: the template files hold a made-up weapon (one square as
+//! the full-detail model), and the report must read it with the converter's reader, describe the full-detail model and
+//! the textures its material names, and leave the install untouched.
 mod common;
 use ashen_setup::meshprobe::{report_path, run, Opts};
-use common::{fake_install, make_zip, tree};
+use ashen_sm2::testing::made_up_weapon;
+use common::{descriptor, fake_install, make_zip, tree};
 use std::fs;
 
-/// A 30 x 30 sheet as vertices (32 bytes each: position, packed normal, packed uv, padding) and 16-bit triangle indices.
-fn geometry() -> (Vec<u8>, Vec<u8>) {
-    let n = 30usize;
-    let mut verts = Vec::new();
-    for y in 0..n {
-        for x in 0..n {
-            for c in [0.01 + x as f32 * 0.03, 0.01 + y as f32 * 0.03, 0.04 * ((x + y) as f32 * 0.5 + 0.3).sin()] {
-                verts.extend(c.to_le_bytes());
-            }
-            verts.extend([0x80u8, 0x80, 0xFF, 0x7F, 0x12, 0x34, 0x56, 0x78]);
-            verts.extend([0u8; 12]);
-        }
-    }
-    let mut idx = Vec::new();
-    for y in 0..n - 1 {
-        for x in 0..n - 1 {
-            let a = (y * n + x) as u16;
-            let (b, c) = (a + 1, a + n as u16);
-            idx.extend([a, b, c, b, c + 1, c].iter().flat_map(|i| i.to_le_bytes()));
-        }
-    }
-    (verts, idx)
-}
-
-#[test]
-fn the_model_probe_describes_the_template_files_and_finds_the_buffers() {
-    let t = tempfile::tempdir().unwrap();
-    let sm2 = t.path().join("Space Marine 2");
-    let out = t.path().join("out");
-    fake_install(&sm2);
-    // a second pak with a model data file in the real game's shape: a text descriptor, a "1SER" file, and a data file
-    let (verts, idx) = geometry();
-    let mut data = vec![0u8; 256];
-    data.extend(&verts);
-    data.extend(vec![0u8; 64]);
-    data.extend(&idx);
-    let mut tpl = b"1SERtpl\0".to_vec();
-    tpl.extend(vec![0u8; 28]);
-    tpl.extend(b"S3DRESO\0objGEOM_MNG\0objGEOM_VBUFFER_INFO\0\x01\x02\x03\x04");
+/// Adds a made-up chainsword template (and the textures its material names) to a fake install.
+fn add_weapon(sm2: &std::path::Path) {
+    let (tpl, data) = made_up_weapon();
+    let red: Vec<u8> = [0x00u8, 0xF8, 0x1F, 0x00, 0, 0, 0, 0].iter().cycle().take(32).copied().collect(); // 8x8 BC1, all red
     make_zip(
         &sm2.join("client_pc/root/paks/client/default/default_tpl_2.pak"),
         &[
             ("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl", tpl),
             ("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl_data", data),
             ("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.lods_base", b"lodInfo = {\n  maxLodDist = [ 10, 30 ]\n}\n".to_vec()),
+            ("pct/square_tex.pct.resource", descriptor("square_tex", 12, 8, 2)),
+            ("pct/square_tex_nm.pct.resource", descriptor("square_tex_nm", 12, 8, 2)),
+            ("pct/square_tex_artificer_01_01_red.pct.resource", descriptor("square_tex_artificer_01_01_red", 12, 8, 2)),
+            ("pct/square_tex_1.pct_mip", red.clone()),
+            ("pct/square_tex_2.pct_mip", red[..8].to_vec()),
+            ("pct/square_tex_nm_1.pct_mip", red.clone()),
+            ("pct/square_tex_nm_2.pct_mip", red[..8].to_vec()),
         ],
         true,
     );
+}
+
+#[test]
+fn the_model_probe_reads_the_template_and_describes_the_full_detail_model_and_its_textures() {
+    let t = tempfile::tempdir().unwrap();
+    let sm2 = t.path().join("Space Marine 2");
+    let out = t.path().join("out");
+    fake_install(&sm2);
+    add_weapon(&sm2);
     let before = tree(&sm2);
 
     assert!(run(&Opts { sm2: Some(sm2.clone()), out: out.clone() }));
@@ -65,24 +48,61 @@ fn the_model_probe_describes_the_template_files_and_finds_the_buffers() {
     for needle in [
         "Model files of the chainsword",
         "template folder  tpl/wpn_chainsword_00.tpl  with 3 files",
-        "wpn_chainsword_00.tpl_data",
-        "binary, ",
-        "31 53 45 52 74 70 6c 00", // "1SERtpl"
-        "objGEOM_MNG",
-        "around \"objGEOM_MNG\"",
-        "text, ", // the descriptor
-        "maxLodDist = [ 10, 30 ]",
-        "stride 32",
-        "900 records", // the vertices of the 30 x 30 sheet
-        "3 x float32",
-        "16 bit",
-        "1682 triangles", // 2 x 29 x 29
-        "could belong with: 3 x float32",
+        "the .tpl was read to its last byte",
+        "name \"made_up_square\"; 0 bones; 0 animations; 1 detail levels defined [(0, 0)]",
+        "geometry: 0 objects, 4 buffers, 1 meshes, 1 sub meshes",
+        "full-detail sub mesh 0: object 0 (no name)",
+        "4 vertices, 2 triangles; x -2.000..2.000, y -2.000..2.000, z 1.000..1.000",
+        "texture coordinates u 0.000..2.000, v -1.000..1.000",
+        "carries: normals yes, tangents yes, texture coordinates yes, bone numbers yes, bone weights no",
+        "longest side 4.000 m",
+        "material: texture \"square_tex\"",
+        // the family has the texture and its normal map, not the colour variant
+        "texture \"square_tex\": 2 descriptors in its family, 1 more whose names start with it",
+        "square_tex.pct.resource",
+        "square_tex_nm.pct.resource",
+        "OXT1(BC1) 8x8",
+        // the pistol folder of the fake install has no data file
         "Model files of the bolt_pistol",
+        "the folder has no .tpl and .tpl_data pair",
     ] {
         assert!(report.contains(needle), "report is missing {needle:?}:\n{report}");
     }
-    assert!(!report.contains("STEP FAILED") && !report.contains("STEP CRASHED"), "{report}");
+    assert!(!report.contains("STEP FAILED") && !report.contains("STEP CRASHED") && !report.contains("NOT READ COMPLETELY"), "{report}");
+}
+
+#[test]
+fn a_template_that_does_not_read_is_named_and_the_run_goes_on() {
+    let t = tempfile::tempdir().unwrap();
+    let sm2 = t.path().join("Space Marine 2");
+    let out = t.path().join("out");
+    fake_install(&sm2);
+    // a template whose start is right and whose rest is wrong, with a data file
+    let (mut tpl, data) = made_up_weapon();
+    let cut = tpl.len() - 40;
+    tpl.truncate(cut);
+    make_zip(
+        &sm2.join("client_pc/root/paks/client/default/default_tpl_2.pak"),
+        &[("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl", tpl), ("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl_data", data)],
+        true,
+    );
+    assert!(run(&Opts { sm2: Some(sm2.clone()), out: out.clone() }));
+    let report = fs::read_to_string(report_path(&out)).unwrap();
+    assert!(report.contains("THE .tpl WAS NOT READ COMPLETELY"), "{report}");
+    assert!(report.contains("Model files of the bolt_pistol") && !report.contains("STEP CRASHED"), "{report}");
+}
+
+#[test]
+fn a_template_without_levels_says_there_is_no_full_detail_model() {
+    let t = tempfile::tempdir().unwrap();
+    let sm2 = t.path().join("Space Marine 2");
+    let out = t.path().join("out");
+    fake_install(&sm2);
+    let (tpl, data) = ashen_sm2::testing::made_up_model();
+    make_zip(&sm2.join("client_pc/root/paks/client/default/default_tpl_2.pak"), &[("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl", tpl), ("tpl/wpn_chainsword_00.tpl/wpn_chainsword_00.tpl_data", data)], true);
+    assert!(run(&Opts { sm2: Some(sm2.clone()), out: out.clone() }));
+    let report = fs::read_to_string(report_path(&out)).unwrap();
+    assert!(report.contains("NO FULL-DETAIL MODEL"), "{report}");
 }
 
 #[test]
