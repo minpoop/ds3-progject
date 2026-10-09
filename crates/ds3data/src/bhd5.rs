@@ -59,7 +59,7 @@ pub struct Entry {
     pub padded_size: u32,
     /// Absolute offset of the file in the `.bdt`.
     pub offset: u64,
-    /// The size after decryption as stored (`-1` or garbage when the archive does not say).
+    /// The size after decryption as stored (`0`, `-1` or garbage when the archive does not say).
     pub unpadded_size: i64,
     /// Offset of the SHA record inside the header, 0 for none.
     pub sha_offset: u64,
@@ -70,9 +70,11 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// The size the file has after decryption, if the header gives a usable one (`0..=padded_size`).
+    /// The size the file has after decryption, if the header gives a usable one (`1..=padded_size`). The real archives write
+    /// `0` for most files (and `-1` for others): that means "not given", not "an empty file", and the file is then as long
+    /// as its padded size says. (Reading `0` as a size made every such file read as empty - found on a real install.)
     pub fn unpadded(&self) -> Option<u64> {
-        (0..=i64::from(self.padded_size)).contains(&self.unpadded_size).then_some(self.unpadded_size as u64)
+        (1..=i64::from(self.padded_size)).contains(&self.unpadded_size).then_some(self.unpadded_size as u64)
     }
 
     pub fn is_encrypted(&self) -> bool {
@@ -338,7 +340,7 @@ mod tests {
     #[test]
     fn unpadded_sizes_are_only_trusted_inside_range() {
         let mk = |u: i64| Entry { hash: 0, padded_size: 100, offset: 0, unpadded_size: u, sha_offset: 0, aes_offset: 0, bucket: 0 };
-        assert_eq!(mk(0).unpadded(), Some(0));
+        assert_eq!(mk(0).unpadded(), None, "0 is how the real archives say 'not given'");
         assert_eq!(mk(100).unpadded(), Some(100));
         assert_eq!((mk(101).unpadded(), mk(-1).unpadded(), mk(i64::MIN).unpadded(), mk(i64::MAX).unpadded()), (None, None, None, None));
     }

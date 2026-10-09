@@ -472,6 +472,34 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_or_missing_unpadded_size_means_the_padded_size_as_in_the_real_archives() {
+        // the real archives write 0 (or -1) as the unpadded size of most files: such a file is as long as the padded size
+        // says, it is not empty. (Reading 0 as a size made every such file read as nothing.)
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path();
+        let key = test_key(0);
+        let content: Vec<u8> = (0..64u32).map(|i| (i * 5 + 1) as u8).collect();
+        let mut bdt = b"BDF4".to_vec();
+        bdt.resize(16, 0);
+        bdt.extend(&content);
+        std::fs::write(dir.join("R.bdt"), &bdt).unwrap();
+        for unpadded in [0i64, -1, 64] {
+            let spec = Bhd5Spec { salt: "real".into(), buckets: 3, files: vec![FileSpec::plain(path_hash("/parts/wp_a_0200.partsbnd.dcx"), 64, 16).unpadded(unpadded)] };
+            std::fs::write(dir.join("R.bhd"), key.encrypt_header(&spec.build())).unwrap();
+            let a = Archive::open(&dir.join("R.bhd"), &dir.join("R.bdt"), std::slice::from_ref(&key.public)).unwrap();
+            let e = a.entries()[0];
+            assert_eq!(a.read(&e).unwrap(), content, "unpadded size {unpadded}");
+            let mut reader = a.bdt_reader().unwrap();
+            assert_eq!(reader.head(&e, 20).unwrap(), &content[..20], "the start of a file with unpadded size {unpadded}");
+        }
+        // a real number still cuts the padding off
+        let spec = Bhd5Spec { salt: "real".into(), buckets: 3, files: vec![FileSpec::plain(path_hash("/x"), 64, 16).unpadded(60)] };
+        std::fs::write(dir.join("R.bhd"), key.encrypt_header(&spec.build())).unwrap();
+        let a = Archive::open(&dir.join("R.bhd"), &dir.join("R.bdt"), std::slice::from_ref(&key.public)).unwrap();
+        assert_eq!(a.read(&a.entries()[0]).unwrap(), &content[..60]);
+    }
+
+    #[test]
     fn size_limits() {
         let t = tempfile::tempdir().unwrap();
         let dir = t.path();
