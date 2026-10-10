@@ -24,8 +24,9 @@
 #   R  Data0.bhd is a plain (not encrypted) table of contents and holds the item text: no key and no saved table needed
 #   Q  sm2-export-models (the optional model-file copy): exact copies of the two weapons' template files, nothing in the game
 #   P  no key anywhere, but the plain tables of contents the running game held were saved (ashenmarine/cache/bhd5): exit code 0
-#   S  the item text is stored under a name nobody expects: ds3-prepare finds it by what the files contain (and refuses a text
-#      container that is not the English item text)
+#   S  the item text is stored under a name nobody expects: ds3-prepare finds it by what the files contain, says so in the report
+#      and writes NOTHING (exit code 2: the game asks for item_dlc2 / item_dlc1 / item only, so the file name it wants is not known);
+#      a text container that is not the English item text is refused the same way
 #   U  ds3-models (the weapon model swap) against both synthetic games: a trial run (report, pictures, candidates; nothing where the
 #      game loads it) and an install run (the containers in the mod folder, listed in ashenmarine-models.json); a mod folder inside
 #      a game is refused
@@ -321,14 +322,14 @@ check "R the install is untouched" '[ "$(treehash "$D3/plain-data0/DARK SOULS II
 wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" r2 ds3-prepare --ds3 "$(winpath "$D3/no-item/DARK SOULS III")" --mod "$(winpath "$D3/mod-r2")" --out "$(winpath "$D3/out-r2")"
 check "R2 a missing item text: exit code 2, nothing written, and the report carries the path table for the diagnosis" '[ "$(cat "$D3/r2.rc")" = "2" ] && [ ! -e "$D3/mod-r2" ] && grep -q "Where the files are (for the diagnosis)" "$D3/out-r2/ds3-report.txt" && grep -q "/msg/engUS/item.msgbnd.dcx .*hash 624f014f" "$D3/out-r2/ds3-report.txt"'
 
-echo; echo "== S: an item text stored under a name nobody expects is found by what it contains =="
+echo; echo "== S: an item text stored under a name nobody expects is found by what it contains, and nothing is written for it =="
 "$FAKE_DS3" "$D3/unexpected/DARK SOULS III" --variant unexpected-path > /dev/null || { echo "cannot build the fake Dark Souls III install (unexpected path)"; exit 1; }
 D3_UNEXP_BEFORE="$(treehash "$D3/unexpected/DARK SOULS III")"
 wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" s ds3-prepare --ds3 "$(winpath "$D3/unexpected/DARK SOULS III")" --mod "$(winpath "$D3/mod-s")" --out "$(winpath "$D3/out-s")"
 sed 's/^/    /' "$D3/s.out" | sed -n 8,30p
-check "S exit code 0" '[ "$(cat "$D3/s.rc")" = "0" ]'
-check "S the report says it looked at the files and recognised the text by its content" 'grep -q "Looking at the start of every file in the archives" "$D3/out-s/ds3-report.txt" && grep -q "recognised by its text" "$D3/out-s/ds3-report.txt" && ! grep -q "PROBLEM" "$D3/out-s/ds3-report.txt"'
-check "S the override is right" 'ds3_manifest_ok "$D3/mod-s" && ds3_override_ok "$D3/mod-s/msg/engus/item_dlc2.msgbnd.dcx"'
+check "S exit code 2 and nothing written (the container was found, but it is none of the names the game asks for)" '[ "$(cat "$D3/s.rc")" = "2" ] && [ ! -e "$D3/mod-s" ]'
+check "S the report says it looked at the files, recognised the text by its content and is not the hash of a name the game asks for" 'grep -q "Looking at the start of every file in the archives" "$D3/out-s/ds3-report.txt" && grep -q "recognised by its text" "$D3/out-s/ds3-report.txt" && grep -q "which is NOT the hash" "$D3/out-s/ds3-report.txt"'
+check "S the report and the console say why nothing was written" 'grep -q "under a path hash that is none of the names" "$D3/out-s/ds3-report.txt" && grep -q "Nothing was changed" "$D3/out-s/ds3-report.txt" && flat_out "$D3/s.out" | grep -q "Nothing was changed"'
 check "S the install is untouched" '[ "$(treehash "$D3/unexpected/DARK SOULS III")" = "$D3_UNEXP_BEFORE" ]'
 "$FAKE_DS3" "$D3/unexpected-wrong/DARK SOULS III" --variant unexpected-wrong-name > /dev/null || { echo "cannot build the fake Dark Souls III install (unexpected path, wrong name)"; exit 1; }
 wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" s2 ds3-prepare --ds3 "$(winpath "$D3/unexpected-wrong/DARK SOULS III")" --mod "$(winpath "$D3/mod-s2")" --out "$(winpath "$D3/out-s2")"
