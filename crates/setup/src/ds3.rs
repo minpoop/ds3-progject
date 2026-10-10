@@ -734,7 +734,7 @@ fn dry_run(out: &mut Out, found: &Found, edits: &[ItemEdit]) -> DryRun {
             }
         }
     }
-    out.line(format!("    [info] text tables written again by this program's writer are byte-identical to the game's: {}", if total == 0 { "no tables".to_string() } else if same == total { format!("yes ({same} of {total})") } else { format!("no ({same} of {total}); the tables are read back and compared as text instead") }));
+    out.line(format!("    [info] text tables written again by this program's writer are byte-identical to the game's: {}", if total == 0 { "no tables".to_string() } else if same == total { format!("yes ({same} of {total})") } else { format!("no ({same} of {total}); the tables are read back and compared as text instead. The name change does not use that writer: it puts the new strings at the end of a table and leaves the rest of it as the game has it") }));
     for d in &differing {
         out.rep.detail_wrapped("      ", d);
     }
@@ -1079,14 +1079,20 @@ fn path_table(rep: &mut Report, install: &Ds3Install) {
     }
 }
 
-/// Step "item text": every item text container that exists (in every language, in its three versions), examined and dry-run.
+/// Step "item text": every English item text container that exists (in its three versions) and the first one of every other
+/// language, examined and dry-run.
 fn item_text_probe(rep: &mut Report, install: &Ds3Install) {
     let mut any = false;
     let mut loud_done = false;
     for lang in LANGUAGES {
+        let mut language_done = false;
         for file in ITEM_FILES {
             let path = format!("/msg/{lang}/{file}.msgbnd.dcx");
             if install.lookup(&path).is_empty() {
+                continue;
+            }
+            // the other languages are only looked at (a dry run of each takes a moment): the first container is enough
+            if lang != ENGLISH_FOLDER && std::mem::replace(&mut language_done, true) {
                 continue;
             }
             any = true;

@@ -10,10 +10,12 @@
 //!   the long text when it is longer than 160 characters or has a line break, else by the short text. A table that has no
 //!   text at the id is never touched, nor one whose ids hardly overlap a name table's (an unrelated table that happens to
 //!   have an entry at the same id).
-//! * Every changed table is written back with [`crate::bnd4::replace_file`], which leaves every other byte of the container
-//!   alone; the result is read back and compared before it is returned.
+//! * A changed table is not written again from scratch: [`crate::fmg::replace_texts`] puts the new strings at the end of the
+//!   table and points the entries of the ids at them, so the layout the game's own tool chose (groups, order and places of
+//!   all other strings) stays exactly as it is. The table goes back with [`crate::bnd4::replace_file`], which leaves every
+//!   other byte of the container alone; the result is read back and compared before it is returned.
 use crate::bnd4::{replace_file, Bnd4, Bnd4Error, Bnd4File};
-use crate::fmg::FmgFile;
+use crate::fmg::{replace_texts, FmgFile};
 use crate::util::snippet;
 use std::fmt;
 
@@ -99,6 +101,8 @@ pub fn file_label(f: &Bnd4File) -> String {
 struct Table {
     index: usize,
     label: String,
+    /// the table's bytes as the game has them
+    bytes: Vec<u8>,
     original: FmgFile,
     fmg: FmgFile,
     edited_ids: Vec<u32>,
@@ -136,7 +140,7 @@ pub fn patch_item_msgbnd_detailed(bnd4_bytes: &[u8], edits: &[ItemEdit]) -> Resu
         }
         let Some(bytes) = parsed.file_bytes(bnd4_bytes, f.index) else { continue };
         match FmgFile::parse(bytes) {
-            Ok(fmg) => tables.push(Table { index: f.index, label, original: fmg.clone(), fmg, edited_ids: Vec::new() }),
+            Ok(fmg) => tables.push(Table { index: f.index, label, bytes: bytes.to_vec(), original: fmg.clone(), fmg, edited_ids: Vec::new() }),
             Err(e) => log.push(format!("{label}: not read as a text table ({e})")),
         }
     }
@@ -200,10 +204,11 @@ pub fn patch_item_msgbnd_detailed(bnd4_bytes: &[u8], edits: &[ItemEdit]) -> Resu
     for t in tables.iter().filter(|t| !t.edited_ids.is_empty()) {
         let state = Bnd4::parse(&current)?;
         let before = state.files.get(t.index).map_or(0, |f| f.stored_size);
-        let bytes = t.fmg.to_bytes();
+        let edits: Vec<(u32, &str)> = t.edited_ids.iter().filter_map(|id| t.fmg.get(*id).map(|text| (*id, text))).collect();
+        let bytes = replace_texts(&t.bytes, &edits).map_err(|e| PatchError::SelfCheck(format!("{}: {e}", t.label)))?;
         current = replace_file(&current, &state, t.index, &bytes)?;
         changed_files.push(t.index);
-        log.push(format!("{} rewritten ({before} -> {} bytes)", t.label, bytes.len()));
+        log.push(format!("{} changed in place ({before} -> {} bytes: the {} new text{} at its end, the rest of the table as it was)", t.label, bytes.len(), edits.len(), if edits.len() == 1 { "" } else { "s" }));
     }
 
     // read it back: the changed tables hold exactly the intended texts, every other file is byte-identical

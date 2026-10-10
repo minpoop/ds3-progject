@@ -13,6 +13,10 @@
 //!
 //! A group is a run of consecutive ids whose strings are consecutive in the table. [`FmgFile::to_bytes`] writes the groups
 //! as maximal runs of consecutive ids in ascending order and the strings in table order, directly after the table.
+//!
+//! The game's own tables are laid out differently (kit 0.9 found 0 of 47 byte-identical to what `to_bytes` writes), so a table
+//! that is only to have a few texts changed is changed with [`replace_texts`]: the new strings are put at the end of the file,
+//! the entries of the string table that name them are pointed there, and nothing else about the table moves.
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -29,6 +33,8 @@ pub enum FmgError {
     Malformed(&'static str),
     /// The same id appears twice.
     DuplicateId(u32),
+    /// An id that is to be changed is not in the table.
+    NoSuchId(u32),
     /// A string is not valid UTF-16.
     BadText,
 }
@@ -40,12 +46,120 @@ impl fmt::Display for FmgError {
             FmgError::Truncated(what) => write!(f, "the text table is cut off ({what})"),
             FmgError::Malformed(why) => write!(f, "damaged text table: {why}"),
             FmgError::DuplicateId(id) => write!(f, "the text table has id {id} twice"),
+            FmgError::NoSuchId(id) => write!(f, "the text table has no id {id}"),
             FmgError::BadText => write!(f, "a string of the text table is not valid UTF-16"),
         }
     }
 }
 
 impl std::error::Error for FmgError {}
+
+/// What the header of a table says, after the checks every reader of a table makes.
+struct Header {
+    /// the declared file size (never more than the bytes that were given)
+    size: usize,
+    groups: usize,
+    strings: usize,
+    /// where the table of string offsets starts
+    table: usize,
+}
+
+fn read_header(bytes: &[u8]) -> Result<Header, FmgError> {
+    use crate::util::{i64_le, u32_le};
+    if bytes.get(..4) != Some(&[0, 0, 2, 0][..]) {
+        return Err(FmgError::NotFmg);
+    }
+    if bytes.len() < HEADER_LEN {
+        return Err(FmgError::Truncated("header"));
+    }
+    let size = u32_le(bytes, 4).map(|v| v as usize).ok_or(FmgError::Truncated("header"))?;
+    if size < HEADER_LEN || size > bytes.len() {
+        return Err(FmgError::Truncated("file size"));
+    }
+    let b = bytes.get(..size).ok_or(FmgError::Truncated("file size"))?;
+    if u32_le(b, 8) != Some(1) || u32_le(b, 0x14) != Some(0xFF) || i64_le(b, 0x20) != Some(0) {
+        return Err(FmgError::Malformed("a fixed field of the header is wrong"));
+    }
+    let groups = u32_le(b, 0x0C).map(|v| v as usize).filter(|g| *g <= MAX_GROUPS).ok_or(FmgError::Malformed("the group count is impossible"))?;
+    let strings = u32_le(b, 0x10).map(|v| v as usize).filter(|s| *s <= MAX_STRINGS).ok_or(FmgError::Malformed("the string count is impossible"))?;
+    let table = i64_le(b, 0x18).and_then(|v| usize::try_from(v).ok()).ok_or(FmgError::Malformed("the string table offset is impossible"))?;
+    let groups_end = HEADER_LEN + groups * 16;
+    if groups_end > size {
+        return Err(FmgError::Truncated("groups"));
+    }
+    if table < groups_end || table.checked_add(strings * 8).is_none_or(|end| end > size) {
+        return Err(FmgError::Malformed("the string table is outside the file"));
+    }
+    Ok(Header { size, groups, strings, table })
+}
+
+/// Changes the texts of some ids of the table in `bytes` and nothing else about it: each new text is put at the end of the file
+/// (after the declared size), the entry of the string table that belongs to the id is pointed at it, the declared size grows,
+/// and the old string is wiped with zeros unless another entry still points at it or into it (strings shared by several ids,
+/// or the tail of one string being another). The groups, the order and the places of every other string stay as they are,
+/// whatever layout the game's tool chose. An id that is not in the table is an error; so is an id named twice.
+pub fn replace_texts(bytes: &[u8], edits: &[(u32, &str)]) -> Result<Vec<u8>, FmgError> {
+    use crate::util::{i64_le, u16_le, u32_le};
+    let Header { size, groups, strings, table } = read_header(bytes)?;
+    let b = bytes.get(..size).ok_or(FmgError::Truncated("file size"))?;
+    for (i, (id, _)) in edits.iter().enumerate() {
+        if edits[..i].iter().any(|(other, _)| other == id) {
+            return Err(FmgError::Malformed("an id is edited twice"));
+        }
+    }
+    let mut offsets: Vec<i64> = Vec::with_capacity(strings);
+    for index in 0..strings {
+        offsets.push(i64_le(b, table + index * 8).ok_or(FmgError::Truncated("string table"))?);
+    }
+    let index_of = |id: u32| -> Result<usize, FmgError> {
+        for g in 0..groups {
+            let at = HEADER_LEN + g * 16;
+            let (Some(first_index), Some(first_id), Some(last_id)) = (u32_le(b, at), u32_le(b, at + 4), u32_le(b, at + 8)) else {
+                return Err(FmgError::Truncated("groups"));
+            };
+            if (first_id..=last_id).contains(&id) {
+                let index = first_index as usize + (id - first_id) as usize;
+                return if index < strings { Ok(index) } else { Err(FmgError::Malformed("a group lies outside the string table")) };
+            }
+        }
+        Err(FmgError::NoSuchId(id))
+    };
+    let strings_start = table + strings * 8;
+    let mut out = b.to_vec();
+    for (id, text) in edits {
+        let index = index_of(*id)?;
+        let old = offsets[index];
+        if old != 0 {
+            let start = usize::try_from(old).ok().filter(|o| *o >= HEADER_LEN && *o < size).ok_or(FmgError::Malformed("a string starts outside the file"))?;
+            let mut end = start;
+            loop {
+                let unit = u16_le(b, end).ok_or(FmgError::Truncated("string"))?;
+                end += 2;
+                if unit == 0 {
+                    break;
+                }
+            }
+            // wiped only if it lies in the area of the strings and no other entry points at it or into it
+            let shared = offsets.iter().enumerate().any(|(k, o)| k != index && *o > 0 && (*o as usize) >= start && (*o as usize) < end);
+            if start >= strings_start && !shared {
+                out[start..end].fill(0);
+            }
+        }
+        if out.len() % 2 == 1 {
+            out.push(0);
+        }
+        let new_offset = out.len();
+        for unit in text.encode_utf16().chain(Some(0)) {
+            out.extend(unit.to_le_bytes());
+        }
+        let at = table + index * 8;
+        out[at..at + 8].copy_from_slice(&(new_offset as i64).to_le_bytes());
+        offsets[index] = new_offset as i64;
+    }
+    let new_size = u32::try_from(out.len()).map_err(|_| FmgError::Malformed("the table would be too big"))?;
+    out[4..8].copy_from_slice(&new_size.to_le_bytes());
+    Ok(out)
+}
 
 /// A text table: id -> text, where the text may be absent (null) for an id.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -61,30 +175,8 @@ impl FmgFile {
     /// Reads a table. Strings that are absent in the file stay absent; every other string must be valid UTF-16.
     pub fn parse(bytes: &[u8]) -> Result<FmgFile, FmgError> {
         use crate::util::{get, i64_le, u32_le};
-        if bytes.get(..4) != Some(&[0, 0, 2, 0][..]) {
-            return Err(FmgError::NotFmg);
-        }
-        if bytes.len() < HEADER_LEN {
-            return Err(FmgError::Truncated("header"));
-        }
-        let size = u32_le(bytes, 4).map(|v| v as usize).ok_or(FmgError::Truncated("header"))?;
-        if size < HEADER_LEN || size > bytes.len() {
-            return Err(FmgError::Truncated("file size"));
-        }
+        let Header { size, groups, strings, table } = read_header(bytes)?;
         let b = bytes.get(..size).ok_or(FmgError::Truncated("file size"))?;
-        if u32_le(b, 8) != Some(1) || u32_le(b, 0x14) != Some(0xFF) || i64_le(b, 0x20) != Some(0) {
-            return Err(FmgError::Malformed("a fixed field of the header is wrong"));
-        }
-        let groups = u32_le(b, 0x0C).map(|v| v as usize).filter(|g| *g <= MAX_GROUPS).ok_or(FmgError::Malformed("the group count is impossible"))?;
-        let strings = u32_le(b, 0x10).map(|v| v as usize).filter(|s| *s <= MAX_STRINGS).ok_or(FmgError::Malformed("the string count is impossible"))?;
-        let table = i64_le(b, 0x18).and_then(|v| usize::try_from(v).ok()).ok_or(FmgError::Malformed("the string table offset is impossible"))?;
-        let groups_end = HEADER_LEN + groups * 16;
-        if groups_end > size {
-            return Err(FmgError::Truncated("groups"));
-        }
-        if table < groups_end || table.checked_add(strings * 8).is_none_or(|end| end > size) {
-            return Err(FmgError::Malformed("the string table is outside the file"));
-        }
 
         let mut entries = BTreeMap::new();
         let mut total = 0usize;
@@ -361,6 +453,161 @@ mod tests {
         let mut longer = b.clone();
         longer.extend([1, 2, 3]);
         assert_eq!(FmgFile::parse(&longer).unwrap(), f);
+    }
+
+    /// A table laid out as a tool of the game might: a gap before the offset table, the strings in another order than the table,
+    /// a null string, two groups. Returns the bytes and the place of the offset table.
+    fn game_like() -> (Vec<u8>, usize) {
+        let mut b = vec![0u8; HEADER_LEN];
+        b[2] = 2;
+        b[8] = 1;
+        b[0x0C] = 2; // two groups
+        b[0x10] = 4; // four strings
+        b[0x14] = 0xFF;
+        let table = HEADER_LEN + 32 + 8; // 8 bytes of padding after the groups
+        b[0x18..0x20].copy_from_slice(&(table as i64).to_le_bytes());
+        b.extend([0, 0, 0, 0, 7, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0]); // group 0: index 0, ids 7..=9
+        b.extend([3, 0, 0, 0, 20, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0]); // group 1: index 3, id 20
+        b.extend([0xAA; 8]);
+        let pool = table + 32;
+        let (ab, cde, last) = (pool, pool + 6, pool + 6 + 8); // "ab\0" 6 bytes, "cde\0" 8 bytes
+        b.extend((cde as i64).to_le_bytes()); // id 7 -> the second string of the pool
+        b.extend(0i64.to_le_bytes()); // id 8 null
+        b.extend((ab as i64).to_le_bytes()); // id 9 -> the first string
+        b.extend((last as i64).to_le_bytes()); // id 20
+        for text in ["ab", "cde", "twenty"] {
+            for u in text.encode_utf16().chain(Some(0)) {
+                b.extend(u.to_le_bytes());
+            }
+        }
+        let size = b.len() as u32;
+        b[4..8].copy_from_slice(&size.to_le_bytes());
+        (b, table)
+    }
+
+    #[test]
+    fn replacing_texts_changes_what_it_is_told_to_and_nothing_else_about_a_table_of_the_games_layout() {
+        let (original, table) = game_like();
+        let before = FmgFile::parse(&original).unwrap();
+        assert_eq!((before.get(7), before.get(8), before.get(9), before.get(20)), (Some("cde"), None, Some("ab"), Some("twenty")));
+        let out = replace_texts(&original, &[(9, "A longer text"), (20, "x")]).unwrap();
+        let after = FmgFile::parse(&out).unwrap();
+        assert_eq!((after.get(7), after.get(8), after.get(9), after.get(20)), (Some("cde"), None, Some("A longer text"), Some("x")), "the others stay: the null one, too");
+        assert_eq!(after.len(), before.len());
+        // everything before the strings is the same but the declared size and the two entries that were repointed
+        let declared = u32::from_le_bytes(out[4..8].try_into().unwrap()) as usize;
+        assert_eq!(declared, out.len(), "the declared size follows");
+        assert_eq!(&out[..4], &original[..4]);
+        assert_eq!(&out[8..table], &original[8..table], "the header and the groups, and the gap (0xAA) with them");
+        let entry = |bytes: &[u8], i: usize| i64::from_le_bytes(bytes[table + i * 8..table + i * 8 + 8].try_into().unwrap());
+        assert_eq!((entry(&out, 0), entry(&out, 1)), (entry(&original, 0), entry(&original, 1)), "id 7 and the null id 8 keep their entries");
+        assert_ne!(entry(&out, 2), entry(&original, 2));
+        assert_ne!(entry(&out, 3), entry(&original, 3));
+        // the new strings are at the end, in the order they were given, and the old ones are wiped
+        let (a, b) = (entry(&out, 2) as usize, entry(&out, 3) as usize);
+        assert!(a >= original.len() && b > a && a % 2 == 0 && b % 2 == 0);
+        let utf16 = |s: &str| -> Vec<u8> { s.encode_utf16().chain(Some(0)).flat_map(|u| u.to_le_bytes()).collect() };
+        assert_eq!(&out[a..a + utf16("A longer text").len()], utf16("A longer text").as_slice());
+        assert_eq!(out.len(), b + utf16("x").len());
+        let pool = table + 32;
+        assert_eq!(&out[pool..pool + 6], &[0u8; 6], "the old \"ab\" is gone");
+        assert_eq!(&out[pool + 6..pool + 14], utf16("cde").as_slice(), "\"cde\" was not touched");
+        assert_eq!(&out[pool + 14..pool + 14 + 14], &[0u8; 14], "the old \"twenty\" is gone");
+        for gone in ["twenty", "ab"] {
+            assert!(!out.windows(utf16(gone).len()).any(|w| w == utf16(gone).as_slice()), "the old text {gone:?} is not left anywhere in the table");
+        }
+        // a null string can be given a text, and a text can be replaced again
+        let again = replace_texts(&out, &[(8, "now it has one"), (9, "second change")]).unwrap();
+        let again_parsed = FmgFile::parse(&again).unwrap();
+        assert_eq!((again_parsed.get(8), again_parsed.get(9), again_parsed.get(7), again_parsed.get(20)), (Some("now it has one"), Some("second change"), Some("cde"), Some("x")));
+        // nothing to change: the very same bytes
+        assert_eq!(replace_texts(&original, &[]).unwrap(), original);
+    }
+
+    #[test]
+    fn a_string_that_another_entry_uses_is_not_wiped() {
+        let (original, table) = game_like();
+        // id 20 now points at the very same string as id 9 ("ab"), and id 7 at the tail of "twenty" ("enty")
+        let mut shared = original.clone();
+        let ab = i64::from_le_bytes(shared[table + 16..table + 24].try_into().unwrap());
+        shared[table + 24..table + 32].copy_from_slice(&ab.to_le_bytes());
+        let twenty = i64::from_le_bytes(original[table + 24..table + 32].try_into().unwrap());
+        // "twenty": the tail "enty" starts two characters (4 bytes) in
+        shared[table..table + 8].copy_from_slice(&(twenty + 4).to_le_bytes());
+        let f = FmgFile::parse(&shared).unwrap();
+        assert_eq!((f.get(9), f.get(20), f.get(7)), (Some("ab"), Some("ab"), Some("enty")));
+        // changing id 9 leaves id 20 with its text: the string was shared
+        let out = replace_texts(&shared, &[(9, "changed")]).unwrap();
+        let g = FmgFile::parse(&out).unwrap();
+        assert_eq!((g.get(9), g.get(20), g.get(7)), (Some("changed"), Some("ab"), Some("enty")));
+        // and a string whose tail is another entry's string is kept whole as well: wiping it would cut "enty" off
+        let h = FmgFile::parse(&replace_texts(&shared, &[(20, "other")]).unwrap()).unwrap();
+        assert_eq!((h.get(9), h.get(20)), (Some("ab"), Some("other")));
+        // here nothing else points at the string of id 9, so it is wiped; but changing the one whose tail is used is not wiped
+        let mut tail_user = original.clone();
+        let tail_at = i64::from_le_bytes(original[table + 24..table + 32].try_into().unwrap()) + 4;
+        tail_user[table + 16..table + 24].copy_from_slice(&tail_at.to_le_bytes()); // id 9 -> "enty"
+        let k = FmgFile::parse(&tail_user).unwrap();
+        assert_eq!((k.get(9), k.get(20)), (Some("enty"), Some("twenty")));
+        let out = replace_texts(&tail_user, &[(20, "short")]).unwrap();
+        let k2 = FmgFile::parse(&out).unwrap();
+        assert_eq!((k2.get(9), k2.get(20)), (Some("enty"), Some("short")), "\"twenty\" was not wiped: id 9 still reads into it");
+    }
+
+    #[test]
+    fn replacing_texts_refuses_what_it_cannot_do_and_pads_an_odd_size() {
+        let (original, _) = game_like();
+        assert_eq!(replace_texts(&original, &[(8_000, "x")]).unwrap_err(), FmgError::NoSuchId(8_000));
+        assert_eq!(replace_texts(&original, &[(9, "x"), (9, "y")]).unwrap_err(), FmgError::Malformed("an id is edited twice"));
+        assert_eq!(replace_texts(b"not a table", &[(9, "x")]).unwrap_err(), FmgError::NotFmg);
+        assert!(replace_texts(&original[..original.len() - 3], &[(9, "x")]).is_err(), "a cut-off table");
+        // a declared size that is odd: the new string still starts on an even offset
+        let mut odd = original.clone();
+        odd.push(0x55);
+        let size = odd.len() as u32;
+        odd[4..8].copy_from_slice(&size.to_le_bytes());
+        assert_eq!(FmgFile::parse(&odd).unwrap().get(9), Some("ab"));
+        let out = replace_texts(&odd, &[(9, "padded")]).unwrap();
+        let (_, table) = game_like();
+        let at = i64::from_le_bytes(out[table + 16..table + 24].try_into().unwrap()) as usize;
+        assert_eq!(at % 2, 0);
+        assert_eq!(FmgFile::parse(&out).unwrap().get(9), Some("padded"));
+    }
+
+    #[test]
+    fn replacing_texts_never_panics_on_damaged_tables() {
+        let (good, _) = game_like();
+        let mut seed = 0x1234_5678_9ABC_DEF1u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..3000 {
+            let mut x = good.clone();
+            for _ in 0..(1 + next() % 5) {
+                let at = (next() as usize) % x.len();
+                match next() % 3 {
+                    0 => x[at] = next() as u8,
+                    1 => x[at] ^= 1 << (next() % 8),
+                    _ => {
+                        for (k, w) in [0xFFu8, 0xFF, 0xFF, 0x7F].iter().enumerate() {
+                            if let Some(slot) = x.get_mut(at + k) {
+                                *slot = *w;
+                            }
+                        }
+                    }
+                }
+            }
+            if let Ok(out) = replace_texts(&x, &[(9, "new"), (20, "text")]) {
+                // whatever was changed reads back, unless the damage was somewhere the reader does not look at
+                if let (Ok(before), Ok(after)) = (FmgFile::parse(&x), FmgFile::parse(&out)) {
+                    assert_eq!((after.get(9), after.get(20)), (Some("new"), Some("text")));
+                    assert_eq!(after.len(), before.len());
+                }
+            }
+        }
     }
 
     #[test]
