@@ -221,7 +221,7 @@ sed 's/^/    /' "$D3/h.out" | head -40
 check "H exit code 0" '[ "$(cat "$D3/h.rc")" = "0" ]'
 check "H the install is byte-identical afterwards" '[ "$(treehash "$GAME")" = "$D3_BEFORE" ]'
 check "H the report lists the keys by fingerprint and the archives" 'grep -q "archive keys found in the program file: 2 (87febfc8, b2969406)" "$D3/out-h/ds3-report.txt" && grep -q "key 87febfc8" "$D3/out-h/ds3-report.txt" && grep -q "key b2969406" "$D3/out-h/ds3-report.txt"'
-check "H the report has the path table with the item text" 'grep -q "^  /msg/engus/item.msgbnd.dcx .*hash 624f014f" "$D3/out-h/ds3-report.txt" && grep -q "9 of 54 paths exist" "$D3/out-h/ds3-report.txt"'
+check "H the report has the path table with the item text" 'grep -q "^  /msg/engUS/item.msgbnd.dcx .*hash 624f014f" "$D3/out-h/ds3-report.txt" && grep -q "9 of 54 paths exist" "$D3/out-h/ds3-report.txt"'
 check "H the report lists the item text container and the texts at the test ids" 'grep -q "DCX variant DCX_DFLT_10000_44_9" "$D3/out-h/ds3-report.txt" && grep -q "id 2000000: WeaponName.fmg \"Shortsword\"" "$D3/out-h/ds3-report.txt"'
 check "H the dry run passed" 'grep -q "\[ok\] the edits: 3 edits" "$D3/out-h/ds3-report.txt" && ! grep -q "FAILED\|PROBLEM\|CRASHED" "$D3/out-h/ds3-report.txt"'
 check "H the report lists the weapon model containers" 'grep -q "wp_a_0200.flver" "$D3/out-h/ds3-report.txt" && grep -q "wp_a_1409.hkx" "$D3/out-h/ds3-report.txt"'
@@ -316,7 +316,7 @@ check "R the install is untouched" '[ "$(treehash "$D3/plain-data0/DARK SOULS II
 # a failed prepare writes the diagnosis (path table) into the same report
 "$FAKE_DS3" "$D3/no-item/DARK SOULS III" --variant no-item > /dev/null || { echo "cannot build the fake Dark Souls III install (no item text)"; exit 1; }
 wine_ds3 "$(winpath "$D3/kit-r/ashenmarine-setup.exe")" r2 ds3-prepare --ds3 "$(winpath "$D3/no-item/DARK SOULS III")" --mod "$(winpath "$D3/mod-r2")" --out "$(winpath "$D3/out-r2")"
-check "R2 a missing item text: exit code 2, nothing written, and the report carries the path table for the diagnosis" '[ "$(cat "$D3/r2.rc")" = "2" ] && [ ! -e "$D3/mod-r2" ] && grep -q "Where the files are (for the diagnosis)" "$D3/out-r2/ds3-report.txt" && grep -q "/msg/engus/item.msgbnd.dcx .*hash 624f014f" "$D3/out-r2/ds3-report.txt"'
+check "R2 a missing item text: exit code 2, nothing written, and the report carries the path table for the diagnosis" '[ "$(cat "$D3/r2.rc")" = "2" ] && [ ! -e "$D3/mod-r2" ] && grep -q "Where the files are (for the diagnosis)" "$D3/out-r2/ds3-report.txt" && grep -q "/msg/engUS/item.msgbnd.dcx .*hash 624f014f" "$D3/out-r2/ds3-report.txt"'
 
 echo; echo "== S: an item text stored under a name nobody expects is found by what it contains =="
 "$FAKE_DS3" "$D3/unexpected/DARK SOULS III" --variant unexpected-path > /dev/null || { echo "cannot build the fake Dark Souls III install (unexpected path)"; exit 1; }

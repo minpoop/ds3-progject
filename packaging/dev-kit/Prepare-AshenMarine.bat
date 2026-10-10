@@ -10,7 +10,7 @@ if not exist "ashenmarine\ashenmarine-setup.exe" (
 rem Take over the key cache of an older kit folder next to this one, so that the game does not have to be started once more.
 for %%F in (ds3-keys.pem keys-seen.pem) do (
   if not exist "ashenmarine\cache\%%F" (
-    for /d %%D in ("..\AshenMarine-*") do (
+    for /d %%D in (..\AshenMarine-*) do (
       if exist "%%~fD\ashenmarine\cache\%%F" if not exist "ashenmarine\cache\%%F" (
         if not exist "ashenmarine\cache" mkdir "ashenmarine\cache"
         copy /y "%%~fD\ashenmarine\cache\%%F" "ashenmarine\cache\%%F" >nul

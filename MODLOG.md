@@ -310,14 +310,15 @@ and an archive reader to modify an existing weapon file). The in-game side (gran
 
 ## Open questions (waiting on the owner's PC)
 
-1. Kit 0.6: did the collector find keys or tables of contents (`harvest.txt`: "it OPENS ...", "TABLE OF CONTENTS of ... found")? Do the weapons show the names Chainsword / Bolt Pistol / Bolt Rounds after the second Play? Which `msg` folders and FMG ids exist (`ds3-report.txt`)?
-2. Kit 0.5: does the Avelyn burst play three shots; is the crossbow silent as a sword; did equipment reading work (log lines "equipment: ..." with the raw numbers)?
-3. Kit 0.5: which sound set is better (F9): the classic mix or the exact reading? Does the exact reading cover the bank now (report line "reading the bank exactly: N of M")?
-4. Kit 0.5: `mesh-report.txt` - how are the SM2 `.tpl` / `.tpl_data` files laid out; do the vertex/index finders hit; is `tpl_data` compressed?
-5. Which weapon rows to repurpose permanently and how to name them for good (currently Shortsword -> Chainsword, Avelyn -> Bolt Pistol, Standard Bolt -> Bolt Rounds).
+1. Kit 0.9: do the three test items show the names Chainsword / Bolter / Bolt Rounds (`logs/rename.txt`: "found ... as a whole string", "WROTE ...", how many places, at which addresses, the bytes around them)? Is there room after the zero of "Avelyn" for a longer name?
+2. Kit 0.9: do the new weapon models load? `hook.log` lines "MOD FILE asked for by the game" for `mod\parts\wp_a_0200.partsbnd.dcx` / `wp_a_1409` (an existence check, then an open), `logs/me2-hook.txt` (is ModEngine2's hook at 0x7D660 a jump into `modengine2.dll`?), and the owner's own eyes: how do the weapons look (right way up, size, texture side, one flat colour)?
+3. Kit 0.9: the real DS3 weapon containers - are the FLVER/TPF/BND4 writers byte-exact on them (`ds3-models-report.txt`: "written again it is byte-identical", the vertex layout, the texture formats)? Which step fails closed, if one does?
+4. Kit 0.9: the archives that do not open - `ds3-report.txt` ("Data0: ... the first 64 bytes ... the whole file", "key X turns its first block into a plain block"), `cache/keys-seen.pem` (via the optional zip), and whether a key shows up later in a longer session (the collector keeps looking for 15 minutes; the DLC2 key came ~25 s into a session in kit 0.6).
+5. Which weapon rows to repurpose permanently and how to name them for good (currently Shortsword -> Chainsword, Avelyn -> Bolter (Bolt Pistol in the item-text file), Standard Bolt -> Bolt Rounds).
+6. Still open from earlier kits: which sound set is better (F9), Shift + left button as the strong attack, the burst of the Avelyn.
 
 ## Next
 
-- Kit 0.6 -> owner -> logs (`harvest.txt`, `ds3-report.txt`, names after the second Play). Then: names verified -> make weapon grant automatic (no hotkey); models: read `mesh-report.txt`, write the SM2 mesh reader, FLVER2/TPF writer for the DS3 weapon model files (`parts/wp_a_*.partsbnd.dcx`), convert textures (BC7/BC5 -> DS3 TPF); equip-aware idle loop,
-  equip/unequip sounds, hit sounds.
-- M4: Melty listing, release, one-click check, real screenshot, publish only with the owner's OK.
+- Kit 0.9 -> owner -> logs and a look at the weapons. Then: names verified -> the longer "Bolt Pistol" if the block has room (or leave it); models: fix what the real files show (orientation, scale, textures; normal and specular maps from the SM2 pictures); if ModEngine2's hook is not in place for this build, find another way to serve a model file (our own hook on the file open path, or the archive read) - the models are the long pole.
+- Make the weapon grant automatic (no hotkey); equip-aware idle loop, equip/unequip/hit sounds.
+- M4: Melty listing, release, one-click check, real screenshot, publish only with the owner's OK. For a one-click mashup the setup work (keys from the game's memory, reading the archives, the model conversion) has to run inside the game process or on first launch without the owner's help; the in-memory rename already needs no archive.

@@ -14,7 +14,7 @@ if not exist "ashenmarine\ashenmarine-launcher.exe" (
 rem Take over the key cache of an older kit folder next to this one, so that the game does not have to be started once more.
 for %%F in (ds3-keys.pem keys-seen.pem) do (
   if not exist "ashenmarine\cache\%%F" (
-    for /d %%D in ("..\AshenMarine-*") do (
+    for /d %%D in (..\AshenMarine-*) do (
       if exist "%%~fD\ashenmarine\cache\%%F" if not exist "ashenmarine\cache\%%F" (
         if not exist "ashenmarine\cache" mkdir "ashenmarine\cache"
         copy /y "%%~fD\ashenmarine\cache\%%F" "ashenmarine\cache\%%F" >nul
@@ -35,8 +35,14 @@ echo.
 echo.
 echo  ===== Dark Souls III is closed. Looking at its files again (now with everything the helper collected) ... =====
 "ashenmarine\ashenmarine-setup.exe" ds3-prepare
+rem the report about where the game keeps its files is made again only if there is none yet or it said "NOT READY YET"
+if not exist "ashenmarine\ds3-probe\ds3-report.txt" goto runprobe
+findstr /c:"NOT READY YET" "ashenmarine\ds3-probe\ds3-report.txt" >nul 2>nul
+if errorlevel 1 goto skipprobe
+:runprobe
 echo.
 "ashenmarine\ashenmarine-setup.exe" ds3-probe
+:skipprobe
 echo.
 echo  Done. If the weapons had their new names and looks, tell me; either way: run Send-Logs.bat and send me the zip.
 echo.
