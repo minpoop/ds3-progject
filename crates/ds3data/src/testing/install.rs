@@ -1,5 +1,6 @@
 //! A whole synthetic Dark Souls III install: a program file with the test keys among junk, three archives
-//! (`Data0` and `DLC1` with test key 0, `Data1` with test key 1) holding fake `item.msgbnd.dcx`, `menu.msgbnd.dcx`,
+//! (`Data0` and `DLC1` with test key 0, `Data1` with test key 1) holding fake `item_dlc2.msgbnd.dcx` and `item_dlc1.msgbnd.dcx`
+//! (the item text a real, fully updated game has: its archives hold no `item.msgbnd.dcx`), `menu.msgbnd.dcx`,
 //! `regulation.bin` and weapon model containers. No game data is in it: every byte is made up.
 use super::archive::ArchiveBuilder;
 use super::bnd4::Bnd4Spec;
@@ -12,8 +13,13 @@ use std::path::{Path, PathBuf};
 /// What the fake install holds for the item text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemMsg {
-    /// `/msg/engUS/item.msgbnd.dcx` as the game has it.
+    /// `/msg/engUS/item_dlc2.msgbnd.dcx` and `item_dlc1.msgbnd.dcx` as a fully updated game has them (and no `item.msgbnd.dcx`:
+    /// the game asks ModEngine2 for `item_dlc2` and the real archives hold no other).
     Good,
+    /// Only `/msg/engUS/item.msgbnd.dcx`: an install without the downloadable content.
+    BaseOnly,
+    /// Like [`ItemMsg::Good`], but in `item_dlc1` "Shortsword" at id 2000000 is called "Broadsword".
+    Dlc1Renamed,
     /// ... but "Shortsword" at id 2000000 is called "Broadsword" (a game update that renamed things).
     WrongName,
     /// There is no item text at all.
@@ -62,7 +68,12 @@ pub struct FakeDs3 {
     pub exe: PathBuf,
 }
 
-pub const ITEM_PATH: &str = "/msg/engUS/item.msgbnd.dcx";
+/// The English item text a fully updated game asks for.
+pub const ITEM_PATH: &str = "/msg/engUS/item_dlc2.msgbnd.dcx";
+/// ... and the one of the first downloadable content, which the real archives hold as well.
+pub const ITEM_DLC1_PATH: &str = "/msg/engUS/item_dlc1.msgbnd.dcx";
+/// ... and the base game's, which the real archives do not hold ([`ItemMsg::BaseOnly`] has only this).
+pub const BASE_ITEM_PATH: &str = "/msg/engUS/item.msgbnd.dcx";
 /// Where [`ItemMsg::UnexpectedPath`] puts the item text.
 pub const UNEXPECTED_ITEM_PATH: &str = "/msg/zzTEXT/item.msgbnd.dcx";
 pub const MODEL_PATHS: [&str; 5] = [
@@ -119,8 +130,18 @@ pub fn model_dcx_of(model: &str, junk: bool) -> Vec<u8> {
         flver.header.bounding_box_max[0] += model.len() as f32;
         spec = spec.file(100, &format!("{base}\\{model}.flver"), &flver.write().expect("write the made-up model"));
         spec = spec.file(101, &format!("{base}\\{model}.tpf"), &super::flver::sample_tpf().write());
+        // the real Shortsword has a second model beside the weapon: its scabbard (`WP_A_0200_1.flver`, `WP_A_0200_1_L.flver`)
+        if model.starts_with("wp_a_0200") {
+            let scabbard = match model.strip_suffix("_l") {
+                Some(right) => format!("{right}_1_l"),
+                None => format!("{model}_1"),
+            };
+            let mut sheath = super::flver::sample_flver();
+            sheath.header.bounding_box_max[1] += 7.0;
+            spec = spec.file(102, &format!("{base}\\{scabbard}.flver"), &sheath.write().expect("write the made-up scabbard"));
+        }
     }
-    spec = spec.file(102, &format!("{base}\\{model}.hkx"), &noise(model.len() as u64 * 1299709, 120));
+    spec = spec.file(103, &format!("{base}\\{model}.hkx"), &noise(model.len() as u64 * 1299709, 120));
     dcx::encode(&spec.build(), &DcxInfo::ds3_default()).expect("encode")
 }
 
@@ -140,7 +161,7 @@ fn padded_item_dcx(tables: &[items::Table], pad: usize) -> Vec<u8> {
 /// The DCX bytes of the item text for an option.
 pub fn item_msg_dcx(kind: ItemMsg) -> Vec<u8> {
     match kind {
-        ItemMsg::Good | ItemMsg::FrenchOnly => items::item_dcx(),
+        ItemMsg::Good | ItemMsg::Dlc1Renamed | ItemMsg::BaseOnly | ItemMsg::FrenchOnly => items::item_dcx(),
         ItemMsg::UnexpectedPath => padded_item_dcx(&item_tables(), 6000),
         ItemMsg::UnexpectedPathWrongName => {
             let mut tables = item_tables();
@@ -204,6 +225,7 @@ pub fn build(root: &Path, opts: &FakeOptions) -> FakeDs3 {
     let item_path = match opts.item_msg {
         ItemMsg::FrenchOnly => "/msg/frafr/item.msgbnd.dcx",
         ItemMsg::UnexpectedPath | ItemMsg::UnexpectedPathWrongName => UNEXPECTED_ITEM_PATH,
+        ItemMsg::BaseOnly => BASE_ITEM_PATH,
         _ => ITEM_PATH,
     };
     if opts.collide && opts.item_msg != ItemMsg::Missing {
@@ -211,6 +233,14 @@ pub fn build(root: &Path, opts: &FakeOptions) -> FakeDs3 {
     }
     if opts.item_msg != ItemMsg::Missing {
         add_encrypted(&mut data0, item_path, &item_dcx, 0x42);
+    }
+    if matches!(opts.item_msg, ItemMsg::Good | ItemMsg::Dlc1Renamed) {
+        // the real game's item_dlc1 is another full copy of the text (without the second downloadable content's tables)
+        let mut tables = item_tables();
+        if opts.item_msg == ItemMsg::Dlc1Renamed {
+            tables[1].fmg.set(2_000_000, "Broadsword");
+        }
+        add_encrypted(&mut data0, ITEM_DLC1_PATH, &padded_item_dcx(&tables, 100), 0x43);
     }
     data0.add("/msg/engUS/menu.msgbnd.dcx", &small_msg_dcx("MenuText.fmg", "Menu"));
     add_encrypted(&mut data0, "/regulation.bin", &noise(77, 3000), 0x17);
@@ -232,9 +262,9 @@ pub fn build(root: &Path, opts: &FakeOptions) -> FakeDs3 {
     }
     data1.write(&game, "Data1", &k1);
 
-    // DLC1: the DLC item text, under the first key
+    // DLC1: some DLC menu text, under the first key
     let mut dlc1 = ArchiveBuilder::new(3);
-    dlc1.add("/msg/engUS/item_dlc1.msgbnd.dcx", &small_msg_dcx("WeaponName_dlc1.fmg", "Dlc"));
+    dlc1.add("/msg/engUS/menu_dlc1.msgbnd.dcx", &small_msg_dcx("MenuText_dlc1.fmg", "Dlc"));
     dlc1.write(&game, "DLC1", &k0);
 
     if opts.broken_archives {
@@ -272,7 +302,9 @@ mod tests {
         }
         assert_eq!(install.read("/regulation.bin").unwrap(), noise(77, 3000));
         assert!(matches!(install.read("/nothing"), Err(crate::install::InstallError::NotInArchives { .. })));
-        assert_eq!(install.lookup("msg\\ENGUS\\item_dlc1.msgbnd.dcx").len(), 1);
+        assert_eq!(install.lookup("msg\\ENGUS\\menu_dlc1.msgbnd.dcx").len(), 1);
+        assert_eq!(install.lookup(ITEM_DLC1_PATH).len(), 1);
+        assert!(install.lookup(BASE_ITEM_PATH).is_empty(), "the real archives hold no item.msgbnd.dcx");
     }
 
     #[test]

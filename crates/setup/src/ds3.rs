@@ -4,8 +4,9 @@
 //! loose `item.msgbnd.dcx` to copy. The weapons of the mashup are built from other weapons and would show their old
 //! names (Shortsword, Avelyn, Standard Bolt). ModEngine2 loads a loose file from the mod folder instead of the archived
 //! one, so this reads the game's own item text out of the archives (read-only, with `ashen-ds3data`), changes the names
-//! and descriptions of the test weapons in a copy in memory and, only if every check passes, writes that copy as
-//! `<mod>/msg/engus/item.msgbnd.dcx` (the game's own folder for its English text is `engUS`; it asks for it in lower case).
+//! and descriptions of the test weapons in a copy in memory and, only if every check passes, writes that copy under the name
+//! the game asks for: `<mod>/msg/engus/item_dlc2.msgbnd.dcx` for a fully updated game (the game's own folder for its English
+//! text is `engUS`; it asks for it in lower case), and the same for `item_dlc1` and `item` if the archives hold those.
 //!
 //! * `probe` writes a report of what is in the install (key fingerprints, archives, where the interesting files are,
 //!   a dry run of the name change). It writes nothing but the report.
@@ -40,13 +41,20 @@ use std::path::{Path, PathBuf};
 
 /// The report both commands write.
 pub const REPORT_FILE: &str = "ds3-report.txt";
-/// The override, relative to the mod folder (always with `/`), and the manifest next to it.
-pub const OVERRIDE_REL: &str = "msg/engus/item.msgbnd.dcx";
+/// The manifest next to the overrides.
 pub const MANIFEST_FILE: &str = "ashenmarine-msg.json";
-/// Where the archive path of the English item text is. The folder is `engUS`: kit 0.8 looked for `ENGLISH` and found
-/// nothing, while the game itself (seen in the hook log) asks ModEngine2 for `msg\engus\item_dlc2.msgbnd.dcx`, `ngword`,
-/// `menu_dlc2` and `msg\na\sellregion`. (The hash of a path ignores the case.)
-pub const ENGLISH_ITEM_PATH: &str = "/msg/engUS/item.msgbnd.dcx";
+/// The archive paths of the English item text, in the order a fully updated game prefers them. The folder is `engUS`: kit 0.8
+/// looked for `ENGLISH` and found nothing. Kits 0.5 to 0.9 wrote only a changed `item.msgbnd.dcx`, but the game never asks for
+/// that one: its hook log shows it asking ModEngine2 for `msg\engus\item_dlc2.msgbnd.dcx`, `menu_dlc2`, `ngword` and
+/// `msg\na\sellregion` (and the archives of that install have no `item.msgbnd.dcx` at all), so the names never changed.
+/// `item_dlc1` and `item` are what an install with less downloadable content would ask for; every one of the three that the
+/// archives hold gets the new names. (The hash of a path ignores the case.)
+pub const ENGLISH_ITEM_PATHS: [&str; 3] = ["/msg/engUS/item_dlc2.msgbnd.dcx", "/msg/engUS/item_dlc1.msgbnd.dcx", "/msg/engUS/item.msgbnd.dcx"];
+/// Where the changed copy of an archive path goes, relative to the mod folder (always with `/`, and in lower case, the way the
+/// game asks for it): `/msg/engUS/item_dlc2.msgbnd.dcx` -> `msg/engus/item_dlc2.msgbnd.dcx`.
+pub fn override_rel(archive_path: &str) -> String {
+    archive_path.trim_start_matches('/').to_lowercase()
+}
 /// The folder of the English text, as the report calls it.
 pub const ENGLISH_FOLDER: &str = "engUS";
 
@@ -76,7 +84,16 @@ pub fn language_name(folder: &str) -> &str {
         other => other,
     }
 }
-/// Other names the English item text might have, tried when the expected one is not in the archives.
+/// The text containers of a language folder that the path table lists: the item text (names and descriptions; the one the mod
+/// changes) and the menu text, each in its three versions (base game, first and second downloadable content).
+const TEXT_FILES: [&str; 6] = ["item_dlc2", "item_dlc1", "item", "menu_dlc2", "menu_dlc1", "menu"];
+/// The item text containers of a language folder, in the order a fully updated game prefers them.
+const ITEM_FILES: [&str; 3] = ["item_dlc2", "item_dlc1", "item"];
+/// Which of the English item text paths the archives hold, in the order of [`ENGLISH_ITEM_PATHS`].
+fn english_item_paths_present(install: &Ds3Install) -> Vec<&'static str> {
+    ENGLISH_ITEM_PATHS.iter().copied().filter(|p| !install.lookup(p).is_empty()).collect()
+}
+/// Other names the English item text might have, tried when the expected ones are not in the archives.
 const ALTERNATIVE_ITEM_PATHS: [&str; 9] = [
     "/msg/ENGLISH/item.msgbnd.dcx",
     "/msg/ENG/item.msgbnd.dcx",
@@ -88,12 +105,8 @@ const ALTERNATIVE_ITEM_PATHS: [&str; 9] = [
     "/msg/engUS/item_patch.msgbnd.dcx",
     "/msg/engUS/itemname.msgbnd.dcx",
 ];
-const EXTRA_PATHS: [&str; 17] = [
+const EXTRA_PATHS: [&str; 13] = [
     // the text files the game itself was seen asking for (hook log of kit 0.8): they show in which archive the text lives
-    "/msg/engUS/item_dlc1.msgbnd.dcx",
-    "/msg/engUS/item_dlc2.msgbnd.dcx",
-    "/msg/engUS/menu_dlc1.msgbnd.dcx",
-    "/msg/engUS/menu_dlc2.msgbnd.dcx",
     "/msg/engUS/ngword.msgbnd.dcx",
     "/msg/na/sellregion.msgbnd.dcx",
     "/regulation.bin",
@@ -694,19 +707,37 @@ fn dry_run(out: &mut Out, found: &Found, edits: &[ItemEdit]) -> DryRun {
         }
     }
     note(out, &mut run, bad == 0 && tested > 0, "BND4 rewrite with each file's own bytes gives identical bytes", format!("{tested} files tested, {skipped} empty or compressed ones skipped, {bad} differed"));
-    // the text table writer, informational
+    // the text table writer, informational: the real game's tables are not byte-identical to what this program writes (kit 0.9
+    // saw 0 of 47), so the first differences are in the report: they say how the game's own layout differs
     let (mut same, mut total) = (0usize, 0usize);
+    let mut differing: Vec<String> = Vec::new();
     for f in &found.bnd.files {
         if let Some(bytes) = found.bnd.file_bytes(&found.decoded, f.index) {
             if let Ok(t) = FmgFile::parse(bytes) {
                 total += 1;
-                if t.to_bytes() == bytes {
+                let again = t.to_bytes();
+                if again == bytes {
                     same += 1;
+                } else if differing.len() < 3 {
+                    let head = |b: &[u8]| ashen_ds3data::hex(&b[..b.len().min(ashen_ds3data::fmg::HEADER_LEN)]);
+                    differing.push(format!(
+                        "file {} {}: the game's table is {} bytes, this program's writer makes {}; first difference at {}; header of the game's table {}; of this program's {}",
+                        f.index,
+                        f.name.as_deref().map_or("(no name)", leaf),
+                        bytes.len(),
+                        again.len(),
+                        first_difference(&again, bytes),
+                        head(bytes),
+                        head(&again)
+                    ));
                 }
             }
         }
     }
     out.line(format!("    [info] text tables written again by this program's writer are byte-identical to the game's: {}", if total == 0 { "no tables".to_string() } else if same == total { format!("yes ({same} of {total})") } else { format!("no ({same} of {total}); the tables are read back and compared as text instead") }));
+    for d in &differing {
+        out.rep.detail_wrapped("      ", d);
+    }
     if !run.ok {
         return run;
     }
@@ -807,35 +838,57 @@ fn safe_relative(rel: &str) -> Option<Vec<&str>> {
     ok.then_some(parts)
 }
 
-/// Deletes the override an earlier run wrote (the manifest says which file it is) and the manifest. Returns whether the
-/// override is gone (or there was none). Files that are not listed in a readable manifest are never touched.
+/// The files an earlier run wrote, as its manifest lists them (`written` is one path in the manifest of kits 0.5 to 0.9 and a
+/// list of paths since kit 0.10). `None`: the manifest cannot be read or lists something that is not below the mod folder.
+fn manifest_files(text: &str) -> Option<Vec<String>> {
+    let v = serde_json::from_str::<Value>(text).ok()?;
+    let listed: Vec<String> = match &v["written"] {
+        Value::String(one) => vec![one.clone()],
+        Value::Array(many) => many.iter().map(|m| m.as_str().map(str::to_string)).collect::<Option<Vec<_>>>()?,
+        _ => return None,
+    };
+    (!listed.is_empty() && listed.iter().all(|rel| safe_relative(rel).is_some())).then_some(listed)
+}
+
+/// Deletes the overrides an earlier run wrote (the manifest says which files they are) and the manifest. Returns whether they
+/// are gone (or there were none). Files that are not listed in a readable manifest are never touched.
 fn remove_stale_override(rep: &mut Report, mod_dir: &Path) -> bool {
     let manifest = mod_dir.join(MANIFEST_FILE);
-    let default_override = OVERRIDE_REL.split('/').fold(mod_dir.to_path_buf(), |p, part| p.join(part));
     let Ok(text) = std::fs::read_to_string(&manifest) else {
-        if default_override.exists() {
+        // no manifest: the files an earlier kit may have written are named, not deleted
+        let any = ENGLISH_ITEM_PATHS.iter().any(|p| rel_path(mod_dir, &override_rel(p)).exists());
+        if any {
             rep.say_wrapped("  ", "NOTE: the mod folder has an item text file but no readable manifest for it, so it is not known to come from this program and it was left alone.");
         }
         return true;
     };
-    let rel = serde_json::from_str::<Value>(&text).ok().and_then(|v| v["written"].as_str().map(str::to_string));
-    let Some(parts) = rel.as_deref().and_then(safe_relative) else {
-        rep.say_wrapped("  ", "NOTE: the manifest of an earlier run cannot be read, so the file it describes was left alone.");
+    let Some(listed) = manifest_files(&text) else {
+        rep.say_wrapped("  ", "NOTE: the manifest of an earlier run cannot be read, so the files it describes were left alone.");
         return true;
     };
-    let path = parts.iter().fold(mod_dir.to_path_buf(), |p, part| p.join(part));
-    match std::fs::remove_file(&path) {
-        Ok(()) => {
-            rep.say_wrapped("  ", &format!("Removed the item text file of an earlier run ({}), so the game does not keep a possibly out-of-date copy.", shown(&path, mod_dir)));
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => {
-            rep.say_wrapped("  ", &format!("WARNING: the item text file of an earlier run ({}) could not be deleted ({e}). Is Dark Souls III running? Close it and run this again, or delete that file by hand: the game may keep showing the changed names.", shown(&path, mod_dir)));
-            return false;
+    let mut all_gone = true;
+    for rel in &listed {
+        let path = rel_path(mod_dir, rel);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                rep.say_wrapped("  ", &format!("Removed the item text file of an earlier run ({}), so the game does not keep a possibly out-of-date copy.", shown(&path, mod_dir)));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                rep.say_wrapped("  ", &format!("WARNING: the item text file of an earlier run ({}) could not be deleted ({e}). Is Dark Souls III running? Close it and run this again, or delete that file by hand: the game may keep showing the changed names.", shown(&path, mod_dir)));
+                all_gone = false;
+            }
         }
     }
-    let _ = std::fs::remove_file(&manifest);
-    true
+    if all_gone {
+        let _ = std::fs::remove_file(&manifest);
+    }
+    all_gone
+}
+
+/// `rel` (with `/`) below the mod folder.
+fn rel_path(mod_dir: &Path, rel: &str) -> PathBuf {
+    rel.split(['/', '\\']).fold(mod_dir.to_path_buf(), |p, part| p.join(part))
 }
 
 /// Writes through a temporary file in the same folder (flushed to disk) and a rename.
@@ -858,16 +911,26 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     })
 }
 
-/// `ashenmarine-msg.json`, with the keys in the documented order.
-fn manifest_json(archive: &str, sha256: &str, applied: &[(u32, String, String)]) -> String {
+/// What one changed copy was made from.
+struct Source<'a> {
+    /// The archive's table of contents (`Data1.bhd`).
+    archive: &'a str,
+    /// The path in the archives (`/msg/engUS/item_dlc2.msgbnd.dcx`).
+    path: &'a str,
+    sha256: &'a str,
+}
+
+/// `ashenmarine-msg.json` (format 2), with the keys in the documented order: one entry of `source` for each file in `written`.
+fn manifest_json(sources: &[Source], applied: &[(u32, String, String)]) -> String {
     let edits: Vec<String> = applied.iter().map(|(id, old, new)| format!("{{\"id\":{id},\"old\":{},\"new\":{}}}", json_text(old), json_text(new))).collect();
+    let sources_json: Vec<String> = sources.iter().map(|s| format!("{{\"archive\":{},\"path\":{},\"sha256_of_decoded_original\":{}}}", json_text(s.archive), json_text(s.path), json_text(s.sha256))).collect();
+    let written: Vec<String> = sources.iter().map(|s| json_text(&override_rel(s.path))).collect();
     format!(
-        "{{\"format\":1,\"tool\":{},\"source\":{{\"archive\":{},\"sha256_of_decoded_original\":{}}},\"edits\":[{}],\"written\":{}}}",
+        "{{\"format\":2,\"tool\":{},\"source\":[{}],\"edits\":[{}],\"written\":[{}]}}",
         json_text(&format!("ashenmarine-setup {VERSION}")),
-        json_text(archive),
-        json_text(sha256),
+        sources_json.join(","),
         edits.join(","),
-        json_text(OVERRIDE_REL)
+        written.join(",")
     )
 }
 
@@ -941,10 +1004,10 @@ fn bundle_search(rep: &mut Report, install: &Ds3Install) -> Search {
 /// 2000000 and the other texts the edits expect (the same check that protects the real run), whatever its name.
 fn find_item_text_by_content(rep: &mut Report, install: &Ds3Install, search: &Search) -> Option<Found> {
     let edits = item_edits();
-    let known = path_hash(ENGLISH_ITEM_PATH);
-    // the ones with the usual name first, then the biggest (the item text is one of the bigger bundles)
+    let known: Vec<u32> = ENGLISH_ITEM_PATHS.iter().map(|p| path_hash(p)).collect();
+    // the ones with a name the game asks for first, then the biggest (the item text is one of the bigger bundles)
     let mut order: Vec<&Bundle> = search.bundles.iter().collect();
-    order.sort_by_key(|b| (b.hash != known, std::cmp::Reverse(b.stored)));
+    order.sort_by_key(|b| (!known.contains(&b.hash), std::cmp::Reverse(b.stored)));
     let mut tried = 0;
     for b in order.into_iter().take(80) {
         let Some(archive) = install.open_archives().find(|a| a.name() == b.archive) else { continue };
@@ -958,7 +1021,10 @@ fn find_item_text_by_content(rep: &mut Report, install: &Ds3Install, search: &Se
                     "The English item text is the container in {} with the path hash {:08x}{}.",
                     b.archive,
                     b.hash,
-                    if b.hash == known { " (the hash of msg/engUS/item.msgbnd.dcx)".to_string() } else { format!(", which is NOT the hash of msg/engUS/item.msgbnd.dcx ({known:08x}); it was recognised by its text (\"Shortsword\", \"Avelyn\" and \"Standard Bolt\" at the ids the mod changes)") }
+                    match ENGLISH_ITEM_PATHS.iter().find(|p| path_hash(p) == b.hash) {
+                        Some(name) => format!(" (the hash of {})", name.trim_start_matches('/')),
+                        None => ", which is NOT the hash of any name the game asks for (item_dlc2, item_dlc1 or item); it was recognised by its text (\"Shortsword\", \"Avelyn\" and \"Standard Bolt\" at the ids the mod changes)".to_string(),
+                    }
                 ),
             );
             return Some(found);
@@ -978,8 +1044,9 @@ fn step(rep: &mut Report, title: &str, f: impl FnOnce(&mut Report) -> Result<()>
 fn path_table(rep: &mut Report, install: &Ds3Install) {
     let mut paths: Vec<String> = Vec::new();
     for lang in LANGUAGES {
-        paths.push(format!("/msg/{lang}/item.msgbnd.dcx"));
-        paths.push(format!("/msg/{lang}/menu.msgbnd.dcx"));
+        for file in TEXT_FILES {
+            paths.push(format!("/msg/{lang}/{file}.msgbnd.dcx"));
+        }
     }
     paths.extend(EXTRA_PATHS.iter().map(|p| p.to_string()));
     paths.extend(MODEL_PATHS.iter().map(|p| p.to_string()));
@@ -1001,9 +1068,9 @@ fn path_table(rep: &mut Report, install: &Ds3Install) {
     if found == 0 {
         rep.say_wrapped("  ", "None of the paths exist. The folder names or the hash may differ from what this program assumes; the report has the hash of every path it tried.");
     }
-    if install.lookup(ENGLISH_ITEM_PATH).is_empty() {
+    if english_item_paths_present(install).is_empty() {
         // the language folder may be called something else: try a few other spellings
-        rep.say("  The English item text was not found under the expected name. Other spellings:");
+        rep.say("  The English item text was not found under the expected names. Other spellings:");
         for alt in ALTERNATIVE_ITEM_PATHS {
             let hits = install.lookup(alt);
             let state = if hits.is_empty() { "not found".to_string() } else { format!("FOUND in {}", hits.iter().map(|h| h.archive_name().to_string()).collect::<Vec<_>>().join(", ")) };
@@ -1012,41 +1079,47 @@ fn path_table(rep: &mut Report, install: &Ds3Install) {
     }
 }
 
-/// Step "item text": every item.msgbnd.dcx that exists, examined and dry-run.
+/// Step "item text": every item text container that exists (in every language, in its three versions), examined and dry-run.
 fn item_text_probe(rep: &mut Report, install: &Ds3Install) {
     let mut any = false;
+    let mut loud_done = false;
     for lang in LANGUAGES {
-        let path = format!("/msg/{lang}/item.msgbnd.dcx");
-        if install.lookup(&path).is_empty() {
-            continue;
-        }
-        any = true;
-        let english = lang == ENGLISH_FOLDER;
-        let mut out = Out { rep: &mut *rep, loud: english };
-        out.line(format!("  {path}:"));
-        match read_valid(install, &path, MAX_MSG_FILE) {
-            Err(why) => {
-                out.wrapped("    ", &format!("PROBLEM: {why}"));
+        for file in ITEM_FILES {
+            let path = format!("/msg/{lang}/{file}.msgbnd.dcx");
+            if install.lookup(&path).is_empty() {
+                continue;
             }
-            Ok(found) => {
-                out.line(format!("  {}", dcx_line(&found)));
-                for r in &found.rejected {
-                    out.wrapped("    ", r);
+            any = true;
+            // the console shows the first English container (the one a fully updated game asks for); the report has them all
+            let loud = lang == ENGLISH_FOLDER && !loud_done;
+            loud_done |= loud;
+            let english = lang == ENGLISH_FOLDER;
+            let mut out = Out { rep: &mut *rep, loud };
+            out.line(format!("  {path}:"));
+            match read_valid(install, &path, MAX_MSG_FILE) {
+                Err(why) => {
+                    out.wrapped("    ", &format!("PROBLEM: {why}"));
                 }
-                describe_container(&mut out, &found, true);
-                if english {
-                    dry_run(&mut out, &found, &item_edits());
-                } else {
-                    out.line("  (the name change is made for English only; this language is just looked at)");
-                    // still run it quietly: the report then shows what the other languages hold at these ids
-                    let mut quiet = Out { rep: &mut *out.rep, loud: false };
-                    dry_run(&mut quiet, &found, &item_edits());
+                Ok(found) => {
+                    out.line(format!("  {}", dcx_line(&found)));
+                    for r in &found.rejected {
+                        out.wrapped("    ", r);
+                    }
+                    describe_container(&mut out, &found, true);
+                    if english {
+                        dry_run(&mut out, &found, &item_edits());
+                    } else {
+                        out.line("  (the name change is made for English only; this language is just looked at)");
+                        // still run it quietly: the report then shows what the other languages hold at these ids
+                        let mut quiet = Out { rep: &mut *out.rep, loud: false };
+                        dry_run(&mut quiet, &found, &item_edits());
+                    }
                 }
             }
         }
     }
     if !any {
-        rep.say_wrapped("  ", "No item.msgbnd.dcx was found for any language, so there is nothing to change. See the path table above.");
+        rep.say_wrapped("  ", "No item text (item_dlc2, item_dlc1 or item .msgbnd.dcx) was found for any language, so there is nothing to change. See the path table above.");
     }
 }
 
@@ -1153,7 +1226,7 @@ pub fn probe(opts: &ProbeOpts) -> bool {
     });
     step(&mut rep, "5/7 The text files, found by what they contain", |rep| {
         let search = bundle_search(rep, &install);
-        if install.lookup(ENGLISH_ITEM_PATH).is_empty() {
+        if english_item_paths_present(&install).is_empty() {
             let _ = find_item_text_by_content(rep, &install, &search);
         }
         Ok(())
@@ -1339,8 +1412,9 @@ fn give_up(mut rep: Report, mut outcome: Outcome, mod_dir: &Path, reason: String
     outcome
 }
 
-/// `ds3-prepare`: reads the item text, and only if every check passes writes `<mod>/msg/engus/item.msgbnd.dcx` and
-/// `<mod>/ashenmarine-msg.json`. On any problem nothing new is written and an override of an earlier run is removed.
+/// `ds3-prepare`: reads the item text, and only if every check passes writes the changed copies below `<mod>/msg/engus` (the
+/// file names the game asks for, see [`ENGLISH_ITEM_PATHS`]) and `<mod>/ashenmarine-msg.json`. On any problem nothing new is
+/// written and the overrides of an earlier run are removed.
 pub fn prepare(opts: &PrepareOpts) -> Outcome {
     let mut outcome = Outcome::default();
     // nothing may ever be written inside the game's folder
@@ -1396,81 +1470,121 @@ pub fn prepare(opts: &PrepareOpts) -> Outcome {
     if let Err(why) = written {
         // do not leave a half-done state behind
         let _ = std::fs::remove_file(opts.mod_dir.join(MANIFEST_FILE));
-        let _ = std::fs::remove_file(OVERRIDE_REL.split('/').fold(opts.mod_dir.clone(), |p, part| p.join(part)));
+        for target in &plan.targets {
+            let _ = std::fs::remove_file(rel_path(&opts.mod_dir, &override_rel(target.archive_path)));
+        }
         return give_up(rep, outcome, &opts.mod_dir, why, &report, &opts.out);
     }
     outcome.written = true;
     outcome.edits = plan.applied.len();
     rep.section("Done");
     rep.say_wrapped("  ", &format!("Finished in {:.0} s. The test weapons are now called {} in the item text for the mod.", rep.elapsed(), EDITS.iter().map(|e| e.new_name).collect::<Vec<_>>().join(", ")));
-    rep.say_wrapped("  ", &format!("Written:  {}  and  {}  (in the mod folder). Dark Souls III itself was not changed. You can close this window.", OVERRIDE_REL.replace('/', "\\"), MANIFEST_FILE));
+    let files: Vec<String> = plan.targets.iter().map(|t| override_rel(t.archive_path).replace('/', "\\")).collect();
+    rep.say_wrapped("  ", &format!("Written:  {}  and  {}  (in the mod folder). Dark Souls III itself was not changed. You can close this window.", files.join(",  "), MANIFEST_FILE));
     outcome
 }
 
-/// What stage 4 decided to write.
+/// What stage 4 decided to write: one changed copy for each English item text container the archives hold.
 struct Plan {
-    archive_file: String,
-    sha256_of_original: String,
-    new_file: Vec<u8>,
+    targets: Vec<Target>,
+    /// The same for every target.
     applied: Vec<(u32, String, String)>,
 }
 
-/// Stage 4: finds the English item text, and only returns a plan if the dry run passed.
-fn plan_step(rep: &mut Report, install: &Ds3Install) -> Result<Plan> {
-    let found = if install.lookup(ENGLISH_ITEM_PATH).is_empty() {
-        rep.say_wrapped("  ", &format!("The English item text is not in the archives under the name msg/engUS/item.msgbnd.dcx (no archive has a file whose path hashes to {:08x}).", path_hash(ENGLISH_ITEM_PATH)));
-        let search = bundle_search(rep, install);
-        match find_item_text_by_content(rep, install, &search) {
-            Some(found) => found,
-            None => {
-                let others: Vec<&str> = LANGUAGES.iter().skip(1).copied().filter(|l| !install.lookup(&format!("/msg/{l}/item.msgbnd.dcx")).is_empty()).collect();
-                if !others.is_empty() {
-                    let list: Vec<&str> = others.iter().map(|l| language_name(l)).collect();
-                    bail!("the item text was found only for {} but not for English, and this program only changes the English text. Is the game set to another language? Run ds3-probe and send me its report", list.join(", "));
-                }
-                let unopened = install.archives().iter().filter(|s| s.archive.is_err()).map(|s| s.name.clone()).collect::<Vec<_>>();
-                if unopened.is_empty() {
-                    bail!("the item text of the game was not found in any Dark Souls III archive, neither under its name nor by looking at what the files contain. Please send me the report");
-                }
-                bail!(
-                    "the item text of the game was not found in the archives that could be opened, neither under its name nor by looking at what the files contain. It is probably in {}, which could not be opened (the lines about the archives above say why). Please send me the report",
-                    unopened.join(" or ")
-                );
-            }
-        }
-    } else {
-        read_valid(install, ENGLISH_ITEM_PATH, MAX_MSG_FILE).map_err(|why| anyhow!("the English item text could not be used: {why}"))?
-    };
-    let mut out = Out { rep: &mut *rep, loud: true };
-    out.line(format!("  {}", dcx_line(&found)));
-    if found.hit_count > 1 {
-        out.line(format!("  {} archives or entries have this path hash; the first one that reads as a text container was used", found.hit_count));
-    }
-    for r in &found.rejected {
-        out.wrapped("    ", r);
-    }
-    describe_container(&mut out, &found, true);
-    let run = dry_run(&mut out, &found, &item_edits());
-    if !run.ok || run.new_file.is_none() {
-        bail!("{}", run.reason.unwrap_or_else(|| "a safety check failed".to_string()));
-    }
-    Ok(Plan { archive_file: format!("{}.bhd", found.archive), sha256_of_original: sha256_hex(&found.decoded), new_file: run.new_file.unwrap_or_default(), applied: run.applied })
+struct Target {
+    /// The path in the archives (`/msg/engUS/item_dlc2.msgbnd.dcx`); [`override_rel`] gives the file name in the mod folder.
+    archive_path: &'static str,
+    /// The table of contents it came from (`Data1.bhd`).
+    archive_file: String,
+    sha256_of_original: String,
+    new_file: Vec<u8>,
 }
 
-/// Stage 5: the manifest first (so that a later failure still knows what to remove), then the override; both through a
-/// temporary file and a rename; then the override is read back.
-fn write_step(rep: &mut Report, mod_dir: &Path, plan: &Plan) -> Result<()> {
-    let override_path = OVERRIDE_REL.split('/').fold(mod_dir.to_path_buf(), |p, part| p.join(part));
-    let manifest_path = mod_dir.join(MANIFEST_FILE);
-    let manifest = manifest_json(&plan.archive_file, &plan.sha256_of_original, &plan.applied);
-    write_atomic(&manifest_path, manifest.as_bytes()).map_err(|e| anyhow!("cannot write {} ({e}). Is the folder read-only? You can start this program with  --mod \"<another folder>\"", MANIFEST_FILE))?;
-    write_atomic(&override_path, &plan.new_file)
-        .map_err(|e| anyhow!("cannot write {} ({e}). Is Dark Souls III running? Close it and run this again", OVERRIDE_REL.replace('/', "\\")))?;
-    let back = std::fs::read(&override_path).map_err(|e| anyhow!("the file just written cannot be read back ({e})"))?;
-    if back != plan.new_file {
-        bail!("the file just written does not read back the same");
+/// Stage 4: finds the English item text, and only returns a plan if every dry run passed.
+fn plan_step(rep: &mut Report, install: &Ds3Install) -> Result<Plan> {
+    let present = english_item_paths_present(install);
+    if present.is_empty() {
+        let wanted: Vec<String> = ENGLISH_ITEM_PATHS.iter().map(|p| format!("{} ({:08x})", p.trim_start_matches('/'), path_hash(p))).collect();
+        rep.say_wrapped("  ", &format!("The English item text is not in the archives under any of the names the game asks for: no archive has a file whose path hashes to one of {}.", wanted.join(", ")));
+        let search = bundle_search(rep, install);
+        if find_item_text_by_content(rep, install, &search).is_some() {
+            bail!("the English item text is in the archives, but under a path hash that is none of the names the game asks for (item_dlc2.msgbnd.dcx, item_dlc1.msgbnd.dcx, item.msgbnd.dcx), so this program cannot tell under which file name the game wants the changed copy. Please send me the report");
+        }
+        let others: Vec<&str> = LANGUAGES.iter().skip(1).copied().filter(|l| ITEM_FILES.iter().any(|f| !install.lookup(&format!("/msg/{l}/{f}.msgbnd.dcx")).is_empty())).collect();
+        if !others.is_empty() {
+            let list: Vec<&str> = others.iter().map(|l| language_name(l)).collect();
+            bail!("the item text was found only for {} but not for English, and this program only changes the English text. Is the game set to another language? Run ds3-probe and send me its report", list.join(", "));
+        }
+        let unopened = install.archives().iter().filter(|s| s.archive.is_err()).map(|s| s.name.clone()).collect::<Vec<_>>();
+        if unopened.is_empty() {
+            bail!("the item text of the game was not found in any Dark Souls III archive, neither under its name nor by looking at what the files contain. Please send me the report");
+        }
+        bail!(
+            "the item text of the game was not found in the archives that could be opened, neither under its name nor by looking at what the files contain. It is probably in {}, which could not be opened (the lines about the archives above say why). Please send me the report",
+            unopened.join(" or ")
+        );
     }
-    rep.say(format!("  wrote {} ({} bytes) and {} ({} bytes)", OVERRIDE_REL.replace('/', "\\"), plan.new_file.len(), MANIFEST_FILE, manifest.len()));
+    let mut targets: Vec<Target> = Vec::new();
+    let mut applied = Vec::new();
+    for (i, path) in present.iter().copied().enumerate() {
+        let name = path.trim_start_matches('/');
+        let found = read_valid(install, path, MAX_MSG_FILE).map_err(|why| anyhow!("the English item text ({name}) could not be used: {why}"))?;
+        // the console shows the first one (the one a fully updated game asks for); the report has all of them
+        let mut out = Out { rep: &mut *rep, loud: i == 0 };
+        out.line(format!("  {name}:"));
+        out.line(format!("  {}", dcx_line(&found)));
+        if found.hit_count > 1 {
+            out.line(format!("  {} archives or entries have this path hash; the first one that reads as a text container was used", found.hit_count));
+        }
+        for r in &found.rejected {
+            out.wrapped("    ", r);
+        }
+        describe_container(&mut out, &found, true);
+        let run = dry_run(&mut out, &found, &item_edits());
+        let Some(new_file) = run.new_file.filter(|_| run.ok) else {
+            bail!("{name}: {}", run.reason.unwrap_or_else(|| "a safety check failed".to_string()));
+        };
+        if i > 0 {
+            rep.say(format!("  {name}: the same checks passed ({} bytes after the name change)", new_file.len()));
+        }
+        if applied.is_empty() {
+            applied = run.applied;
+        }
+        targets.push(Target { archive_path: path, archive_file: format!("{}.bhd", found.archive), sha256_of_original: sha256_hex(&found.decoded), new_file });
+    }
+    if targets.len() > 1 {
+        rep.say_wrapped("  ", &format!("{} English item text containers will be changed ({}): a fully updated game asks for the first one; the others are for an install with less downloadable content.", targets.len(), targets.iter().map(|t| t.archive_path.trim_start_matches('/')).collect::<Vec<_>>().join(", ")));
+    }
+    Ok(Plan { targets, applied })
+}
+
+/// Stage 5: files of an earlier run that this plan does not write are removed; then the manifest (so that a later failure
+/// still knows what to remove), then the overrides; every file through a temporary file and a rename, and read back.
+fn write_step(rep: &mut Report, mod_dir: &Path, plan: &Plan) -> Result<()> {
+    let manifest_path = mod_dir.join(MANIFEST_FILE);
+    let sources: Vec<Source> = plan.targets.iter().map(|t| Source { archive: &t.archive_file, path: t.archive_path, sha256: &t.sha256_of_original }).collect();
+    let manifest = manifest_json(&sources, &plan.applied);
+    // files an earlier run wrote that this one does not: kit 0.9 wrote item.msgbnd.dcx, which the game never asks for
+    let new_rels: Vec<String> = plan.targets.iter().map(|t| override_rel(t.archive_path)).collect();
+    if let Some(old) = std::fs::read_to_string(&manifest_path).ok().and_then(|text| manifest_files(&text)) {
+        for rel in old.iter().filter(|r| !new_rels.contains(&r.replace('\\', "/"))) {
+            let path = rel_path(mod_dir, rel);
+            if std::fs::remove_file(&path).is_ok() {
+                rep.say_wrapped("  ", &format!("Removed {}, which an earlier run wrote and this one does not.", shown(&path, mod_dir)));
+            }
+        }
+    }
+    write_atomic(&manifest_path, manifest.as_bytes()).map_err(|e| anyhow!("cannot write {} ({e}). Is the folder read-only? You can start this program with  --mod \"<another folder>\"", MANIFEST_FILE))?;
+    for (target, rel) in plan.targets.iter().zip(&new_rels) {
+        let override_path = rel_path(mod_dir, rel);
+        write_atomic(&override_path, &target.new_file).map_err(|e| anyhow!("cannot write {} ({e}). Is Dark Souls III running? Close it and run this again", rel.replace('/', "\\")))?;
+        let back = std::fs::read(&override_path).map_err(|e| anyhow!("the file just written cannot be read back ({e})"))?;
+        if back != target.new_file {
+            bail!("the file just written ({}) does not read back the same", rel.replace('/', "\\"));
+        }
+        rep.say(format!("  wrote {} ({} bytes)", rel.replace('/', "\\"), target.new_file.len()));
+    }
+    rep.say(format!("  wrote {} ({} bytes)", MANIFEST_FILE, manifest.len()));
     Ok(())
 }
 
@@ -1494,27 +1608,56 @@ mod tests {
         let edits = item_edits();
         assert_eq!(edits.len(), 3);
         assert_eq!((edits[1].id, edits[1].expect_name, edits[1].new_name, edits[1].short_text, edits[1].long_text), (14_090_000, "Avelyn", "Bolt Pistol", Some(EDITS[1].short), Some(EDITS[1].long)));
-        assert!(LANGUAGES.len() == 16 && LANGUAGES[0] == ENGLISH_FOLDER && ENGLISH_FOLDER == "engUS" && ENGLISH_ITEM_PATH == "/msg/engUS/item.msgbnd.dcx");
-        // all the paths of the path table hash to something (and the two item paths used for the override agree)
-        assert_eq!(path_hash("/msg/engus/item.msgbnd.dcx"), path_hash(ENGLISH_ITEM_PATH), "the hash ignores the case: the game asks for engus, the archive path says engUS");
-        assert_eq!(OVERRIDE_REL, "msg/engus/item.msgbnd.dcx", "the override is named the way the game asks for it");
-        assert_ne!(path_hash("/msg/ENGLISH/item.msgbnd.dcx"), path_hash(ENGLISH_ITEM_PATH), "kit 0.8's guess was a different path");
+        assert!(LANGUAGES.len() == 16 && LANGUAGES[0] == ENGLISH_FOLDER && ENGLISH_FOLDER == "engUS");
+        assert_eq!(ENGLISH_ITEM_PATHS, ["/msg/engUS/item_dlc2.msgbnd.dcx", "/msg/engUS/item_dlc1.msgbnd.dcx", "/msg/engUS/item.msgbnd.dcx"]);
+    }
+
+    #[test]
+    fn the_overrides_are_named_the_way_the_game_asks_for_them() {
+        // seen in a real game's hook log (kit 0.9): ModEngine2 was asked about msg\engus\item_dlc2.msgbnd.dcx, and the
+        // archives of that install hold a file with the path hash d450d103
+        assert_eq!(override_rel("/msg/engUS/item_dlc2.msgbnd.dcx"), "msg/engus/item_dlc2.msgbnd.dcx");
+        assert_eq!(override_rel("/msg/engUS/item.msgbnd.dcx"), "msg/engus/item.msgbnd.dcx");
+        assert_eq!(path_hash("/msg/engUS/item_dlc2.msgbnd.dcx"), 0xd450_d103, "the English item text of the real game");
+        assert_eq!(path_hash("/msg/engUS/item_dlc1.msgbnd.dcx"), 0x6ede_5fc6);
+        assert_eq!(path_hash("/msg/engUS/item.msgbnd.dcx"), 0x624f_014f, "the real archives have nothing under this hash: the game never asks for it");
+        assert_eq!(path_hash("/msg/engus/item_dlc2.msgbnd.dcx"), path_hash(ENGLISH_ITEM_PATHS[0]), "the hash ignores the case: the game asks for engus, the archive path says engUS");
+        assert_ne!(path_hash("/msg/ENGLISH/item.msgbnd.dcx"), path_hash(ENGLISH_ITEM_PATHS[2]), "kit 0.8's guess was a different path");
+        for path in ENGLISH_ITEM_PATHS {
+            let rel = override_rel(path);
+            assert!(safe_relative(&rel).is_some() && rel == rel.to_lowercase() && !rel.starts_with('/'), "{rel}");
+        }
     }
 
     #[test]
     fn the_manifest_has_the_documented_shape() {
         let applied = vec![(2_000_000u32, "Shortsword".to_string(), "Chainsword".to_string()), (404_000, "Standard \"Bolt\"".to_string(), "Bolt Rounds".to_string())];
-        let text = manifest_json("Data0.bhd", &"ab".repeat(32), &applied);
+        let sha = "ab".repeat(32);
+        let sources = [Source { archive: "Data1.bhd", path: "/msg/engUS/item_dlc2.msgbnd.dcx", sha256: &sha }, Source { archive: "Data0.bhd", path: "/msg/engUS/item.msgbnd.dcx", sha256: &sha }];
+        let text = manifest_json(&sources, &applied);
         let v: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(v["format"], 1);
+        assert_eq!(v["format"], 2);
         assert_eq!(v["tool"], format!("ashenmarine-setup {VERSION}"));
-        assert_eq!(v["source"]["archive"], "Data0.bhd");
-        assert_eq!(v["source"]["sha256_of_decoded_original"].as_str().unwrap().len(), 64);
+        assert_eq!(v["source"][0]["archive"], "Data1.bhd");
+        assert_eq!(v["source"][0]["path"], "/msg/engUS/item_dlc2.msgbnd.dcx");
+        assert_eq!(v["source"][1]["archive"], "Data0.bhd");
+        assert_eq!(v["source"][0]["sha256_of_decoded_original"].as_str().unwrap().len(), 64);
         assert_eq!(v["edits"][0], serde_json::json!({"id": 2000000, "old": "Shortsword", "new": "Chainsword"}));
         assert_eq!(v["edits"][1]["old"], "Standard \"Bolt\"");
-        assert_eq!(v["written"], "msg/engus/item.msgbnd.dcx");
-        assert!(text.starts_with("{\"format\":1,\"tool\":\"ashenmarine-setup "), "keys in the documented order: {text}");
+        assert_eq!(v["written"], serde_json::json!(["msg/engus/item_dlc2.msgbnd.dcx", "msg/engus/item.msgbnd.dcx"]));
+        assert!(text.starts_with("{\"format\":2,\"tool\":\"ashenmarine-setup "), "keys in the documented order: {text}");
         assert!(text.find("\"source\"").unwrap() < text.find("\"edits\"").unwrap() && text.find("\"edits\"").unwrap() < text.find("\"written\"").unwrap());
+        assert_eq!(manifest_files(&text), Some(vec!["msg/engus/item_dlc2.msgbnd.dcx".to_string(), "msg/engus/item.msgbnd.dcx".to_string()]));
+    }
+
+    #[test]
+    fn the_files_of_a_manifest_are_read_in_both_formats_and_only_when_they_stay_below_the_mod_folder() {
+        // kits 0.5 to 0.9 wrote one path as text, kit 0.10 writes a list
+        assert_eq!(manifest_files("{\"written\":\"msg/engus/item.msgbnd.dcx\"}"), Some(vec!["msg/engus/item.msgbnd.dcx".to_string()]));
+        assert_eq!(manifest_files("{\"written\":[\"a/b.dcx\",\"a/c.dcx\"]}"), Some(vec!["a/b.dcx".to_string(), "a/c.dcx".to_string()]));
+        for bad in ["{\"written\":[]}", "{\"written\":[\"a/b\",\"../c\"]}", "{\"written\":[\"a/b\",7]}", "{\"written\":7}", "{\"written\":\"../x\"}", "{}", "not json", ""] {
+            assert_eq!(manifest_files(bad), None, "{bad:?}");
+        }
     }
 
     #[test]
@@ -1557,8 +1700,14 @@ mod tests {
     fn a_stale_override_is_removed_only_when_the_manifest_lists_it() {
         let t = tempfile::tempdir().unwrap();
         let mod_dir = t.path().join("mod");
-        let override_path = mod_dir.join("msg").join("engus").join("item.msgbnd.dcx");
+        let override_path = mod_dir.join("msg").join("engus").join("item_dlc2.msgbnd.dcx");
+        let other_path = mod_dir.join("msg").join("engus").join("item.msgbnd.dcx");
         let mut rep = Report::create(&t.path().join("r.txt"));
+        let manifest = |files: &[&str]| {
+            let sha = "00".repeat(32);
+            let sources: Vec<Source> = files.iter().map(|p| Source { archive: "Data1.bhd", path: p, sha256: &sha }).collect();
+            manifest_json(&sources, &[])
+        };
         // nothing there: fine
         assert!(remove_stale_override(&mut rep, &mod_dir));
         // a file without a manifest is left alone
@@ -1567,19 +1716,33 @@ mod tests {
         assert!(remove_stale_override(&mut rep, &mod_dir));
         assert!(override_path.exists());
         // a manifest that lists it: both go
-        std::fs::write(mod_dir.join(MANIFEST_FILE), manifest_json("Data0.bhd", "00", &[])).unwrap();
+        std::fs::write(mod_dir.join(MANIFEST_FILE), manifest(&["/msg/engUS/item_dlc2.msgbnd.dcx"])).unwrap();
         assert!(remove_stale_override(&mut rep, &mod_dir));
         assert!(!override_path.exists() && !mod_dir.join(MANIFEST_FILE).exists());
+        // a manifest that lists two files: both go, and a third one that it does not list stays
+        let third = mod_dir.join("msg").join("engus").join("item_dlc1.msgbnd.dcx");
+        for p in [&override_path, &other_path, &third] {
+            std::fs::write(p, b"x").unwrap();
+        }
+        std::fs::write(mod_dir.join(MANIFEST_FILE), manifest(&["/msg/engUS/item_dlc2.msgbnd.dcx", "/msg/engUS/item.msgbnd.dcx"])).unwrap();
+        assert!(remove_stale_override(&mut rep, &mod_dir));
+        assert!(!override_path.exists() && !other_path.exists() && third.exists() && !mod_dir.join(MANIFEST_FILE).exists());
+        // the manifest of kits 0.5 to 0.9 (one path as text) is understood
+        std::fs::write(&other_path, b"x").unwrap();
+        std::fs::write(mod_dir.join(MANIFEST_FILE), "{\"format\":1,\"written\":\"msg/engus/item.msgbnd.dcx\"}").unwrap();
+        assert!(remove_stale_override(&mut rep, &mod_dir));
+        assert!(!other_path.exists() && !mod_dir.join(MANIFEST_FILE).exists());
         // a manifest that lists something outside the mod folder, or garbage: nothing is deleted
         let outside = t.path().join("precious.txt");
         std::fs::write(&outside, b"keep").unwrap();
-        for text in ["{\"written\":\"../precious.txt\"}", "{\"written\":42}", "not json", "{}"] {
+        for text in ["{\"written\":\"../precious.txt\"}", "{\"written\":[\"../precious.txt\"]}", "{\"written\":42}", "not json", "{}"] {
             std::fs::write(mod_dir.join(MANIFEST_FILE), text).unwrap();
             assert!(remove_stale_override(&mut rep, &mod_dir));
             assert!(outside.exists() && mod_dir.join(MANIFEST_FILE).exists(), "{text}");
         }
         // a manifest that lists a file that is already gone is fine
-        std::fs::write(mod_dir.join(MANIFEST_FILE), manifest_json("Data0.bhd", "00", &[])).unwrap();
+        std::fs::write(mod_dir.join(MANIFEST_FILE), manifest(&["/msg/engUS/item_dlc1.msgbnd.dcx", "/msg/engUS/item.msgbnd.dcx"])).unwrap();
+        std::fs::remove_file(&third).unwrap();
         assert!(remove_stale_override(&mut rep, &mod_dir));
         assert!(!mod_dir.join(MANIFEST_FILE).exists());
     }

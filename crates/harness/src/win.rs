@@ -38,6 +38,7 @@ extern "system" {
     fn GetLastError() -> u32;
     fn SetLastError(code: u32);
     fn Sleep(ms: u32);
+    fn GetFileAttributesExW(name: *const u16, level: u32, info: *mut [u8; 36]) -> i32;
 }
 
 #[link(name = "user32")]
@@ -367,6 +368,18 @@ fn fake_ds3() -> ExitCode {
         WSACleanup();
     }
     let _ = fs::write(&result_path, &result);
+    // Optionally do what ModEngine2 does for the files the game asks for: ask whether the file exists in the mod folder
+    // (GetFileAttributesExW, with the mixed separators of its log: `<mod folder>\msg\...`) and open it when it does.
+    if let Ok(mod_dir) = std::env::var("ASHEN_FAKE_MOD_DIR") {
+        for rel in ["msg\\engus\\item_dlc2.msgbnd.dcx", "parts\\wp_a_0200.partsbnd.dcx", "menu\\win\\01_900_black.gfx"] {
+            let path = format!("{}/{rel}", mod_dir.replace('\\', "/"));
+            let mut info = [0u8; 36];
+            let exists = unsafe { GetFileAttributesExW(wide(&path).as_ptr(), 0, &mut info) } != 0;
+            if exists {
+                let _ = fs::File::open(&path);
+            }
+        }
+    }
     // Optionally keep game-style name strings in memory (an 8-byte block header, the zero-ended UTF-16 text, at an address
     // divisible by 8) so that the in-memory rename can be tested end to end; what they read afterwards goes to the result file.
     let mut pool: Vec<u64> = Vec::new();

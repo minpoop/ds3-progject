@@ -39,27 +39,72 @@ fn flat(text: &str) -> String {
 }
 
 #[test]
-fn an_item_text_stored_under_an_unexpected_name_is_found_by_what_it_contains() {
+fn an_item_text_stored_under_an_unexpected_name_is_recognised_but_not_written_because_the_file_name_the_game_wants_is_unknown() {
     let env = Env::new(&FakeOptions { item_msg: ItemMsg::UnexpectedPath, ..FakeOptions::default() });
     let before = tree(&env.fake.root);
     let outcome = env.prepare(None);
-    assert!(outcome.ok(), "{outcome:?}\n{}", env.report());
+    assert!(!outcome.ok(), "{outcome:?}");
+    let reason = outcome.reason.clone().unwrap_or_default();
+    assert!(reason.contains("under a path hash that is none of the names the game asks for") && reason.contains("under which file name the game wants the changed copy"), "{reason}");
     let report = flat(&env.report());
-    assert!(report.contains("no archive has a file whose path hashes to 624f014f"), "{report}");
+    assert!(report.contains("no archive has a file whose path hashes to one of msg/engUS/item_dlc2.msgbnd.dcx (d450d103), msg/engUS/item_dlc1.msgbnd.dcx (6ede5fc6), msg/engUS/item.msgbnd.dcx (624f014f)"), "{report}");
     assert!(report.contains("Looking at the start of every file in the archives"), "{report}");
-    assert!(report.contains("which is NOT the hash of msg/engUS/item.msgbnd.dcx") && report.contains("recognised by its text"), "{report}");
-    // the same names as when the text is where it is expected
+    assert!(report.contains("which is NOT the hash of any name the game asks for") && report.contains("recognised by its text"), "{report}");
+    assert!(!env.mod_dir().exists(), "nothing is written when the name the game asks for is not known");
+    assert_eq!(tree(&env.fake.root), before, "the install is untouched");
+    // the usual place is not searched when the names work: the fast way stays fast
     let expected = Env::new(&FakeOptions::default());
     assert!(expected.prepare(None).ok());
-    let (got, want) = (texts_of(&env.override_path()), texts_of(&expected.override_path()));
-    assert_eq!(got.len(), want.len());
-    for (id, table) in &got {
-        assert_eq!(table.iter().collect::<Vec<_>>(), want[id].iter().collect::<Vec<_>>(), "table {id}");
-    }
-    assert_eq!(texts_of(&env.override_path())[&11].get(2_000_000), Some("Chainsword"));
-    assert_eq!(tree(&env.fake.root), before, "the install is untouched");
-    // the usual place is not searched when the name works: the fast way stays fast
     assert!(!flat(&expected.report()).contains("Looking at the start of every file"), "{}", flat(&expected.report()));
+}
+
+#[test]
+fn an_install_without_the_downloadable_content_gets_the_plain_item_text_changed() {
+    let env = Env::new(&FakeOptions { item_msg: ItemMsg::BaseOnly, ..FakeOptions::default() });
+    let outcome = env.prepare(None);
+    assert!(outcome.ok(), "{outcome:?}\n{}", env.report());
+    let files: Vec<PathBuf> = tree(&env.mod_dir()).keys().cloned().collect();
+    assert_eq!(files, vec![PathBuf::from("ashenmarine-msg.json"), ["msg", "engus", "item.msgbnd.dcx"].iter().collect::<PathBuf>()]);
+    assert_eq!(texts_of(&env.override_named("item.msgbnd.dcx"))[&11].get(2_000_000), Some("Chainsword"));
+    let manifest: Value = serde_json::from_str(&fs::read_to_string(env.mod_dir().join(MANIFEST_FILE)).unwrap()).unwrap();
+    assert_eq!(manifest["written"], serde_json::json!(["msg/engus/item.msgbnd.dcx"]));
+    assert!(flat(&env.report()).contains("Written: msg\\engus\\item.msgbnd.dcx and ashenmarine-msg.json"));
+}
+
+#[test]
+fn the_override_of_kits_0_5_to_0_9_is_removed_when_a_new_run_writes_the_right_files() {
+    let env = Env::new(&FakeOptions::default());
+    // what kit 0.9 left in the mod folder: item.msgbnd.dcx (which the game never asks for) and a manifest of the old shape
+    let old = env.override_named("item.msgbnd.dcx");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::write(&old, b"the text of kit 0.9").unwrap();
+    fs::write(env.mod_dir().join(MANIFEST_FILE), "{\"format\":1,\"written\":\"msg/engus/item.msgbnd.dcx\"}").unwrap();
+    let outcome = env.prepare(None);
+    assert!(outcome.ok(), "{outcome:?}\n{}", env.report());
+    assert!(!old.exists(), "the file of the old kit is gone");
+    assert!(env.override_path().is_file() && env.override_named("item_dlc1.msgbnd.dcx").is_file());
+    assert!(flat(&env.report()).contains("which an earlier run wrote and this one does not"));
+    // a file of the same name that no manifest lists is somebody else's: left alone
+    let env = Env::new(&FakeOptions::default());
+    fs::create_dir_all(old_dir(&env)).unwrap();
+    fs::write(env.override_named("item.msgbnd.dcx"), b"not ours").unwrap();
+    assert!(env.prepare(None).ok());
+    assert_eq!(fs::read(env.override_named("item.msgbnd.dcx")).unwrap(), b"not ours");
+}
+
+fn old_dir(env: &Env) -> PathBuf {
+    env.mod_dir().join("msg").join("engus")
+}
+
+#[test]
+fn when_one_of_the_item_texts_cannot_be_changed_nothing_is_written() {
+    // item_dlc2 is fine, item_dlc1 has "Shortsword" renamed: all or nothing
+    let env = Env::new(&FakeOptions { item_msg: ItemMsg::Dlc1Renamed, ..FakeOptions::default() });
+    let outcome = env.prepare(None);
+    assert!(!outcome.ok(), "{outcome:?}");
+    let reason = outcome.reason.clone().unwrap_or_default();
+    assert!(reason.contains("msg/engUS/item_dlc1.msgbnd.dcx") && reason.contains("no longer has \"Shortsword\""), "{reason}");
+    assert!(!env.mod_dir().exists(), "nothing is written");
 }
 
 #[test]
@@ -148,7 +193,7 @@ fn exporting_the_weapon_containers_copies_them_as_stored_and_touches_nothing_els
         assert_eq!(fs::read(out.join(name)).unwrap(), model_dcx(model), "{name} is the very file the game holds");
     }
     let report = fs::read_to_string(out.join(ds3::EXPORT_REPORT_FILE)).unwrap();
-    for needle in ["wp_a_0200.partsbnd.dcx", "wp_a_1409.partsbnd.dcx", "DCX_DFLT_10000_44_9", "Copied 5 files", "Nothing of the game was changed", "inside: wp_a_0200.flver (2160 B), wp_a_0200.tpf (5969 B), wp_a_0200.hkx (120 B)"] {
+    for needle in ["wp_a_0200.partsbnd.dcx", "wp_a_1409.partsbnd.dcx", "DCX_DFLT_10000_44_9", "Copied 5 files", "Nothing of the game was changed", "inside: wp_a_0200.flver (2160 B), wp_a_0200.tpf (5969 B), wp_a_0200_1.flver (2160 B), wp_a_0200.hkx (120 B)"] {
         assert!(report.contains(needle), "report is missing {needle:?}:\n{report}");
     }
     assert!(!report.contains("PROBLEM") && !report.contains("not copied"), "{report}");
@@ -223,8 +268,13 @@ impl Env {
         self.data.join("mod")
     }
 
+    /// The changed item text a fully updated game asks for (`item_dlc2.msgbnd.dcx`).
     fn override_path(&self) -> PathBuf {
-        self.mod_dir().join("msg").join("engus").join("item.msgbnd.dcx")
+        self.override_named("item_dlc2.msgbnd.dcx")
+    }
+
+    fn override_named(&self, file: &str) -> PathBuf {
+        self.mod_dir().join("msg").join("engus").join(file)
     }
 
     fn probe(&self, keys: Option<PathBuf>) -> bool {
@@ -276,13 +326,13 @@ fn probe_reads_a_fake_install_and_leaves_it_untouched() {
     for needle in [
         "archive keys found in the program file: 2 (87febfc8, b2969406)",
         "Data0    ",
-        "key 87febfc8, salt 11 characters, 11 buckets, 24 files",
+        "key 87febfc8, salt 11 characters, 11 buckets, 25 files",
         "key b2969406, salt 11 characters, 7 buckets, 5 files",
         "DLC1     ",
-        "/msg/engUS/item.msgbnd.dcx                 hash 624f014f  Data0: 40 B stored, 40 B unpadded; also Data0: ",
+        "/msg/engUS/item_dlc2.msgbnd.dcx            hash d450d103  Data0: 40 B stored, 40 B unpadded; also Data0: ",
         "/regulation.bin",
         "/parts/wp_a_1419.partsbnd.dcx",
-        "9 of 54 paths exist in the archives",
+        "10 of 114 paths exist in the archives",
         "/msg/frafr/item.msgbnd.dcx",
         "DCX variant DCX_DFLT_10000_44_9",
         "container: BND4 version \"07D7R6\", format 0x2e (IDs|Names1|Names2|Compression) (stored as 0x74)",
@@ -352,7 +402,7 @@ fn keys_the_running_game_showed_are_tried_too_and_an_archive_no_key_opens_is_des
     fs::write(&one, test_key(1).pem()).unwrap();
     assert!(env.probe(Some(one)));
     let report = flat(&env.report());
-    assert!(report.contains("Data0: 2560 bytes; the first 64: ") && report.contains("Data0: the last 64: ") && report.contains("Data0: the whole file, 32 bytes to a line:"), "{report}");
+    assert!(report.contains("Data0: 2816 bytes; the first 64: ") && report.contains("Data0: the last 64: ") && report.contains("Data0: the whole file, 32 bytes to a line:"), "{report}");
     assert!(report.contains("Data0 1 keys were tried on its first block: none turns it into a plain block"), "{report}");
     // a key file with a damaged block does not stop anything
     let env = Env::new(&FakeOptions::default());
@@ -380,7 +430,7 @@ fn keys_from_a_file_or_the_cache_open_the_archives() {
     fs::write(&one, test_key(1).pem()).unwrap();
     assert!(env.probe(Some(one)));
     let report = flat(&env.report());
-    assert!(report.contains("Data0 2.5 KB .bhd, no key matched (1 tried)") && report.contains("NOTE: 2 of 3 archives could not be opened"), "{report}");
+    assert!(report.contains("Data0 2.8 KB .bhd, no key matched (1 tried)") && report.contains("NOTE: 2 of 3 archives could not be opened"), "{report}");
     // a key file that holds no key is named as a problem but does not stop the run
     let env = Env::new(&FakeOptions::default());
     let junk = env.data.join("junk.pem");
@@ -399,9 +449,19 @@ fn prepare_writes_the_override_and_its_manifest_and_leaves_the_install_untouched
     let outcome = env.prepare(None);
     assert!(outcome.ok() && outcome.written && outcome.reason.is_none() && outcome.edits == 3, "{outcome:?}");
     assert_eq!(tree(&env.fake.root), before, "prepare must not change anything in the install");
-    // exactly these three files appear: the report, the override, the manifest
+    // exactly these four files appear: the report, the manifest and the two overrides - the real game's archives hold the item
+    // text as item_dlc2 (the one it asks for) and item_dlc1, and no item.msgbnd.dcx
     let files: Vec<PathBuf> = tree(&env.data).keys().cloned().collect();
-    assert_eq!(files, vec![PathBuf::from("ds3-prepare").join("ds3-report.txt"), PathBuf::from("mod").join("ashenmarine-msg.json"), ["mod", "msg", "engus", "item.msgbnd.dcx"].iter().collect::<PathBuf>()]);
+    assert_eq!(
+        files,
+        vec![
+            PathBuf::from("ds3-prepare").join("ds3-report.txt"),
+            PathBuf::from("mod").join("ashenmarine-msg.json"),
+            ["mod", "msg", "engus", "item_dlc1.msgbnd.dcx"].iter().collect::<PathBuf>(),
+            ["mod", "msg", "engus", "item_dlc2.msgbnd.dcx"].iter().collect::<PathBuf>()
+        ]
+    );
+    assert!(!env.override_named("item.msgbnd.dcx").exists(), "the game never asks for it");
 
     // the override: DCX holding the game's BND4 with only the test weapons' texts changed
     let t = texts_of(&env.override_path());
@@ -424,21 +484,26 @@ fn prepare_writes_the_override_and_its_manifest_and_leaves_the_install_untouched
 
     // the manifest
     let manifest: Value = serde_json::from_str(&fs::read_to_string(env.mod_dir().join(MANIFEST_FILE)).unwrap()).unwrap();
-    assert_eq!(manifest["format"], 1);
+    assert_eq!(manifest["format"], 2);
     assert_eq!(manifest["tool"], format!("ashenmarine-setup {}", ashen_common::VERSION));
-    assert_eq!(manifest["source"]["archive"], "Data0.bhd");
-    assert_eq!(manifest["source"]["sha256_of_decoded_original"], ashen_ds3data::sha256_hex(&original));
+    assert_eq!(manifest["source"][0]["archive"], "Data0.bhd");
+    assert_eq!(manifest["source"][0]["path"], "/msg/engUS/item_dlc2.msgbnd.dcx");
+    assert_eq!(manifest["source"][0]["sha256_of_decoded_original"], ashen_ds3data::sha256_hex(&original));
+    assert_eq!(manifest["source"][1]["path"], "/msg/engUS/item_dlc1.msgbnd.dcx");
     assert_eq!(manifest["edits"].as_array().unwrap().len(), 3);
     assert_eq!(manifest["edits"][2], serde_json::json!({"id": 404000, "old": "Standard Bolt", "new": "Bolt Rounds"}));
-    assert_eq!(manifest["written"], "msg/engus/item.msgbnd.dcx");
+    assert_eq!(manifest["written"], serde_json::json!(["msg/engus/item_dlc2.msgbnd.dcx", "msg/engus/item_dlc1.msgbnd.dcx"]));
+    // the other copy has the same names (it is the same text with a made-up file added)
+    assert_eq!(texts_of(&env.override_named("item_dlc1.msgbnd.dcx"))[&11].get(14_090_000), Some("Bolt Pistol"));
 
     // running it again gives the same files, and no temporary files are left
+    let first = fs::read(env.override_path()).unwrap();
     let again = env.prepare(None);
     assert!(again.ok());
-    assert_eq!(tree(&env.mod_dir()).len(), 2);
-    assert_eq!(fs::read(env.override_path()).unwrap(), fs::read(env.override_path()).unwrap());
+    assert_eq!(tree(&env.mod_dir()).len(), 3);
+    assert_eq!(fs::read(env.override_path()).unwrap(), first);
     let report = flat(&env.report());
-    assert!(report.contains("Written: msg\\engus\\item.msgbnd.dcx and ashenmarine-msg.json"), "{report}");
+    assert!(report.contains("Written: msg\\engus\\item_dlc2.msgbnd.dcx, msg\\engus\\item_dlc1.msgbnd.dcx and ashenmarine-msg.json"), "{report}");
     assert!(report.contains("Dark Souls III itself was not changed"));
 }
 
@@ -679,7 +744,7 @@ fn started_from_its_own_folder_it_follows_game_folder_txt_and_writes_next_to_its
     let before = tree(&env.fake.root);
     let run = Command::new(&exe).arg("ds3-prepare").current_dir(env._t.path()).output().unwrap();
     assert_eq!(run.status.code(), Some(0), "{}", text(&run.stdout));
-    assert!(kit.join("mod/msg/engus/item.msgbnd.dcx").is_file() && kit.join("mod/ashenmarine-msg.json").is_file());
+    assert!(kit.join("mod/msg/engus/item_dlc2.msgbnd.dcx").is_file() && kit.join("mod/msg/engus/item_dlc1.msgbnd.dcx").is_file() && kit.join("mod/ashenmarine-msg.json").is_file());
     assert!(kit.join("ds3-prepare/ds3-report.txt").is_file());
     assert!(!env._t.path().join("mod").exists() && !env._t.path().join("ds3-prepare").exists(), "nothing is written next to the working folder");
     assert_eq!(tree(&env.fake.root), before);
@@ -754,7 +819,7 @@ fn tables_of_contents_saved_from_the_running_game_replace_the_keys() {
     assert!(env.override_path().is_file());
     let report = flat(&env.report());
     assert!(report.contains("tables of contents saved from the running game (cache\\bhd5): 3 (DLC1.bin, Data0.bin, Data1.bin)"), "{report}");
-    assert!(report.contains("Data0 2.5 KB .bhd, header saved from the running game (Data0.bin), salt 11 characters"), "{report}");
+    assert!(report.contains("Data0 2.8 KB .bhd, header saved from the running game (Data0.bin), salt 11 characters"), "{report}");
     assert!(report.contains("header saved from the running game (Data1.bin)") && report.contains("header saved from the running game (DLC1.bin)"), "{report}");
     assert!(!report.contains("PROBLEM"), "{report}");
     // the result is the same as with keys
@@ -791,7 +856,7 @@ fn a_plain_data0_that_holds_the_item_text_needs_neither_a_key_nor_a_saved_table(
     let outcome = env.prepare(None);
     assert!(outcome.ok(), "{outcome:?}\n{}", env.report());
     let report = flat(&env.report());
-    assert!(report.contains("Data0 2.4 KB .bhd, plain header (the .bhd is not encrypted)"), "{report}");
+    assert!(report.contains("Data0 2.6 KB .bhd, plain header (the .bhd is not encrypted)"), "{report}");
     // the other two archives are listed with what their files look like from the outside
     assert!(report.contains("no key to try") && report.contains("whole 256-byte blocks"), "{report}");
     assert!(report.contains("NOTE: 2 of 3 archives could not be opened"), "{report}");
@@ -808,7 +873,7 @@ fn a_failed_prepare_carries_the_diagnosis_in_the_same_report() {
     assert!(!outcome.ok());
     let report = flat(&env.report());
     assert!(report.contains("Where the files are (for the diagnosis)"), "{report}");
-    assert!(report.contains("/msg/engUS/menu.msgbnd.dcx") && report.contains("The English item text was not found under the expected name. Other spellings:"), "{report}");
-    assert!(report.contains("No item.msgbnd.dcx was found for any language"), "{report}");
+    assert!(report.contains("/msg/engUS/menu.msgbnd.dcx") && report.contains("The English item text was not found under the expected names. Other spellings:"), "{report}");
+    assert!(report.contains("No item text (item_dlc2, item_dlc1 or item .msgbnd.dcx) was found for any language"), "{report}");
     assert!(!env.mod_dir().exists());
 }

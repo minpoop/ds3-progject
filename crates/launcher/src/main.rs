@@ -268,6 +268,15 @@ fn run(o: &Opts, exe_dir: &Path) -> Result<ExitCode, (String, Option<Logger>)> {
     for line in hook_text.lines().filter(|l| l.contains("READY:") || l.contains("FATAL") || l.contains("STATS")).take(6) {
         ctx.say(&format!("hook: {line}"));
     }
+    if running {
+        // which files of the mod folder did the game really load? (the hook logs the first open of each one)
+        let loaded = mod_files_opened(&hook_text);
+        if loaded.is_empty() {
+            ctx.say("the game did not open a single file from the mod folder (so none of the new names or weapon models was loaded)");
+        } else {
+            ctx.say(&format!("the game opened {} file(s) from the mod folder: {}", loaded.len(), loaded.join(", ")));
+        }
+    }
     if let Some(text) = fatal_markers.iter().find_map(|m| std::fs::read_to_string(m).ok()) {
         ctx.tell(&text, true);
         exit = ExitCode::from(3);
@@ -306,6 +315,25 @@ fn run(o: &Opts, exe_dir: &Path) -> Result<ExitCode, (String, Option<Logger>)> {
     Ok(exit)
 }
 
+/// The part of a path after the last folder called `mod` (either kind of separator, any case): the hook logs paths like
+/// `C:/kit/ashenmarine/mod\parts\wp_a_0200.partsbnd.dcx`, with both kinds, because ModEngine2 joins them that way.
+fn after_mod_folder(path: &str) -> &str {
+    let lower = path.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let is_sep = |b: u8| b == b'\\' || b == b'/';
+    (0..bytes.len().saturating_sub(4)).rev().find(|&i| is_sep(bytes[i]) && &bytes[i + 1..i + 4] == b"mod" && is_sep(bytes[i + 4])).map_or(path, |i| &path[i + 5..])
+}
+
+/// The files below the mod folder that the game opened, as the hook logged them ("MOD FILE OPENED by the game [id]: <path> (+N
+/// ms ...)"), shortened to the part after the mod folder (`msg\engus\item_dlc2.msgbnd.dcx`).
+fn mod_files_opened(hook_log: &str) -> Vec<String> {
+    hook_log
+        .lines()
+        .filter_map(|l| l.split_once("MOD FILE OPENED by the game [")?.1.split_once("]: ").map(|(_, rest)| rest))
+        .map(|rest| after_mod_folder(rest.split(" (+").next().unwrap_or(rest)).to_string())
+        .collect()
+}
+
 fn main() -> ExitCode {
     let opts = match parse_args() {
         Ok(o) => o,
@@ -329,5 +357,21 @@ fn main() -> ExitCode {
             }
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_files_the_game_opened_are_read_from_the_hook_log() {
+        let log = "[2026-10-10 00:28:55.291] [hook] MOD FILE asked for by the game [fs_getfileattributesexw]: C:/kit/ashenmarine/mod\\parts\\wp_a_0200.partsbnd.dcx (+11488 ms after the hook loaded; 287 different such files so far)\n\
+[2026-10-10 00:29:01.240] [hook] MOD FILE OPENED by the game [fs_createfilew]: C:/kit/ashenmarine/mod\\msg\\engus\\item_dlc2.msgbnd.dcx (+10518 ms after the hook loaded; 1 such files so far)\n\
+[2026-10-10 00:29:02.211] [hook] MOD FILE OPENED by the game [fs_createfilew]: C:/kit/ashenmarine/mod\\parts\\wp_a_0200.partsbnd.dcx (+11489 ms after the hook loaded; 2 such files so far)\n\
+[2026-10-10 00:29:02.300] [hook] STATS redirected=1 denied_addr=1 denied_name=0\n";
+        assert_eq!(mod_files_opened(log), vec!["msg\\engus\\item_dlc2.msgbnd.dcx".to_string(), "parts\\wp_a_0200.partsbnd.dcx".to_string()]);
+        assert!(mod_files_opened("").is_empty());
+        assert!(mod_files_opened("nothing about files here\nMOD FILE OPENED by the game [broken").is_empty());
     }
 }

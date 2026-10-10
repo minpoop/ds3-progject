@@ -4,14 +4,24 @@
 //! * [`Placement::fit`] decides how the shape is turned and scaled: the three axes of the new shape are matched to the three
 //!   axes of the weapon it replaces by their lengths (longest to longest), the sides by where the bulk of each shape lies
 //!   relative to the grip, and the size so that the lengths agree. Both models have their origin at the grip, so the grip
-//!   stays where the game expects the hand.
+//!   stays where the game expects the hand. That is right for a sword; a crossbow, whose bow limbs are as long as the weapon,
+//!   would be laid on its side and made as long as a rifle, so the weapons sheet can say instead how the shape is turned
+//!   (`model_forward`, `model_up`), how big it is (`model_scale`) and where the hand holds it (`model_hold_*`):
+//!   [`Placement::fit_with`].
 //! * [`to_new_shape`] turns it all into the shape [`ashen_ds3data::modelswap`] puts into the model.
 //! * [`overlay_png`] draws the weapon that is replaced and the new shape on top of it, in three views, so that anybody can
 //!   look at the result before the game ever loads it.
 //!
+//! * [`make_weapon_container`] does all of it for one container: fits the shape to the weapon that is held in the hand,
+//!   swaps it in (every step checked) and draws the picture.
+//!
 //! Nothing here reads a game file by itself; callers give it the decoded data.
+use ashen_common::weapons::{Dir, ModelHints};
+use ashen_ds3data::bnd4::Bnd4;
+use ashen_ds3data::dds::Image as Rgba;
 use ashen_ds3data::flver::Flver;
 use ashen_ds3data::modelswap::{biggest_mesh, NewShape};
+use ashen_ds3data::weaponswap::{host_model, swap_container};
 use ashen_ds3data::vertex::{self, Codec};
 use ashen_sm2::mesh::{decode_sub_mesh, DecodedMesh};
 use ashen_sm2::texture::Image as PngImage;
@@ -120,12 +130,14 @@ pub fn ds3_reference(model: &Flver) -> Result<Ds3Reference, String> {
     Ok(out)
 }
 
-/// How a shape is turned and scaled: `out[i] = sign_i * in[axis_i] * scale`.
+/// How a shape is turned and scaled: `out[i] = sign_i * (in[axis_i] - offset[axis_i]) * scale`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Placement {
     pub axis: [usize; 3],
     pub sign: [f32; 3],
     pub scale: f32,
+    /// A point of the new shape (in its own space) that ends up at the origin of the weapon's model: where the hand holds it.
+    pub offset: [f32; 3],
 }
 
 fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
@@ -182,7 +194,7 @@ pub fn winding_score(positions: &[[f32; 3]], normals: &[[f32; 3]], triangles: &[
 
 impl Placement {
     pub fn point(&self, p: [f32; 3]) -> [f32; 3] {
-        [0, 1, 2].map(|i| self.sign[i] * p[self.axis[i]] * self.scale)
+        [0, 1, 2].map(|i| self.sign[i] * (p[self.axis[i]] - self.offset[self.axis[i]]) * self.scale)
     }
 
     pub fn direction(&self, v: [f32; 3]) -> [f32; 3] {
@@ -202,12 +214,82 @@ impl Placement {
     /// Matches the axes of `shape` to those of the weapon `reference` by length, the sides by the bulk's position relative to
     /// the grip, and scales the longest side to the longest side of the reference times `length_factor`.
     pub fn fit(shape: &Sm2Shape, reference: &Ds3Reference, length_factor: f32) -> Result<(Placement, Vec<String>), String> {
+        Placement::fit_with(shape, reference, length_factor, &ModelHints::default())
+    }
+
+    /// [`Placement::fit`] with what the weapons sheet says: the directions the shape is turned by (both `forward` and `up`, or
+    /// neither), the factor it is scaled by, and the point the hand holds it by (shares of the shape's box). What the sheet
+    /// leaves out is worked out as in [`Placement::fit`].
+    pub fn fit_with(shape: &Sm2Shape, reference: &Ds3Reference, length_factor: f32, hints: &ModelHints) -> Result<(Placement, Vec<String>), String> {
         let (slo, shi) = shape.bounds().ok_or("the new shape has no vertices")?;
         let (dlo, dhi) = bounds_of(&reference.positions).ok_or("the weapon that is replaced has no vertices")?;
         let es = sub3(shi, slo);
         let ed = sub3(dhi, dlo);
         let (os, od) = (order_by_length(es), order_by_length(ed));
         let (cs, cd) = (centroid(&shape.positions), centroid(&reference.positions));
+        let name = |a: usize| ["x", "y", "z"][a];
+        let side = |d: Dir| format!("{}{}", if d.plus { "+" } else { "-" }, name(d.axis));
+        let hold_point = hints.hold.map(|h| [0, 1, 2].map(|a| slo[a] + h[a].clamp(0.0, 1.0) * es[a]));
+        if let (Some(forward), Some(up)) = (hints.forward, hints.up) {
+            // the weapons sheet says how the shape is turned
+            if forward.from.axis == up.from.axis || forward.to.axis == up.to.axis {
+                return Err("the weapons sheet turns two directions of the new shape onto the same axis".to_string());
+            }
+            let mut axis = [0usize; 3];
+            let mut sign = [1f32; 3];
+            for dir_map in [forward, up] {
+                axis[dir_map.to.axis] = dir_map.from.axis;
+                sign[dir_map.to.axis] = if dir_map.from.plus == dir_map.to.plus { 1.0 } else { -1.0 };
+            }
+            // the third axis follows, on the side that makes it a turn and not a mirror image
+            let rest_to = (0..3).find(|a| *a != forward.to.axis && *a != up.to.axis).unwrap_or(0);
+            let rest_from = (0..3).find(|a| *a != forward.from.axis && *a != up.from.axis).unwrap_or(0);
+            axis[rest_to] = rest_from;
+            let mut p = Placement { axis, sign, scale: 1.0, offset: [0.0; 3] };
+            if !p.is_proper() {
+                sign[rest_to] = -1.0;
+                p = Placement { axis, sign, scale: 1.0, offset: [0.0; 3] };
+            }
+            let length_new = es[forward.from.axis];
+            let length_old = ed[forward.to.axis];
+            p.scale = match hints.scale {
+                Some(s) => s,
+                None if length_new > 1e-6 && length_old > 1e-6 => length_old / length_new * length_factor,
+                None => return Err("a shape without length".to_string()),
+            }
+            .clamp(0.05, 5.0);
+            if let Some(h) = hold_point {
+                p.offset = h;
+            }
+            let lines = vec![
+                format!(
+                    "placement (the weapons sheet says how): the new shape's {} becomes the weapon's {}, {} becomes {}, {} becomes {} ({} to make it a turn and not a mirror image); scale {:.3}{}",
+                    side(forward.from),
+                    side(forward.to),
+                    side(up.from),
+                    side(up.to),
+                    name(rest_from),
+                    name(rest_to),
+                    if p.sign[rest_to] > 0.0 { "same side" } else { "opposite side" },
+                    p.scale,
+                    if hints.scale.is_some() { " (from the sheet)" } else { " (the new shape gets the length of the weapon it replaces)" }
+                ),
+                format!(
+                    "the hand holds the new shape at ({:.3}, {:.3}, {:.3}) of its own space{}; the bulk of the new shape lies at ({:.3}, {:.3}, {:.3}) from its origin, that of the weapon at ({:.3}, {:.3}, {:.3})",
+                    p.offset[0],
+                    p.offset[1],
+                    p.offset[2],
+                    if hold_point.is_some() { " (from the sheet)" } else { " (its origin)" },
+                    cs[0],
+                    cs[1],
+                    cs[2],
+                    cd[0],
+                    cd[1],
+                    cd[2]
+                ),
+            ];
+            return Ok((p, lines));
+        }
         let mut axis = [0usize; 3];
         let mut sign = [1f32; 3];
         for k in 0..2 {
@@ -219,18 +301,20 @@ impl Placement {
             sign[d] = if clear && bs * bd < 0.0 { -1.0 } else { 1.0 };
         }
         axis[od[2]] = os[2];
-        let mut p = Placement { axis, sign, scale: 1.0 };
+        let mut p = Placement { axis, sign, scale: 1.0, offset: [0.0; 3] };
         if !p.is_proper() {
             sign[od[2]] = -1.0;
-            p = Placement { axis, sign, scale: 1.0 };
+            p = Placement { axis, sign, scale: 1.0, offset: [0.0; 3] };
         }
         let longest_new = es[os[0]];
         let longest_old = ed[od[0]];
         if longest_new <= 1e-6 || longest_old <= 1e-6 {
             return Err("a shape without length".to_string());
         }
-        p.scale = (longest_old / longest_new * length_factor).clamp(0.2, 5.0);
-        let name = |a: usize| ["x", "y", "z"][a];
+        p.scale = hints.scale.unwrap_or(longest_old / longest_new * length_factor).clamp(0.05, 5.0);
+        if let Some(h) = hold_point {
+            p.offset = h;
+        }
         let lines = vec![
             format!(
                 "placement: the new shape's {} (length {:.3}) becomes the weapon's {} (length {:.3}), {} becomes {}, {} becomes {}; signs {:?}; scale {:.3}; a proper turn: {}",
@@ -278,6 +362,43 @@ pub fn to_new_shape(shape: &Sm2Shape, placement: &Placement, reference: &Ds3Refe
     )];
     // tangents were rotated as directions; a turned-around winding does not change them
     (NewShape { positions, normals, tangents, uvs, triangles }, lines)
+}
+
+/// The finished container of a swap: the new BND4 (still to be wrapped in the DCX the original had) and the picture of the
+/// result (a PNG), when it could be drawn.
+pub struct WeaponContainer {
+    pub container: Vec<u8>,
+    pub picture: Option<Vec<u8>>,
+}
+
+/// Everything between a Dark Souls III weapon container (`decoded` is its BND4) and the new one: finds the weapon among the
+/// models of the container (see [`host_model`]), fits `weapon` to it (as the weapons sheet's `hints` say, see
+/// [`Placement::fit_with`]), makes the new shape, swaps it in and draws the picture. `say` gets every line of the report. The error is in plain words; nothing half-made is returned.
+pub fn make_weapon_container(decoded: &[u8], weapon: &Sm2Shape, picture: Option<&Rgba>, length_factor: f32, flip_v: bool, hints: &ModelHints, say: &mut dyn FnMut(&str)) -> Result<WeaponContainer, String> {
+    let bnd = Bnd4::parse(decoded).map_err(|e| format!("the container is not a usable BND4: {e}"))?;
+    let (model_at, _) = host_model(&bnd).map_err(|e| e.to_string())?;
+    let model = Flver::parse(bnd.file_bytes(decoded, model_at).ok_or("the model lies outside the container")?).map_err(|e| format!("the model cannot be read: {e}"))?;
+    let reference = ds3_reference(&model)?;
+    let (placement, lines) = Placement::fit_with(weapon, &reference, length_factor, hints)?;
+    for l in &lines {
+        say(l);
+    }
+    let (shape, lines) = to_new_shape(weapon, &placement, &reference, flip_v);
+    for l in &lines {
+        say(l);
+    }
+    let png = match overlay_png(&reference, &shape) {
+        Ok(png) => Some(png),
+        Err(e) => {
+            say(&format!("no picture of the result ({e})"));
+            None
+        }
+    };
+    let result = swap_container(decoded, shape, picture).map_err(|e| e.to_string())?;
+    for l in &result.lines {
+        say(l);
+    }
+    Ok(WeaponContainer { container: result.container, picture: png })
 }
 
 // ------------------------------------------------------------------------------------------------ the picture
@@ -418,6 +539,74 @@ mod tests {
         // and the length factor
         let (p, _) = Placement::fit(&new, &weapon, 0.5).unwrap();
         assert!((p.scale - 0.5 / 1.7).abs() < 1e-4);
+    }
+
+    /// A box that is long along z (the "pistol"), tall along y and thin along x, with a handle hanging down below the middle of
+    /// its rear half; and a box for the weapon it replaces whose longest axis is x but whose z is nearly as long (bow limbs).
+    fn pistol_and_crossbow() -> (Sm2Shape, Ds3Reference) {
+        let mut pistol = shape_from(&bar(2, -0.3, 0.4));
+        // widen it: x +-0.07, y -0.24 .. 0.17 (the handle reaches down), z -0.3 .. 0.4
+        for p in &mut pistol.positions {
+            p[0] *= 1.4;
+            p[1] = if p[1] < 0.0 { -0.24 } else { 0.17 };
+        }
+        let mut crossbow = bar(0, -0.7, 0.15);
+        for p in &mut crossbow.positions {
+            p[2] *= 8.0; // the bow limbs: z +-0.4
+        }
+        (pistol, crossbow)
+    }
+
+    #[test]
+    fn without_hints_a_crossbow_lays_the_pistol_on_its_side_which_is_why_the_sheet_can_say_how_to_turn_it() {
+        let (pistol, crossbow) = pistol_and_crossbow();
+        let (auto, _) = Placement::fit(&pistol, &crossbow, 1.0).unwrap();
+        // the pistol's z (its length) goes to the crossbow's x, but its y (its height) goes to z, where the bow limbs are
+        assert_eq!((auto.axis[0], auto.axis[2]), (2, 1), "the automatic fit puts the pistol's height along the bow limbs");
+        let hints = ModelHints { forward: ashen_common::weapons::parse_dir_map("+z>-x"), up: ashen_common::weapons::parse_dir_map("+y>-y"), scale: Some(0.5), hold: Some([0.5, 0.2, 0.15]) };
+        let (p, lines) = Placement::fit_with(&pistol, &crossbow, 1.0, &hints).unwrap();
+        assert_eq!(p.axis[0], 2, "the pistol's z becomes x");
+        assert_eq!(p.axis[1], 1, "the pistol's y becomes y");
+        assert_eq!(p.axis[2], 0, "the pistol's x becomes z");
+        assert_eq!((p.sign[0], p.sign[1]), (-1.0, -1.0), "forward +z>-x and up +y>-y");
+        assert!(p.is_proper(), "the third axis follows on the side that keeps it a turn: {:?}", p.sign);
+        assert_eq!(p.scale, 0.5);
+        // the hold point: x 0.5 of -0.07..0.07 = 0; y 0.2 of -0.24..0.17 = -0.158; z 0.15 of -0.3..0.4 = -0.195
+        assert!((p.offset[0]).abs() < 1e-6 && (p.offset[1] + 0.158).abs() < 1e-4 && (p.offset[2] + 0.195).abs() < 1e-4, "{:?}", p.offset);
+        let held = p.point([0.0, -0.158, -0.195]);
+        assert!(held.iter().all(|v| v.abs() < 1e-6), "the hold point lands on the origin: {held:?}");
+        let muzzle = p.point([0.0, 0.0, 0.4]);
+        assert!(muzzle[0] < -0.29 && muzzle[0] > -0.31, "the muzzle is 0.595 * 0.5 ahead of the hand, on -x: {muzzle:?}");
+        let handle_bottom = p.point([0.0, -0.24, -0.195]);
+        assert!(handle_bottom[1] > 0.0, "up is -y, so what hangs down is on +y: {handle_bottom:?}");
+        assert!(lines[0].contains("the weapons sheet says how") && lines[0].contains("+z becomes the weapon's -x, +y becomes -y") && lines[0].contains("scale 0.500 (from the sheet)"), "{lines:?}");
+        assert!(lines[1].contains("(from the sheet)"), "{lines:?}");
+        // without a scale the new shape gets the length of the weapon along the forward axis: 0.85 / 0.7
+        let no_scale = ModelHints { scale: None, hold: None, ..hints };
+        let (p, lines) = Placement::fit_with(&pistol, &crossbow, 1.0, &no_scale).unwrap();
+        assert!((p.scale - 0.85 / 0.7).abs() < 1e-3, "{}", p.scale);
+        assert_eq!(p.offset, [0.0; 3]);
+        assert!(lines[0].contains("gets the length of the weapon it replaces") && lines[1].contains("(its origin)"), "{lines:?}");
+        // only one of the two directions: the sheet's orientation is ignored (both are needed), but scale and hold still count
+        let half = ModelHints { up: None, ..hints };
+        let (p, _) = Placement::fit_with(&pistol, &crossbow, 1.0, &half).unwrap();
+        assert_eq!((p.axis[0], p.axis[2]), (2, 1));
+        assert_eq!(p.scale, 0.5);
+        assert!(p.offset[1] < -0.1);
+        // two directions onto one axis are refused
+        let bad = ModelHints { up: ashen_common::weapons::parse_dir_map("+y>-x"), ..hints };
+        assert!(Placement::fit_with(&pistol, &crossbow, 1.0, &bad).unwrap_err().contains("same axis"));
+        let bad = ModelHints { up: ashen_common::weapons::parse_dir_map("+z>-y"), ..hints };
+        assert!(Placement::fit_with(&pistol, &crossbow, 1.0, &bad).unwrap_err().contains("same axis"));
+    }
+
+    #[test]
+    fn a_hold_point_outside_the_box_is_held_to_the_box() {
+        let (pistol, crossbow) = pistol_and_crossbow();
+        let hints = ModelHints { hold: Some([-3.0, 7.0, 0.5]), ..ModelHints::default() };
+        let (p, _) = Placement::fit_with(&pistol, &crossbow, 1.0, &hints).unwrap();
+        let (lo, hi) = pistol.bounds().unwrap();
+        assert!((p.offset[0] - lo[0]).abs() < 1e-6 && (p.offset[1] - hi[1]).abs() < 1e-6 && (p.offset[2] - (lo[2] + hi[2]) / 2.0).abs() < 1e-6, "{:?}", p.offset);
     }
 
     #[test]

@@ -763,26 +763,34 @@ fn material_string_bytes(m: &Material) -> i32 {
 }
 
 impl Flver {
-    /// The face counts of the file: triangles that are not degenerate, and all triangles (strips lose the restarts).
+    /// The face counts of the file: the triangles of the face sets that are not motion blur, without the degenerate ones, and
+    /// all triangles of all face sets (strips lose the restarts). Checked against the real weapon models of the game (kit 0.9:
+    /// 2597 and 5222 for the Shortsword, whose six face sets are three levels of detail and the same three again for motion
+    /// blur); the first version counted the motion blur sets of a triangle list as real faces and so wrote another number.
     fn face_counts(&self) -> (i32, i32) {
         let (mut real, mut total) = (0i32, 0i32);
         for mesh in &self.meshes {
             let vertices = mesh.vertex_buffers.first().map_or(0, |b| b.vertex_count);
             let restarts = vertices < i32::from(u16::MAX);
             for fs in &mesh.face_sets {
+                let blur = fs.flags & 0x8000_0000 != 0;
                 if fs.triangle_strip {
                     for w in fs.indices.windows(3) {
                         let (a, b, c) = (w[0], w[1], w[2]);
                         if !restarts || (a != 0xFFFF && b != 0xFFFF && c != 0xFFFF) {
                             total += 1;
-                            if fs.flags & 0x8000_0000 == 0 && a != b && b != c && c != a {
+                            if !blur && a != b && b != c && c != a {
                                 real += 1;
                             }
                         }
                     }
                 } else {
-                    total += (fs.indices.len() / 3) as i32;
-                    real += (fs.indices.len() / 3) as i32;
+                    for t in fs.indices.chunks_exact(3) {
+                        total += 1;
+                        if !blur && t[0] != t[1] && t[1] != t[2] && t[2] != t[0] {
+                            real += 1;
+                        }
+                    }
                 }
             }
         }
@@ -1345,6 +1353,22 @@ mod tests {
         assert_eq!(back.write().unwrap(), bytes);
         // 8 strip vertices: 6 triangles + 1 (second set: 7 indices -> 5), and a list of 4 indices -> 1 triangle
         assert_eq!((back.header.face_count, back.header.total_face_count), (6 + 5 + 1 + 1, 6 + 5 + 1 + 1));
+    }
+
+    #[test]
+    fn the_header_face_counts_leave_out_motion_blur_sets_and_degenerate_faces() {
+        // as in the real weapons (kit 0.9: Shortsword 2597 and 5222): the first count is the triangles of the sets that are
+        // not motion blur without degenerate ones, the second is every triangle of every set
+        let mut model = sample_flver();
+        model.meshes[1].face_sets = vec![
+            FaceSet { flags: 0, triangle_strip: false, cull_backfaces: true, unk06: 0, indices: vec![0, 1, 2, 1, 2, 3, 2, 2, 3], index_bits: 16 },
+            FaceSet { flags: 0x8000_0000, triangle_strip: false, cull_backfaces: true, unk06: 0, indices: vec![0, 1, 2, 1, 2, 3], index_bits: 16 },
+        ];
+        let back = Flver::parse(&model.write().unwrap()).unwrap();
+        // mesh 0 is a strip of 8 vertices and one of 7 indices: 6 + 5 triangles; mesh 1: 3 (one degenerate) + 2 of motion blur
+        assert_eq!((back.header.face_count, back.header.total_face_count), (6 + 5 + 2, 6 + 5 + 3 + 2));
+        // and the numbers survive a second round
+        assert_eq!(back.write().unwrap(), model.write().unwrap());
     }
 
     #[test]

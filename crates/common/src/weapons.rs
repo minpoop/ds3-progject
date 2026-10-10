@@ -4,8 +4,64 @@
 use crate::triggers::Hand;
 use serde::Deserialize;
 
+/// A direction along one axis of a model: `x`, `y` or `z` (0, 1, 2) and the side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Dir {
+    pub axis: usize,
+    pub plus: bool,
+}
+
+/// `+z`, `-x`, `y` (no sign means plus), in either case; `None` for anything else.
+pub fn parse_dir(text: &str) -> Option<Dir> {
+    let text = text.trim();
+    let (plus, axis) = match text.strip_prefix('-') {
+        Some(rest) => (false, rest),
+        None => (true, text.strip_prefix('+').unwrap_or(text)),
+    };
+    let axis = match axis.to_ascii_lowercase().as_str() {
+        "x" => 0,
+        "y" => 1,
+        "z" => 2,
+        _ => return None,
+    };
+    Some(Dir { axis, plus })
+}
+
+/// `+z>-x`: the direction `from` of the Space Marine 2 model becomes the direction `to` of the Dark Souls III model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DirMap {
+    pub from: Dir,
+    pub to: Dir,
+}
+
+pub fn parse_dir_map(text: &str) -> Option<DirMap> {
+    let (from, to) = text.split_once('>')?;
+    Some(DirMap { from: parse_dir(from)?, to: parse_dir(to)? })
+}
+
+/// How the weapons sheet says a weapon's new model is placed (the `model_*` columns); every part is optional and what is
+/// missing is worked out from the two shapes.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct ModelHints {
+    /// the way the weapon points (blade tip, muzzle)
+    pub forward: Option<DirMap>,
+    /// the way is up in the hand
+    pub up: Option<DirMap>,
+    /// the factor the model is made smaller or bigger by
+    pub scale: Option<f32>,
+    /// where the hand holds the Space Marine 2 model, as shares (0 to 1) of its box along its own axes
+    pub hold: Option<[f32; 3]>,
+}
+
+impl ModelHints {
+    /// Whether the sheet says how to turn the model (both `forward` and `up`).
+    pub fn has_orientation(&self) -> bool {
+        self.forward.is_some() && self.up.is_some()
+    }
+}
+
 /// A weapon of the design sheet (`design/sheets/weapons.json`, embedded at build time so the sheet stays the source of truth).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SheetWeapon {
     pub id: String,
     pub display_name: String,
@@ -22,6 +78,8 @@ pub struct SheetWeapon {
     pub ammo_base_name: Option<String>,
     pub ammo_display_name: Option<String>,
     pub ammo_live_name: Option<String>,
+    /// how the new model is placed (`model_*` columns)
+    pub model: ModelHints,
 }
 
 pub fn sheet_weapons() -> Vec<SheetWeapon> {
@@ -46,6 +104,18 @@ pub fn sheet_weapons() -> Vec<SheetWeapon> {
         ammo_display_name: Option<String>,
         #[serde(default)]
         ammo_live_name: Option<String>,
+        #[serde(default)]
+        model_forward: Option<String>,
+        #[serde(default)]
+        model_up: Option<String>,
+        #[serde(default)]
+        model_scale: Option<f32>,
+        #[serde(default)]
+        model_hold_x: Option<f32>,
+        #[serde(default)]
+        model_hold_y: Option<f32>,
+        #[serde(default)]
+        model_hold_z: Option<f32>,
     }
     let sheet: Sheet = serde_json::from_str(include_str!("../../../design/sheets/weapons.json")).expect("design/sheets/weapons.json is valid (checked by tests)");
     sheet
@@ -62,6 +132,15 @@ pub fn sheet_weapons() -> Vec<SheetWeapon> {
             ammo_base_name: r.ammo_base_name,
             ammo_display_name: r.ammo_display_name,
             ammo_live_name: r.ammo_live_name,
+            model: ModelHints {
+                forward: r.model_forward.as_deref().and_then(parse_dir_map),
+                up: r.model_up.as_deref().and_then(parse_dir_map),
+                scale: r.model_scale,
+                hold: match (r.model_hold_x, r.model_hold_y, r.model_hold_z) {
+                    (Some(x), Some(y), Some(z)) => Some([x, y, z]),
+                    _ => None,
+                },
+            },
         })
         .collect()
 }
@@ -240,6 +319,45 @@ mod tests {
         assert_eq!(chainsword.ammo_row, None);
         assert_eq!((chainsword.live_name.as_deref(), pistol.live_name.as_deref()), (Some("Chainsword"), Some("Bolter")));
         assert_eq!((pistol.ammo_base_name.as_deref(), pistol.ammo_display_name.as_deref(), pistol.ammo_live_name.as_deref()), (Some("Standard Bolt"), Some("Bolt Rounds"), Some("Bolt Rounds")));
+    }
+
+    #[test]
+    fn directions_and_their_maps_are_read_from_the_sheet_text() {
+        assert_eq!(parse_dir("+z"), Some(Dir { axis: 2, plus: true }));
+        assert_eq!(parse_dir("-X"), Some(Dir { axis: 0, plus: false }));
+        assert_eq!(parse_dir(" y "), Some(Dir { axis: 1, plus: true }));
+        for bad in ["", "w", "+", "-", "xy", "+-x", "1"] {
+            assert_eq!(parse_dir(bad), None, "{bad:?}");
+        }
+        assert_eq!(parse_dir_map("+z>-x"), Some(DirMap { from: Dir { axis: 2, plus: true }, to: Dir { axis: 0, plus: false } }));
+        assert_eq!(parse_dir_map("y>+y"), Some(DirMap { from: Dir { axis: 1, plus: true }, to: Dir { axis: 1, plus: true } }));
+        for bad in ["", "+z", "+z>", ">-x", "+z>-q", "+z->-x", "a>b"] {
+            assert_eq!(parse_dir_map(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_sheet_places_the_pistol_upright_at_the_chainswords_scale_and_leaves_the_sword_to_the_fit() {
+        let w = sheet_weapons();
+        let sword = w.iter().find(|w| w.id == "chainsword").expect("chainsword");
+        assert_eq!(sword.model, ModelHints::default(), "the sword's axes are matched by length, its size by its reach");
+        let pistol = w.iter().find(|w| w.id == "bolt_pistol").expect("bolt pistol");
+        assert!(pistol.model.has_orientation(), "the sheet's text parses: {:?}", pistol.model);
+        assert_eq!(pistol.model.forward, parse_dir_map("+z>-x"));
+        assert_eq!(pistol.model.up, parse_dir_map("+y>-y"));
+        assert_eq!(pistol.model.scale, Some(0.54));
+        assert_eq!(pistol.model.hold, Some([0.5, 0.18, 0.16]));
+        // the strings of the sheet that do not parse would silently be left out: every row's text must be understood
+        let raw: serde_json::Value = serde_json::from_str(include_str!("../../../design/sheets/weapons.json")).unwrap();
+        for row in raw["rows"].as_array().unwrap() {
+            for column in ["model_forward", "model_up"] {
+                if let Some(text) = row[column].as_str() {
+                    assert!(parse_dir_map(text).is_some(), "{}: {column} {text:?} is not a direction map", row["id"]);
+                }
+            }
+            let holds = ["model_hold_x", "model_hold_y", "model_hold_z"].iter().filter(|c| !row[**c].is_null()).count();
+            assert!(holds == 0 || holds == 3, "{}: the hold point needs all three of x, y and z", row["id"]);
+        }
     }
 
     #[test]

@@ -62,7 +62,7 @@ sed 's/\r$//' "$OUT/p.out" | cut -c1-200 | grep -v "^$" | head -60
 check "P the script ran to its end" 'grep -q "Next: double-click Play-AshenMarine.bat" "$OUT/p.out"'
 check "P both key files of the older kit folder were taken over" 'grep -q "Took over ds3-keys.pem of an older kit folder" "$OUT/p.out" && grep -q "Took over keys-seen.pem of an older kit folder" "$OUT/p.out" && [ -f "$K/ashenmarine/cache/ds3-keys.pem" ] && [ -f "$K/ashenmarine/cache/keys-seen.pem" ]'
 check "P the five steps all ran" 'for s in "1 of 5: Space Marine 2 sounds" "2 of 5: Dark Souls III item names" "3 of 5: where Dark Souls III keeps its files" "4 of 5: model reports" "5 of 5: the new weapon models"; do grep -q "$s" "$OUT/p.out" || exit 1; done'
-check "P the sounds, the names and the reports were made" '[ -f "$K/ashenmarine/assets/sounds/index.json" ] && [ -f "$K/ashenmarine/mod/msg/engus/item.msgbnd.dcx" ] && [ -f "$K/ashenmarine/ds3-probe/ds3-report.txt" ] && [ -f "$K/ashenmarine/probe-sm2-mesh/mesh-report.txt" ]'
+check "P the sounds, the names and the reports were made" '[ -f "$K/ashenmarine/assets/sounds/index.json" ] && [ -f "$K/ashenmarine/mod/msg/engus/item_dlc2.msgbnd.dcx" ] && [ -f "$K/ashenmarine/ds3-probe/ds3-report.txt" ] && [ -f "$K/ashenmarine/probe-sm2-mesh/mesh-report.txt" ]'
 # (Wine's choice.exe prints no prompt, so the question itself cannot be seen here; that the script goes on to install shows that
 # the choice command was accepted and answered "yes", which is what it does by itself after 30 seconds on a PC)
 check "P the trial passed, the script said so and went on to install" 'flat "$OUT/p.out" | grep -q "The new models passed every check" && flat "$OUT/p.out" | grep -q "The finished models are put in the mod folder"'
@@ -73,7 +73,7 @@ echo; echo "== R: Remove-Models.bat =="
 touch "$K/ashenmarine/mod/parts/mine.txt"
 run_bat "$K" r "Remove-Models.bat"
 sed 's/\r$//' "$OUT/r.out" | cut -c1-200 | grep -v "^$" | head -12
-check "R the models and their list are gone, the player's own file and the name file are not" '[ ! -e "$K/ashenmarine/mod/parts/wp_a_0200.partsbnd.dcx" ] && [ ! -e "$K/ashenmarine/mod/parts/wp_a_1409.partsbnd.dcx" ] && [ ! -e "$K/ashenmarine/mod/ashenmarine-models.json" ] && [ -f "$K/ashenmarine/mod/parts/mine.txt" ] && [ -f "$K/ashenmarine/mod/msg/engus/item.msgbnd.dcx" ]'
+check "R the models and their list are gone, the player's own file and the name file are not" '[ ! -e "$K/ashenmarine/mod/parts/wp_a_0200.partsbnd.dcx" ] && [ ! -e "$K/ashenmarine/mod/parts/wp_a_1409.partsbnd.dcx" ] && [ ! -e "$K/ashenmarine/mod/ashenmarine-models.json" ] && [ -f "$K/ashenmarine/mod/parts/mine.txt" ] && [ -f "$K/ashenmarine/mod/msg/engus/item_dlc2.msgbnd.dcx" ]'
 check "R it says what it did" 'flat "$OUT/r.out" | grep -q "Removed 3 file(s)"'
 check "R neither game was changed" '[ "$(treehash "$OUT/games/Space Marine 2")" = "$SM2_BEFORE" ] && [ "$(treehash "$OUT/games/DARK SOULS III")" = "$DS3_BEFORE" ]'
 

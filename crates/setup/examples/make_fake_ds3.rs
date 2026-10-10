@@ -6,9 +6,10 @@
 //!   ashenmarine-setup ds3-prepare --ds3 <folder> --mod <mod folder> --out <report folder>
 //!
 //! Options (to make the situations the tests and the Wine test need):
-//!   --variant good|wrong-name|no-item|french-only|damaged|unpatchable|unexpected-path|unexpected-wrong-name
-//!                                what the item text is like (default: good); the last two store it under a name nobody expects
-//!                                (only a look at what the files contain finds it)
+//!   --variant good|base-only|dlc1-renamed|wrong-name|no-item|french-only|damaged|unpatchable|unexpected-path|unexpected-wrong-name
+//!                                what the item text is like (default: good = item_dlc2 and item_dlc1, as the real game has
+//!                                them; base-only = only item.msgbnd.dcx); the last two store it under a name nobody expects
+//!                                (a look at what the files contain finds it, but the name the game asks for stays unknown)
 //!   --no-exe-keys                the program file holds no key as text (give the keys with  --keys, see --write-keys)
 //!   --write-keys <file>          also write the two test keys to a PEM file
 //!   --save-headers <folder>      also write the plain table of contents of every archive there, as `<name>.bin` - what the
@@ -30,6 +31,8 @@ fn main() {
             "--variant" => {
                 opts.item_msg = match args.next().expect("--variant needs a name").as_str() {
                     "good" => ItemMsg::Good,
+                    "base-only" => ItemMsg::BaseOnly,
+                    "dlc1-renamed" => ItemMsg::Dlc1Renamed,
                     "wrong-name" => ItemMsg::WrongName,
                     "no-item" => ItemMsg::Missing,
                     "french-only" => ItemMsg::FrenchOnly,

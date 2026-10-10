@@ -27,6 +27,8 @@ pub const SOUNDS_INDEX: &str = "sounds_index";
 pub const DS3_ARCHIVES: &str = "ds3_archives";
 pub const DS3_PREPARE_REPORT: &str = "ds3_prepare_report";
 pub const MSG_OVERRIDE_ITEM: &str = "msg_override_item";
+pub const MSG_OVERRIDE_ITEM_DLC1: &str = "msg_override_item_dlc1";
+pub const MSG_OVERRIDE_ITEM_BASE: &str = "msg_override_item_base";
 pub const MSG_OVERRIDE_MANIFEST: &str = "msg_override_manifest";
 pub const DS3_KEY_CACHE: &str = "ds3_key_cache";
 pub const DS3_KEYS_SEEN: &str = "ds3_keys_seen";
@@ -260,8 +262,26 @@ pub static FILES: &[FileRule] = &[
     },
     FileRule {
         id: "msg_override_item",
+        path: "{data}/mod/msg/engus/item_dlc2.msgbnd.dcx",
+        purpose: "Loose copy of the game's English item text with the test weapons' names, picked up by ModEngine2 instead of the archived file. This is the file a fully updated game asks ModEngine2 for (kits 0.5 to 0.9 wrote item.msgbnd.dcx, which the game never asks for, so the names never changed)",
+        access: Access::Write,
+        system: "item_names",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "msg_override_item_dlc1",
+        path: "{data}/mod/msg/engus/item_dlc1.msgbnd.dcx",
+        purpose: "The same changed copy for an install that asks for the item text of the first downloadable content (written only if the archives hold that file)",
+        access: Access::Write,
+        system: "item_names",
+        guarded: false,
+        milestone: 3,
+    },
+    FileRule {
+        id: "msg_override_item_base",
         path: "{data}/mod/msg/engus/item.msgbnd.dcx",
-        purpose: "Loose copy of the game's item text with the test weapons' names, picked up by ModEngine2 instead of the archived file",
+        purpose: "The same changed copy for an install without the downloadable content (written only if the archives hold that file)",
         access: Access::Write,
         system: "item_names",
         guarded: false,

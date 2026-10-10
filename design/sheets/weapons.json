@@ -61,7 +61,7 @@
     },
     "ds3_base_name": {
       "type": "string",
-      "doc": "that row's name in Dark Souls III (English); the item-text file (msg/engUS/item.msgbnd.dcx) is overridden so the player sees display_name instead"
+      "doc": "that row's name in Dark Souls III (English); the English item-text files (msg/engUS/item_dlc2.msgbnd.dcx and, if the archives hold them, item_dlc1 and item) are overridden so the player sees display_name instead"
     },
     "ammo_row": {
       "type": "int",
@@ -87,6 +87,36 @@
       "type": "string",
       "required": false,
       "doc": "ranged weapons: the ammunition's name for the in-memory rename (at most as many characters as ammo_base_name)"
+    },
+    "model_forward": {
+      "type": "string",
+      "required": false,
+      "doc": "how the Space Marine 2 model is turned when it replaces the Dark Souls III model (the weapon-model swap of the test kits): `<sm2 direction>><ds3 direction>` for the direction the weapon points in, e.g. `+z>-x` = the Space Marine 2 model's +z (its muzzle or blade tip) becomes the Dark Souls III model's -x. Empty = the axes are matched by the lengths of the two shapes (right for a sword, wrong for a crossbow whose bow limbs are as long as the weapon)"
+    },
+    "model_up": {
+      "type": "string",
+      "required": false,
+      "doc": "the same for the direction that is up in the hand, e.g. `+y>-y`; the third axis follows, so that the model is turned and never mirrored. Needs model_forward"
+    },
+    "model_scale": {
+      "type": "float",
+      "required": false,
+      "doc": "the factor the Space Marine 2 model is made smaller or bigger by. Empty = the new model gets the length of the Dark Souls III weapon it replaces (right for a sword, whose reach the moves were made for). The bolt pistol takes the scale the chainsword gets (about 0.54), so the two keep the proportions they have in Space Marine 2"
+    },
+    "model_hold_x": {
+      "type": "float",
+      "required": false,
+      "doc": "where the hand holds the Space Marine 2 model, as a share (0 to 1) of its box along its own x axis; the point goes where the hand holds the Dark Souls III weapon (the origin of its model). Empty = the origin of the Space Marine 2 model is the hold point"
+    },
+    "model_hold_y": {
+      "type": "float",
+      "required": false,
+      "doc": "the same along y"
+    },
+    "model_hold_z": {
+      "type": "float",
+      "required": false,
+      "doc": "the same along z"
     }
   },
   "rows": [
@@ -122,7 +152,13 @@
       "live_name": "Bolter",
       "ammo_base_name": "Standard Bolt",
       "ammo_display_name": "Bolt Rounds",
-      "ammo_live_name": "Bolt Rounds"
+      "ammo_live_name": "Bolt Rounds",
+      "model_forward": "+z>-x",
+      "model_up": "+y>-y",
+      "model_scale": 0.54,
+      "model_hold_x": 0.5,
+      "model_hold_y": 0.18,
+      "model_hold_z": 0.16
     }
   ]
 }

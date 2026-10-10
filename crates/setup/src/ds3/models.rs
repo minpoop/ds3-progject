@@ -12,17 +12,16 @@ use crate::meshprobe::{texture_family, texture_stem};
 use crate::report::{panic_text, Report};
 use crate::{find_ds3, find_sm2, human, open_paks};
 use anyhow::Result;
+use ashen_common::weapons::{sheet_weapons, ModelHints};
 use ashen_common::VERSION;
 use ashen_ds3data::dcx;
 use ashen_ds3data::dds::Image as Rgba;
-use ashen_ds3data::flver::Flver;
 use ashen_ds3data::install::find_game_dir;
 use ashen_ds3data::sha256_hex;
-use ashen_ds3data::weaponswap::swap_container;
 use ashen_sm2::pak::PakSet;
 use ashen_sm2::texture;
 use ashen_sm2::tpl::Template;
-use crate::weaponmodel::{ds3_reference, overlay_png, to_new_shape, Placement, Sm2Shape};
+use crate::weaponmodel::{make_weapon_container, Sm2Shape};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
@@ -87,10 +86,17 @@ const LENGTH_FACTOR: f32 = 1.0;
 const FLIP_V: bool = true;
 const MAX_TEMPLATE_FILE: u64 = 64 << 20;
 
-/// What was found in the Space Marine 2 install for one weapon.
+/// What was found in the Space Marine 2 install for one weapon, and how the weapons sheet says it is placed.
 struct Sm2Weapon {
     shape: Sm2Shape,
     picture: Option<Rgba>,
+    hints: ModelHints,
+}
+
+/// The `model_*` columns of the weapons sheet for the weapon whose id is `id` (the sheet's rows are named like the jobs below);
+/// none when the sheet has no such row.
+fn sheet_hints(id: &str) -> ModelHints {
+    sheet_weapons().into_iter().find(|w| w.id == id).map(|w| w.model).unwrap_or_default()
 }
 
 fn load_sm2_weapon(rep: &mut Report, paks: &mut PakSet, kw: &str) -> Result<Sm2Weapon, String> {
@@ -127,40 +133,22 @@ fn load_sm2_weapon(rep: &mut Report, paks: &mut PakSet, kw: &str) -> Result<Sm2W
             },
         },
     };
-    Ok(Sm2Weapon { shape, picture })
+    Ok(Sm2Weapon { shape, picture, hints: sheet_hints(kw) })
 }
 
 /// The container of a path made new: (the DCX bytes, report lines), or why not. `dir` gets the picture of the result.
 fn make_container(rep: &mut Report, found: &Found, weapon: &Sm2Weapon, label: &str, dir: &Path) -> Result<Vec<u8>, String> {
-    let bnd = &found.bnd;
-    let model_at = bnd.files.iter().find(|f| f.name.as_deref().is_some_and(|n| n.to_ascii_lowercase().ends_with(".flver"))).map(|f| f.index).ok_or("the container has no .flver model")?;
-    let model = Flver::parse(bnd.file_bytes(&found.decoded, model_at).ok_or("the model lies outside the container")?).map_err(|e| format!("the model cannot be read: {e}"))?;
-    let reference = ds3_reference(&model)?;
-    let (placement, lines) = Placement::fit(&weapon.shape, &reference, LENGTH_FACTOR)?;
-    for l in &lines {
-        rep.say(format!("    {l}"));
-    }
-    let (shape, lines) = to_new_shape(&weapon.shape, &placement, &reference, FLIP_V);
-    for l in &lines {
-        rep.say(format!("    {l}"));
-    }
-    match overlay_png(&reference, &shape) {
-        Ok(png) => {
-            let file = dir.join(format!("{label}-overlay.png"));
-            match std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&file, png)) {
-                Ok(()) => rep.say(format!("    picture of the result (the weapon that is replaced in orange, the new shape on top): {}", shown(&file, dir.parent().unwrap_or(dir)))),
-                Err(e) => rep.say(format!("    the picture could not be written ({e})")),
-            }
+    let made = make_weapon_container(&found.decoded, &weapon.shape, weapon.picture.as_ref(), LENGTH_FACTOR, FLIP_V, &weapon.hints, &mut |line| rep.say_wrapped("    ", line))?;
+    if let Some(png) = &made.picture {
+        let file = dir.join(format!("{label}-overlay.png"));
+        match std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&file, png)) {
+            Ok(()) => rep.say(format!("    picture of the result (the weapon that is replaced in orange, the new shape on top): {}", shown(&file, dir.parent().unwrap_or(dir)))),
+            Err(e) => rep.say(format!("    the picture could not be written ({e})")),
         }
-        Err(e) => rep.say(format!("    no picture of the result ({e})")),
     }
-    let result = swap_container(&found.decoded, shape, weapon.picture.as_ref()).map_err(|e| e.to_string())?;
-    for l in &result.lines {
-        rep.say_wrapped("    ", l);
-    }
-    let encoded = dcx::encode(&result.container, &found.dcx_info).map_err(|e| format!("the container cannot be packed as DCX: {e}"))?;
+    let encoded = dcx::encode(&made.container, &found.dcx_info).map_err(|e| format!("the container cannot be packed as DCX: {e}"))?;
     match dcx::decode(&encoded) {
-        Ok((back, _)) if back == result.container => {}
+        Ok((back, _)) if back == made.container => {}
         _ => return Err("the packed DCX does not unpack to the container that was packed".to_string()),
     }
     rep.say(format!("    check: packed as DCX ({}) and unpacked again: identical", found.dcx_info.variant_name()));

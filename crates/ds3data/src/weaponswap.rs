@@ -4,6 +4,11 @@
 //! plain colours (the average of the map they replace, so the shading stays in the same encoding); every other file of the
 //! container is carried over byte for byte.
 //!
+//! A weapon with a scabbard has a second model in its container (the Shortsword's is `WP_A_0200.flver` and
+//! `WP_A_0200_1.flver`; the left-hand version has `_L` on both). The weapon is the model named like the texture file; the
+//! other one is shrunk to one tiny triangle (the Space Marine 2 chainsword has no scabbard), or left alone if that cannot be
+//! done as safely as everything else here.
+//!
 //! Fail closed: the writers must reproduce the game's own model and texture files byte for byte before anything is
 //! replaced (otherwise there are fields this code does not model), every step reports what it did, and the finished
 //! container is read back and checked.
@@ -26,6 +31,10 @@ fn cannot<T>(why: impl Into<String>) -> Result<T, SwapError> {
     Err(SwapError::CannotUse(why.into()))
 }
 
+fn leaf(path: &str) -> &str {
+    path.rsplit(['\\', '/']).next().unwrap_or(path)
+}
+
 fn leaf_stem(path: &str) -> String {
     let leaf = path.rsplit(['\\', '/']).next().unwrap_or(path);
     leaf.rsplit_once('.').map_or(leaf, |(stem, _)| stem).to_string()
@@ -44,6 +53,52 @@ fn role_of(param: &str) -> Role {
     } else {
         Role::Other
     }
+}
+
+/// The file name of an entry without its folders and extension, in lower case (`...\WP_A_0200_1.flver` -> `wp_a_0200_1`).
+fn lower_stem(bnd: &Bnd4, index: usize) -> String {
+    leaf_stem(bnd.files.get(index).and_then(|f| f.name.as_deref()).unwrap_or("")).to_ascii_lowercase()
+}
+
+/// The entry that holds the weapon itself and the entries of the other models. With one model that is the weapon; with
+/// several it is the one named like the texture file (`WP_A_0200.tpf` -> `WP_A_0200.flver`), and when no model is named
+/// like it the container is refused (it cannot be told which one is held in the hand).
+pub fn host_model(bnd: &Bnd4) -> Result<(usize, Vec<usize>), SwapError> {
+    let models: Vec<usize> = bnd.files.iter().filter(|f| f.name.as_deref().is_some_and(|n| n.to_ascii_lowercase().ends_with(".flver"))).map(|f| f.index).collect();
+    match models.len() {
+        0 => cannot("the container has no .flver model"),
+        1 => Ok((models[0], Vec::new())),
+        n => {
+            let textures = file_index(bnd, ".tpf")?;
+            let named: Vec<usize> = textures.map(|t| lower_stem(bnd, t)).map(|stem| models.iter().copied().filter(|m| lower_stem(bnd, *m) == stem).collect()).unwrap_or_default();
+            match named[..] {
+                [host] => Ok((host, models.into_iter().filter(|m| *m != host).collect())),
+                _ => cannot(format!("the container has {n} .flver files and none of them is named like the texture file, so it cannot be told which one is the weapon")),
+            }
+        }
+    }
+}
+
+/// A shape of one tiny triangle: what a model that is to be invisible gets (no model would also be an option, but a game that
+/// loads a model it was told about would then meet a file it does not expect).
+fn tiny_shape() -> NewShape {
+    NewShape { positions: vec![[0.0, 0.0, 0.0], [0.001, 0.0, 0.0], [0.0, 0.001, 0.0]], normals: vec![[0.0, 0.0, 1.0]; 3], tangents: Vec::new(), uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], triangles: vec![[0, 1, 2]] }
+}
+
+/// The scabbard (or any other model beside the weapon) as one tiny triangle; `Err` says in plain words why it was left alone.
+fn shrink_model(container: &[u8], bnd: &Bnd4, index: usize) -> Result<Vec<u8>, String> {
+    let bytes = bnd.file_bytes(container, index).ok_or("it lies outside the container")?;
+    let model = Flver::parse(bytes).map_err(|e| format!("it cannot be read: {e}"))?;
+    match model.write() {
+        Ok(again) if again == bytes => {}
+        Ok(_) => return Err("it written again differs from the game's file".to_string()),
+        Err(e) => return Err(format!("it cannot be written again: {e}")),
+    }
+    let outcome = modelswap::replace_geometry(&model, tiny_shape()).map_err(|e| e.to_string())?;
+    let new_model = outcome.model.ok_or("no model came out")?;
+    let new_bytes = new_model.write().map_err(|e| format!("the new model cannot be written: {e}"))?;
+    Flver::parse(&new_bytes).map_err(|e| format!("the new model cannot be read: {e}"))?;
+    Ok(new_bytes)
 }
 
 fn file_index(bnd: &Bnd4, extension: &str) -> Result<Option<usize>, SwapError> {
@@ -71,7 +126,11 @@ pub fn swap_container(container: &[u8], shape: NewShape, albedo: Option<&Image>)
     if !bnd.layout.verified {
         return cannot(format!("the container's layout is not the expected one ({})", bnd.layout.issues.join("; ")));
     }
-    let Some(model_at) = file_index(&bnd, ".flver")? else { return cannot("the container has no .flver model") };
+    let (model_at, other_models) = host_model(&bnd)?;
+    if !other_models.is_empty() {
+        let names: Vec<String> = other_models.iter().map(|i| bnd.files[*i].name.as_deref().map_or("?", leaf).to_string()).collect();
+        lines.push(format!("the container has {} models: the weapon is {} (named like the texture file); the other{} {} ({})", other_models.len() + 1, bnd.files[model_at].name.as_deref().map_or("?", leaf), if names.len() == 1 { "" } else { "s" }, names.join(", "), if names.len() == 1 { "the scabbard" } else { "the scabbards" }));
+    }
     let model_bytes = bnd.file_bytes(container, model_at).ok_or_else(|| SwapError::CannotUse("the model lies outside the container".to_string()))?;
     let model = Flver::parse(model_bytes).map_err(|e| SwapError::CannotUse(format!("the model cannot be read: {e}")))?;
     match model.write() {
@@ -89,6 +148,16 @@ pub fn swap_container(container: &[u8], shape: NewShape, albedo: Option<&Image>)
 
     // the textures the host material names
     let mut parts: Vec<(usize, Vec<u8>)> = vec![(model_at, new_model_bytes)];
+    for &other in &other_models {
+        let name = bnd.files[other].name.as_deref().map_or("?", leaf).to_string();
+        match shrink_model(container, &bnd, other) {
+            Ok(bytes) => {
+                lines.push(format!("{name}: shrunk to one tiny triangle (the Space Marine 2 weapon has no scabbard); its textures stay as they are"));
+                parts.push((other, bytes));
+            }
+            Err(why) => lines.push(format!("{name}: left as it is ({why})")),
+        }
+    }
     if let (Some(tpf_at), Some(material)) = (file_index(&bnd, ".tpf")?, material) {
         let tpf_bytes = bnd.file_bytes(container, tpf_at).ok_or_else(|| SwapError::CannotUse("the textures lie outside the container".to_string()))?;
         let mut tpf = Tpf::parse(tpf_bytes).map_err(|e| SwapError::CannotUse(format!("the texture container cannot be read: {e}")))?;
@@ -230,6 +299,69 @@ mod tests {
         for needle in ["the model written again is byte-identical", "the textures written again are byte-identical", "g_Diffuse: wp_a_9999_a gets the new picture, 64x64, BC3 (DXT5) with 3 levels", "g_Bumpmap: wp_a_9999_n becomes one colour", "check: the new container has the same 3 files"] {
             assert!(text.contains(needle), "missing {needle:?} in\n{text}");
         }
+    }
+
+    fn container_with_a_scabbard(scabbard_first: bool, scabbard_bytes: &[u8]) -> Vec<u8> {
+        let base = "N:\\FDP\\data\\INTERROOT_win64\\parts\\weapon\\wp_a_9999\\";
+        let mut spec = Bnd4Spec::new(0x74);
+        if scabbard_first {
+            spec = spec.file(201, &format!("{base}WP_A_9999_1.flver"), scabbard_bytes);
+        }
+        spec = spec.file(100, &format!("{base}WP_A_9999.tpf"), &sample_tpf().write()).file(200, &format!("{base}WP_A_9999.flver"), &sample_flver().write().unwrap());
+        if !scabbard_first {
+            spec = spec.file(201, &format!("{base}WP_A_9999_1.flver"), scabbard_bytes);
+        }
+        spec.file(800, &format!("{base}WP_A_9999_Collidable.hkx"), &[9u8; 64]).build()
+    }
+
+    #[test]
+    fn the_weapon_is_the_model_named_like_the_texture_file_and_the_scabbard_beside_it_shrinks_to_a_dot() {
+        for scabbard_first in [false, true] {
+            let scabbard = sample_flver().write().unwrap();
+            let original = container_with_a_scabbard(scabbard_first, &scabbard);
+            let before = Bnd4::parse(&original).unwrap();
+            let by_name = |b: &Bnd4, name: &str| b.files.iter().find(|f| f.name.as_deref().is_some_and(|n| n.ends_with(name))).unwrap().index;
+            let result = swap_container(&original, square(), Some(&picture())).unwrap_or_else(|e| panic!("{e}"));
+            let after = Bnd4::parse(&result.container).unwrap();
+            assert_eq!(after.files.len(), 4);
+            let weapon = Flver::parse(after.file_bytes(&result.container, by_name(&after, "WP_A_9999.flver")).unwrap()).unwrap();
+            assert_eq!(weapon.meshes[0].vertex_buffers[0].vertex_count, 4, "the weapon got the new shape (order {scabbard_first})");
+            let sheath = Flver::parse(after.file_bytes(&result.container, by_name(&after, "WP_A_9999_1.flver")).unwrap()).unwrap();
+            assert_eq!((sheath.meshes.len(), sheath.meshes[0].vertex_buffers[0].vertex_count), (1, 3), "the scabbard is one tiny triangle");
+            let (lo, hi) = sheath.meshes[0].bounding_box.as_ref().map(|b| (b.min, b.max)).unwrap();
+            assert!(hi[0] - lo[0] <= 0.0011 && hi[1] - lo[1] <= 0.0011, "{lo:?} {hi:?}");
+            // everything else is carried over: the physics file, and the textures were swapped once for the weapon's material only
+            let hkx = by_name(&after, "Collidable.hkx");
+            assert_eq!(after.file_bytes(&result.container, hkx), before.file_bytes(&original, by_name(&before, "Collidable.hkx")));
+            let text = result.lines.join("\n");
+            assert!(text.contains("the container has 2 models: the weapon is WP_A_9999.flver (named like the texture file); the other WP_A_9999_1.flver (the scabbard)"), "{text}");
+            assert!(text.contains("WP_A_9999_1.flver: shrunk to one tiny triangle"), "{text}");
+            assert!(text.contains("check: the new container has the same 4 files"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_scabbard_that_cannot_be_shrunk_safely_is_left_alone_and_the_weapon_is_still_swapped() {
+        let junk = vec![0x5Au8; 300];
+        let original = container_with_a_scabbard(false, &junk);
+        let result = swap_container(&original, square(), None).unwrap_or_else(|e| panic!("{e}"));
+        let before = Bnd4::parse(&original).unwrap();
+        let after = Bnd4::parse(&result.container).unwrap();
+        let at = |b: &Bnd4| b.files.iter().find(|f| f.name.as_deref().is_some_and(|n| n.ends_with("_1.flver"))).unwrap().index;
+        assert_eq!(after.file_bytes(&result.container, at(&after)), before.file_bytes(&original, at(&before)), "the scabbard is byte for byte what it was");
+        let text = result.lines.join("\n");
+        assert!(text.contains("WP_A_9999_1.flver: left as it is (it cannot be read"), "{text}");
+    }
+
+    #[test]
+    fn two_models_and_no_texture_file_to_tell_them_apart_is_refused_and_so_is_a_name_that_fits_neither() {
+        let model = sample_flver().write().unwrap();
+        let none = Bnd4Spec::new(0x74).file(1, "x\\a.flver", &model).file(2, "x\\b.flver", &model).file(3, "x\\other.tpf", &sample_tpf().write()).build();
+        assert!(matches!(swap_container(&none, square(), None), Err(SwapError::CannotUse(m)) if m.contains("2 .flver files and none of them is named like the texture file")));
+        // the texture file's name decides, whatever the case
+        let upper = Bnd4Spec::new(0x74).file(1, "x\\A_1.flver", &model).file(2, "x\\A.flver", &model).file(3, "x\\a.TPF", &sample_tpf().write()).build();
+        let result = swap_container(&upper, square(), None).unwrap_or_else(|e| panic!("{e}"));
+        assert!(result.lines.iter().any(|l| l.contains("the weapon is A.flver")), "{:?}", result.lines);
     }
 
     #[test]

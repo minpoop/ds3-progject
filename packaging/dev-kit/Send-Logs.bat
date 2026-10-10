@@ -1,5 +1,5 @@
 @echo off
-rem Collects the Ashen Marine logs and reports (text, plus the pictures the weapon model trial run drew - no game files) into one zip on your Desktop.
+rem Collects the Ashen Marine logs and reports (text, plus the pictures the weapon model trial run drew and a list of the files in the mod folder, names and sizes only - no game files) into one zip on your Desktop.
 rem Your Windows user name and Steam id are masked in the copies.
 cd /d "%~dp0"
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -10,6 +10,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
  "if (Test-Path 'ashenmarine\ds3-models') { Get-ChildItem 'ashenmarine\ds3-models' -File -Filter *.png | ForEach-Object { Copy-Item $_.FullName (Join-Path $tmp ('ashenmarine_ds3-models__' + $_.Name)) } };" ^
  "if (Test-Path 'ashenmarine\FATAL.txt') { Copy-Item 'ashenmarine\FATAL.txt' $tmp };" ^
  "if (Test-Path 'ashenmarine\cache') { $root = (Resolve-Path 'ashenmarine').Path; Get-ChildItem 'ashenmarine\cache' -Recurse -File | ForEach-Object { ('{0}  {1} bytes' -f $_.FullName.Substring($root.Length + 1), $_.Length) } | Set-Content (Join-Path $tmp 'cache-listing.txt') };" ^
+ "if (Test-Path 'ashenmarine\mod') { $root = (Resolve-Path 'ashenmarine').Path; Get-ChildItem 'ashenmarine\mod' -Recurse -File | ForEach-Object { ('{0}  {1} bytes' -f $_.FullName.Substring($root.Length + 1), $_.Length) } | Set-Content (Join-Path $tmp 'mod-listing.txt') };" ^
  "if (Test-Path 'ashenmarine\assets\sounds\index.json') { Copy-Item 'ashenmarine\assets\sounds\index.json' (Join-Path $tmp 'assets_sounds__index.json') };" ^
  "if (Test-Path 'ashenmarine\assets\sounds-exact\index.json') { Copy-Item 'ashenmarine\assets\sounds-exact\index.json' (Join-Path $tmp 'assets_sounds-exact__index.json') };" ^
  "$out = Join-Path ([Environment]::GetFolderPath('Desktop')) 'AshenMarine-logs.zip'; if (Test-Path $out) { Remove-Item $out -Force };" ^

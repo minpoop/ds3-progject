@@ -81,8 +81,18 @@ fn a_trial_run_makes_candidates_and_pictures_and_changes_nothing_else() {
         // the colour map is the picture of the material (red, 8x8 scaled to the old size), the other map one colour
         assert_eq!(tpf.textures.len(), 2);
     }
+    // the Shortsword's container has a scabbard beside the weapon (as the real one does): it is one tiny triangle now
+    for (name, scabbard) in [("wp_a_0200.partsbnd.dcx", "wp_a_0200_1.flver"), ("wp_a_0200_l.partsbnd.dcx", "wp_a_0200_1_l.flver")] {
+        let (inner, _) = dcx::decode(&fs::read(env.out().join("candidates").join(name)).unwrap()).unwrap();
+        let b = Bnd4::parse(&inner).unwrap();
+        assert_eq!(b.files.len(), 4, "{name}: the weapon, its scabbard, the textures and the physics file");
+        let sheath = b.files.iter().find(|f| f.name.as_deref().is_some_and(|n| n.ends_with(scabbard))).unwrap_or_else(|| panic!("{name} has no {scabbard}"));
+        let model = Flver::parse(b.file_bytes(&inner, sheath.index).unwrap()).unwrap();
+        assert_eq!(model.meshes[0].vertex_buffers[0].vertex_count, 3, "{scabbard} is one tiny triangle");
+    }
     let report = env.report();
     for needle in [
+        "wp_a_0200_1.flver: shrunk to one tiny triangle",
         "TRIAL RUN",
         "== chainsword ==",
         "== bolt pistol ==",
@@ -100,6 +110,8 @@ fn a_trial_run_makes_candidates_and_pictures_and_changes_nothing_else() {
         assert!(report.contains(needle), "report is missing {needle:?}:\n{report}");
     }
     assert!(!report.contains("PROBLEM") && !report.contains("NOT DONE") && !report.contains("BEGIN RSA"), "{report}");
+    let flat = report.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("the container has 2 models: the weapon is wp_a_0200.flver (named like the texture file); the other wp_a_0200_1.flver (the scabbard)"), "{report}");
     for label in ["wp_a_0200", "wp_a_0200_l", "wp_a_1409"] {
         let png = fs::read(env.out().join(format!("{label}-overlay.png"))).unwrap();
         assert_eq!(&png[1..4], b"PNG");

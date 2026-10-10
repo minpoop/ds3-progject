@@ -161,6 +161,20 @@ check "M5 without --rename no log is made and the names are as they were" '[ ! -
 make_world M3; LAUNCHER_ARGS="" launch "$W" ASHEN_FAKE_HOLD_SECS=0
 check "M3 without --sounds no sound file is created" '[ ! -e "$W/ashen/logs/sfx.txt" ]'
 
+echo; echo "== M6: the mod folder: what the game asks for and what it really opens =="
+make_world M6; REAL0="$(treehash "$W/appdata")"
+mkdir -p "$W/ashen/mod/msg/engus"; printf 'changed text' > "$W/ashen/mod/msg/engus/item_dlc2.msgbnd.dcx"
+LAUNCHER_ARGS="" launch "$W" ASHEN_FAKE_MOD_DIR="$(winpath "$W/ashen/mod")" ASHEN_FAKE_HOLD_SECS=1
+grep "MOD FILE" "$W/ashen/logs/hook.log" 2>/dev/null | sed 's/^/    /' | cut -c1-200
+check "M6 launcher exit code 0" '[ "$(cat "$W/launcher.rc")" = "0" ]'
+check "M6 the hook logged what the game asked about in the mod folder: the file that exists and the one that does not" 'grep -q "MOD FILE asked for by the game \[fs_getfileattributesexw\]: .*mod.msg.engus.item_dlc2.msgbnd.dcx" "$W/ashen/logs/hook.log" && grep -q "MOD FILE asked for by the game \[fs_getfileattributesexw\]: .*mod.parts.wp_a_0200.partsbnd.dcx" "$W/ashen/logs/hook.log"'
+check "M6 it logged the open of the file that exists, and of that one only" 'grep -q "MOD FILE OPENED by the game \[fs_createfilew\]: .*item_dlc2.msgbnd.dcx" "$W/ashen/logs/hook.log" && ! grep -q "MOD FILE OPENED.*wp_a_0200" "$W/ashen/logs/hook.log"'
+check "M6 menu pages are not worth a line" '! grep -q "01_900_black" "$W/ashen/logs/hook.log"'
+check "M6 the launcher log says which file of the mod folder the game opened" 'grep -q "the game opened 1 file(s) from the mod folder: msg.engus.item_dlc2.msgbnd.dcx" "$W/ashen/logs/launcher.log"'
+check "M6 the sandbox still worked (VERIFIED, real save untouched)" 'grep -q "VERIFIED" "$W/ashen/logs/launcher.log" && [ "$(treehash "$W/appdata")" = "$REAL0" ]'
+make_world M7; LAUNCHER_ARGS="" launch "$W" ASHEN_FAKE_HOLD_SECS=1
+check "M7 a game that opens nothing from the mod folder is told so in the launcher log" 'grep -q "the game did not open a single file from the mod folder" "$W/ashen/logs/launcher.log"'
+
 echo; echo "== K: the packaged kit layout with the REAL (trimmed) ModEngine2 =="
 KITSRC="$(ls -d "$ROOT"/dist/AshenMarine-dev-* 2>/dev/null | grep -v '\.zip$' | head -1)"
 if [ -z "$KITSRC" ]; then

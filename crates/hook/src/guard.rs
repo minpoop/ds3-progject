@@ -101,21 +101,46 @@ pub fn watched_file(units: &[u16]) -> Option<String> {
     (has_mod_folder(units) || is_text_bundle(units)).then(|| String::from_utf16_lossy(units))
 }
 
-/// The most different mod-folder paths that are logged.
-const MAX_WATCHED: usize = 300;
+/// The most different mod-folder paths that are logged. ModEngine2 asks about a few hundred files in the first seconds (the
+/// menu pages alone are about 190); kit 0.9 stopped at 300 before the game asked for a single weapon model.
+const MAX_WATCHED: usize = 1500;
 
-/// The first time the game opens such a file, say so: it is the proof that ModEngine2 serves the loose files.
+/// The most different files that are logged as opened (these are only the files that exist, that is, the ones the mod put
+/// there and ModEngine2 serves).
+const MAX_OPENED: usize = 200;
+
+/// Does the path end in `.gfx` (a menu page; any case)? ModEngine2 asks about all of them and none matters for the mod.
+fn is_menu_page(units: &[u16]) -> bool {
+    const END: &[u8] = b".gfx";
+    let lower = |u: u16| if (b'A' as u16..=b'Z' as u16).contains(&u) { u + 32 } else { u };
+    units.len() >= END.len() && units[units.len() - END.len()..].iter().zip(END).all(|(u, e)| lower(*u) == *e as u16)
+}
+
+/// The first time the game asks about such a file, say so; and the first time it opens a file below the mod folder, say that,
+/// too: that one is the proof that ModEngine2 serves the loose file (it only opens what exists).
 fn note_watched_open(st: &state::State, units: &[u16], id: &'static str) {
     use std::sync::Mutex;
     static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static OPENED: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let Some(path) = watched_file(units) else { return };
-    let Ok(mut seen) = SEEN.lock() else { return };
+    if is_menu_page(units) {
+        return;
+    }
     let lower = path.to_lowercase();
+    let t = state::T0.get().map_or(0, |t| t.elapsed().as_millis());
+    if id.starts_with("fs_createfile") && has_mod_folder(units) && std::path::Path::new(&path).is_file() {
+        if let Ok(mut opened) = OPENED.lock() {
+            if !opened.contains(&lower) && opened.len() < MAX_OPENED {
+                opened.push(lower.clone());
+                st.logger.log(&format!("MOD FILE OPENED by the game [{id}]: {path} (+{t} ms after the hook loaded; {} such files so far)", opened.len()));
+            }
+        }
+    }
+    let Ok(mut seen) = SEEN.lock() else { return };
     if seen.contains(&lower) || seen.len() >= MAX_WATCHED {
         return;
     }
     seen.push(lower);
-    let t = state::T0.get().map_or(0, |t| t.elapsed().as_millis());
     st.logger.log(&format!("MOD FILE asked for by the game [{id}]: {path} (+{t} ms after the hook loaded; {} different such files so far)", seen.len()));
 }
 
@@ -255,6 +280,15 @@ mod tests {
         assert!(watched_file(&w(r"D:\Games\DS3\Game\msg\engus\item.msgbnd.dcx")).is_some(), "a text bundle from the game's own folder is worth knowing about, too");
         for other in ["", ".dcx", r"C:\x\mod", r"C:\x\model\a.dcx", r"C:\x\mods\a.dcx", r"D:\Games\DS3\Game\Data1.bdt", r"D:\Games\DS3\Game\map\m30_00_00_00.mapbnd.dcx", r"C:\Users\me\AppData\Roaming\DarkSoulsIII\DS30000.sl2", r"C:\x\a.msgbnd.dcx.bak", "mod\\", "\\mod"] {
             assert_eq!(watched_file(&w(other)), None, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn menu_pages_are_not_worth_a_line() {
+        assert!(is_menu_page(&w(r"C:\kit\ashenmarine\mod\menu\win\01_900_black.gfx")));
+        assert!(is_menu_page(&w("a.GFX")));
+        for other in ["", ".gf", r"C:\kit\ashenmarine\mod\parts\wp_a_0200.partsbnd.dcx", r"C:\x\a.gfx.bak", "gfx"] {
+            assert!(!is_menu_page(&w(other)), "{other:?}");
         }
     }
 

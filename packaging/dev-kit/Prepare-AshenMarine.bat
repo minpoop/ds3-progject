@@ -25,8 +25,8 @@ echo  ----------------------
 echo  This READS your Space Marine 2 and Dark Souls III files (on your PC only; nothing is uploaded, nothing in either
 echo  game is changed) and makes:
 echo    1. the Space Marine 2 chainsword and bolt pistol sounds, as ordinary .wav files in  ashenmarine\assets
-echo    2. if it can: a copy of Dark Souls III's item text with the new names, in  ashenmarine\mod
-echo       (If it cannot, that is OK: the names are also written into the running game by Play-AshenMarine.bat.)
+echo    2. a copy of Dark Souls III's item text with the new names, in  ashenmarine\mod\msg\engus  (the game's own
+echo       files are never changed: ModEngine2 loads this copy instead, under the file name the game asks for)
 echo    3. a report that lists where Dark Souls III keeps the files the mod needs (no copies of them)
 echo    4. a report about how the Space Marine 2 weapon models are stored (no copies of the models)
 echo    5. the new weapon MODELS: built in memory, checked and drawn (a report and a picture in  ashenmarine\ds3-models ).
@@ -39,7 +39,7 @@ echo.
 echo  ===== 1 of 5: Space Marine 2 sounds =====
 "ashenmarine\ashenmarine-setup.exe" prepare
 echo.
-echo  ===== 2 of 5: Dark Souls III item names (a file; may not be possible yet, see above) =====
+echo  ===== 2 of 5: Dark Souls III item names (a file for the mod folder) =====
 "ashenmarine\ashenmarine-setup.exe" ds3-prepare
 echo.
 echo  ===== 3 of 5: where Dark Souls III keeps its files (report only) =====
