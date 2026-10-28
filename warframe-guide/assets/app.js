@@ -410,6 +410,10 @@ function wire() {
   update();
   // atmosphere toggles
   $$("[data-toggle]").forEach(b => b.addEventListener("click", () => toggle(b.dataset.toggle)));
+  $$(".vol input").forEach(inp => {
+    inp.value = String(Math.round(Sound.volume * 100));
+    inp.addEventListener("input", () => { Sound.setVolume(inp.value / 100); $$(".vol input").forEach(o => { if (o !== inp) o.value = inp.value; }); });
+  });
   syncToggles();
   window.addEventListener("hashchange", () => go(location.hash.slice(1)));
 }
@@ -422,6 +426,7 @@ function toggle(what) {
 }
 function syncToggles() {
   $$('[data-toggle="ambience"]').forEach(b => { b.setAttribute("aria-pressed", String(state.ambience)); $("b", b).textContent = state.ambience ? "ON" : "OFF"; });
+  $$(".vol").forEach(v => { v.hidden = !state.ambience; });
   $$('[data-toggle="scares"]').forEach(b => { b.setAttribute("aria-pressed", String(state.scares)); $("b", b).textContent = state.scares ? "ON" : "OFF"; });
   document.body.dataset.flicker = state.scares ? "on" : "off";
 }
@@ -461,7 +466,7 @@ function speak(who, advance) {
 function nextHint() {
   const who = (state.who + 1) % COMPANIONS.length;
   speak(who, true);
-  if (state.scares && Math.random() < 1 / 18) setTimeout(() => scare(COMPANIONS[who]), 450);
+  if (state.scares && Math.random() < 1 / 15) setTimeout(() => scare(COMPANIONS[who]), 450);
 }
 
 function setOpen(open) {
@@ -470,13 +475,6 @@ function setOpen(open) {
   $("#radio").classList.toggle("closed", !open);
   $("#r-face").setAttribute("aria-label", open ? "" : "Open companion tips");
   $("#r-face").tabIndex = open ? -1 : 0;
-}
-
-function scare(c) {
-  const el = $("#scare");
-  $("p", el).textContent = c.scare;
-  el.classList.remove("go"); void el.offsetWidth; el.classList.add("go");
-  if (state.ambience) Sound.sting();
 }
 
 function wireRadio() {
@@ -489,52 +487,249 @@ function wireRadio() {
   setOpen(state.open);
 }
 
-/* ------------------------------------------------------------ ambience (generated with Web Audio, no files) */
+/* ------------------------------------------------------------ music and scare sounds (generated with Web Audio, no files) */
 
 const Sound = (() => {
-  let ctx, master, timer;
-  function noiseBuffer(c) {
-    const b = c.createBuffer(1, c.sampleRate * 3, c.sampleRate), d = b.getChannelData(0);
-    let last = 0;
-    for (let i = 0; i < d.length; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5; }
+  // D harmonic minor, the key of the whole score.
+  const CHORDS = [
+    [146.83, 174.61, 220.0, 329.63],   // Dm(add9)
+    [116.54, 174.61, 220.0, 293.66],   // Bbmaj7
+    [98.0, 146.83, 233.08, 329.63],    // Gm6
+    [110.0, 164.81, 233.08, 277.18],   // A7(b9): the unresolved one
+  ];
+  const BOX = [587.33, 659.26, 698.46, 783.99, 880.0, 932.33, 1108.73, 1174.66];
+  const MOTIFS = [[4, 7, 6, 4, 2, 1, 0], [2, 4, 3, 1], [0, 2, 4, 7, 6], [7, 5, 4, 6, 4]];
+  let ctx, comp, music, verb, playing = false, timers = [], loops = [], chord = 0;
+  let volume = store.get("volume", 0.7);
+  const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+
+  function ensure() {
+    if (ctx) { ctx.resume(); return; }
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -12; comp.ratio.value = 8; comp.attack.value = 0.003; comp.release.value = 0.25;
+    // A fast, hard limiter last in the chain so nothing reaches the speakers clipped.
+    const limit = ctx.createDynamicsCompressor();
+    limit.threshold.value = -3; limit.knee.value = 0; limit.ratio.value = 20; limit.attack.value = 0.001; limit.release.value = 0.1;
+    comp.connect(limit).connect(ctx.destination);
+    verb = ctx.createConvolver(); verb.buffer = impulse(5, 2.4);
+  }
+  function impulse(sec, decay) {
+    const len = ctx.sampleRate * sec, b = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) { const d = b.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay); }
     return b;
   }
-  function clank() {
-    if (!ctx) return;
-    const t = ctx.currentTime, src = ctx.createBufferSource(), bp = ctx.createBiquadFilter(), g = ctx.createGain();
-    src.buffer = noiseBuffer(ctx); bp.type = "bandpass"; bp.frequency.value = 900 + Math.random() * 1600; bp.Q.value = 18;
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);
-    src.connect(bp).connect(g).connect(master); src.start(t); src.stop(t + 1.7);
-    timer = setTimeout(clank, 7000 + Math.random() * 14000);
+  function noise(sec, brown) {
+    const b = ctx.createBuffer(1, ctx.sampleRate * sec, ctx.sampleRate), d = b.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < d.length; i++) {
+      const w = Math.random() * 2 - 1;
+      if (brown) { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; } else d[i] = w;
+    }
+    return b;
   }
-  return {
-    start() {
-      ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
-      ctx.resume();
-      master = ctx.createGain(); master.gain.value = 0; master.connect(ctx.destination);
-      master.gain.linearRampToValueAtTime(0.5, ctx.currentTime + 2);
-      const wind = ctx.createBufferSource(), lp = ctx.createBiquadFilter(), wg = ctx.createGain(), lfo = ctx.createOscillator(), lfoG = ctx.createGain();
-      wind.buffer = noiseBuffer(ctx); wind.loop = true; lp.type = "lowpass"; lp.frequency.value = 380; wg.gain.value = 0.22;
-      lfo.frequency.value = 0.07; lfoG.gain.value = 220; lfo.connect(lfoG).connect(lp.frequency);
-      wind.connect(lp).connect(wg).connect(master); wind.start(); lfo.start();
-      [[55, "sine", 0.06], [82.6, "triangle", 0.025], [110.8, "sine", 0.012]].forEach(([f, type, v]) => {
-        const o = ctx.createOscillator(), g = ctx.createGain(); o.type = type; o.frequency.value = f; g.gain.value = v; o.connect(g).connect(master); o.start();
+  // A gain node that feeds the music bus dry and the reverb wet.
+  function voice(dry, wet, pan = 0) {
+    const g = ctx.createGain(), d = ctx.createGain(), w = ctx.createGain(), p = ctx.createStereoPanner();
+    d.gain.value = dry; w.gain.value = wet; p.pan.value = pan;
+    g.connect(p); p.connect(d).connect(music); p.connect(w).connect(verb);
+    return g;
+  }
+
+  function pad() {
+    if (!playing) return;
+    const t = ctx.currentTime + 0.05, notes = CHORDS[chord++ % CHORDS.length], dur = 15;
+    notes.forEach((f, i) => {
+      const out = voice(0.45, 0.7, (i - 1.5) * 0.35), lp = ctx.createBiquadFilter(), env = ctx.createGain();
+      lp.type = "lowpass"; lp.frequency.setValueAtTime(380, t); lp.frequency.linearRampToValueAtTime(820, t + dur * 0.5); lp.frequency.linearRampToValueAtTime(340, t + dur + 5);
+      env.gain.setValueAtTime(0.0001, t); env.gain.linearRampToValueAtTime(0.05, t + 5); env.gain.setValueAtTime(0.05, t + dur - 1); env.gain.linearRampToValueAtTime(0.0001, t + dur + 6);
+      lp.connect(env).connect(out);
+      [-8, 7].forEach(cents => {
+        const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = f; o.detune.value = cents;
+        o.connect(lp); o.start(t); o.stop(t + dur + 6.2);
       });
-      timer = setTimeout(clank, 4000);
+    });
+    later(pad, dur * 1000);
+  }
+
+  function musicBox() {
+    if (!playing) return;
+    const motif = Math.random() < 0.55 ? MOTIFS[Math.floor(Math.random() * MOTIFS.length)]
+      : Array.from({ length: 3 + Math.floor(Math.random() * 4) }, () => Math.floor(Math.random() * BOX.length));
+    const broken = Math.random() < 0.25;           // sometimes the box winds down, slow and flat
+    let t = ctx.currentTime + 0.1;
+    motif.forEach((n, i) => {
+      const f = BOX[n] * (broken ? Math.pow(2, -(30 + i * 6) / 1200) : 1);
+      const out = voice(0.3, 0.9, Math.random() * 1.2 - 0.6);
+      [[1, 0.06], [4.2, 0.012]].forEach(([mult, peak]) => {      // tine fundamental plus a bright overtone
+        const o = ctx.createOscillator(), env = ctx.createGain();
+        o.type = "sine"; o.frequency.value = f * mult; o.detune.value = Math.random() * 10 - 5;
+        env.gain.setValueAtTime(0.0001, t); env.gain.exponentialRampToValueAtTime(peak, t + 0.006); env.gain.exponentialRampToValueAtTime(0.0001, t + (mult === 1 ? 2.4 : 0.6));
+        o.connect(env).connect(out); o.start(t); o.stop(t + 2.5);
+      });
+      t += (broken ? 0.75 + i * 0.12 : 0.42 + Math.random() * 0.3);
+    });
+    later(musicBox, (t - ctx.currentTime) * 1000 + 4000 + Math.random() * 7000);
+  }
+
+  function heartbeat() {
+    if (!playing) return;
+    let t = ctx.currentTime + 0.1;
+    const beats = 5 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < beats; i++) {
+      [[0, 0.5], [0.2, 0.32]].forEach(([off, peak]) => {
+        const o = ctx.createOscillator(), env = ctx.createGain(), s = t + off;
+        o.type = "sine"; o.frequency.setValueAtTime(62, s); o.frequency.exponentialRampToValueAtTime(38, s + 0.15);
+        env.gain.setValueAtTime(0.0001, s); env.gain.exponentialRampToValueAtTime(peak * 0.5, s + 0.015); env.gain.exponentialRampToValueAtTime(0.0001, s + 0.22);
+        o.connect(env).connect(voice(1, 0.1)); o.start(s); o.stop(s + 0.25);
+      });
+      t += 0.86;
+    }
+    later(heartbeat, 25000 + Math.random() * 25000);
+  }
+
+  // Silent Hill's warning radio: a crackle of static that comes and goes.
+  function radio(dest = null, sec = 0.8 + Math.random() * 1.6, level = 0.07) {
+    const t = ctx.currentTime + 0.02, src = ctx.createBufferSource(), bp = ctx.createBiquadFilter(), env = ctx.createGain();
+    src.buffer = noise(sec + 0.1); bp.type = "bandpass"; bp.frequency.value = 1700; bp.Q.value = 0.6;
+    env.gain.setValueAtTime(0.0001, t);
+    for (let x = 0; x < sec; x += 0.04) env.gain.linearRampToValueAtTime(level * (0.25 + Math.random() * 0.75), t + x);
+    env.gain.linearRampToValueAtTime(0.0001, t + sec);
+    src.connect(bp).connect(env).connect(dest || voice(0.8, 0.3, Math.random() - 0.5)); src.start(t); src.stop(t + sec + 0.1);
+  }
+  function radioLoop() { if (!playing) return; radio(); later(radioLoop, 30000 + Math.random() * 35000); }
+
+  function clank() {
+    if (!playing) return;
+    const t = ctx.currentTime + 0.02, src = ctx.createBufferSource(), env = ctx.createGain(), out = voice(0.25, 0.9, Math.random() * 1.6 - 0.8);
+    src.buffer = noise(2);
+    [700 + Math.random() * 900, 1900 + Math.random() * 1500].forEach(f => {
+      const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = f; bp.Q.value = 30; src.connect(bp).connect(env);
+    });
+    env.gain.setValueAtTime(0.0001, t); env.gain.exponentialRampToValueAtTime(2.2, t + 0.01); env.gain.exponentialRampToValueAtTime(0.0001, t + 1.8);
+    env.connect(out); src.start(t); src.stop(t + 2);
+    later(clank, 9000 + Math.random() * 16000);
+  }
+
+  function beds() {
+    const t = ctx.currentTime;
+    const wind = ctx.createBufferSource(), lp = ctx.createBiquadFilter(), wg = ctx.createGain(), lfo = ctx.createOscillator(), lfoG = ctx.createGain();
+    wind.buffer = noise(6, true); wind.loop = true; lp.type = "lowpass"; lp.frequency.value = 340; wg.gain.value = 0.14;
+    lfo.frequency.value = 0.06; lfoG.gain.value = 200; lfo.connect(lfoG).connect(lp.frequency);
+    wind.connect(lp).connect(wg).connect(voice(1, 0.2)); wind.start(t); lfo.start(t);
+    const sub = ctx.createOscillator(), sg = ctx.createGain(), trem = ctx.createOscillator(), tg = ctx.createGain();
+    sub.frequency.value = 36.71; sg.gain.value = 0.07; trem.frequency.value = 0.11; tg.gain.value = 0.03;
+    trem.connect(tg).connect(sg.gain); sub.connect(sg).connect(music); sub.start(t); trem.start(t);
+    loops.push(wind, lfo, sub, trem);
+  }
+
+  function distortion(amount) {
+    const n = 2048, curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = (i * 2) / n - 1; curve[i] = ((3 + amount) * x * 20 * Math.PI / 180) / (Math.PI + amount * Math.abs(x)); }
+    const ws = ctx.createWaveShaper(); ws.curve = curve; ws.oversample = "4x"; return ws;
+  }
+
+  return {
+    get volume() { return volume; },
+    start() {
+      ensure();
+      playing = true;
+      music = ctx.createGain(); music.gain.value = 0;
+      const makeup = ctx.createGain(); makeup.gain.value = 1.8; music.connect(makeup).connect(comp);
+      verb.disconnect(); verb.connect(music);
+      music.gain.linearRampToValueAtTime(volume, ctx.currentTime + 3);
+      beds(); pad();
+      later(musicBox, 6000); later(heartbeat, 18000); later(radioLoop, 12000); later(clank, 5000);
     },
     stop() {
-      clearTimeout(timer);
-      if (master) { const m = master; m.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.6); setTimeout(() => m.disconnect(), 800); master = null; }
+      playing = false;
+      timers.forEach(clearTimeout); timers = [];
+      if (!music) return;
+      const m = music, l = loops; music = null; loops = [];
+      m.gain.cancelScheduledValues(ctx.currentTime); m.gain.setValueAtTime(m.gain.value, ctx.currentTime); m.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.2);
+      setTimeout(() => { l.forEach(n => { try { n.stop(); } catch (e) { /* already stopped */ } }); m.disconnect(); }, 1400);
     },
+    setVolume(v) {
+      volume = v; store.set("volume", v);
+      if (music) { music.gain.cancelScheduledValues(ctx.currentTime); music.gain.setTargetAtTime(v, ctx.currentTime, 0.1); }
+    },
+    // Drop the music to near silence (the moment before a scare), then let it creep back.
+    duck(holdMs) {
+      if (!music) return;
+      const t = ctx.currentTime, g = music.gain;
+      g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(volume * 0.04, t + 0.25);
+      g.setValueAtTime(volume * 0.04, t + holdMs / 1000 + 1.5); g.linearRampToValueAtTime(volume, t + holdMs / 1000 + 5);
+    },
+    static(sec) { ensure(); radio(comp, sec, 0.55); },
+    // The jump-scare hit: sub boom, a distorted semitone-cluster stab, a rising metal screech and a burst of static.
     sting() {
-      if (!ctx || !master) return;
-      const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = "sawtooth"; o.frequency.setValueAtTime(880, t); o.frequency.exponentialRampToValueAtTime(140, t + 0.9);
-      g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
-      o.connect(g).connect(master); o.start(t); o.stop(t + 1.2);
+      ensure();
+      const t = ctx.currentTime + 0.01, hit = ctx.createGain(); hit.gain.value = 0.6; hit.connect(comp);
+      const boom = ctx.createOscillator(), bg = ctx.createGain();
+      boom.frequency.setValueAtTime(140, t); boom.frequency.exponentialRampToValueAtTime(32, t + 0.7);
+      bg.gain.setValueAtTime(1.2, t); bg.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+      boom.connect(bg).connect(hit); boom.start(t); boom.stop(t + 1.2);
+      const dist = distortion(60), lp = ctx.createBiquadFilter(), sg = ctx.createGain();
+      lp.type = "lowpass"; lp.frequency.value = 3800; sg.gain.setValueAtTime(0.5, t); sg.gain.exponentialRampToValueAtTime(0.0001, t + 1.9);
+      dist.connect(lp).connect(sg).connect(hit);
+      [233.08, 246.94, 349.23, 369.99, 466.16, 493.88].forEach(f => {
+        const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.setValueAtTime(f, t); o.frequency.linearRampToValueAtTime(f * 0.97, t + 1.8);
+        const g = ctx.createGain(); g.gain.value = 0.14; o.connect(g).connect(dist); o.start(t); o.stop(t + 2);
+      });
+      const scr = ctx.createBufferSource(), bp = ctx.createBiquadFilter(), eg = ctx.createGain();
+      scr.buffer = noise(1.4); bp.type = "bandpass"; bp.Q.value = 14;
+      bp.frequency.setValueAtTime(900, t); bp.frequency.exponentialRampToValueAtTime(4600, t + 0.9);
+      eg.gain.setValueAtTime(2.4, t); eg.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
+      scr.connect(bp).connect(eg).connect(hit); scr.start(t); scr.stop(t + 1.4);
+      const tail = ctx.createGain(); tail.gain.value = 0.5; hit.connect(tail).connect(verb); verb.connect(comp);
+      setTimeout(() => { verb.disconnect(); if (music) verb.connect(music); tail.disconnect(); }, 4000);
+      radio(hit, 0.35, 0.6);
     },
   };
 })();
+
+/* ------------------------------------------------------------ jump scares */
+
+let scaring = false;
+function scare(c) {
+  if (scaring) return;
+  scaring = true;
+  const el = $("#scare"), face = $(".sc-face", el), cv = $(".sc-static", el);
+  const type = ["lunge", "static", "blackout"][Math.floor(Math.random() * 3)];
+  $("p", el).textContent = c.scare;
+  const statue = typeof KEYART !== "undefined" ? `url(${KEYART.hero})` : "none";
+  face.innerHTML = type === "static" ? portrait(c.id, "scare") : "";
+  face.style.backgroundImage = type === "static" ? "none" : statue;
+  if (type !== "static") {
+    // Frame the statue's glowing eyes (about 925,130 in the 1920x1080 key art, 230px apart) a little above centre.
+    const w = innerWidth, h = innerHeight, s = Math.min(0.32 * w, 0.42 * h) / 230;
+    face.style.backgroundSize = `${1920 * s}px ${1080 * s}px`;
+    face.style.backgroundPosition = `${w / 2 - 925 * s}px ${0.4 * h - 130 * s}px`;
+  }
+  const finish = ms => setTimeout(() => { el.className = "scare"; document.body.classList.remove("quake"); scaring = false; }, ms);
+  const hit = () => {
+    el.className = "scare show hit";
+    Sound.sting();
+    if (motionOK) { document.body.classList.remove("quake"); void document.body.offsetWidth; document.body.classList.add("quake"); }
+    try { navigator.vibrate && navigator.vibrate([90, 40, 220]); } catch (e) { /* not supported */ }
+  };
+  if (type === "lunge") { hit(); finish(2100); }
+  if (type === "blackout") {
+    el.className = "scare show dark";       // the lights die and the music drops away first
+    Sound.duck(1200);
+    setTimeout(hit, 1200 + Math.random() * 500); finish(3700);
+  }
+  if (type === "static") {
+    el.className = "scare show static";
+    Sound.static(0.6);
+    const g = cv.getContext("2d"), img = g.createImageData(cv.width, cv.height);
+    const tv = setInterval(() => {
+      for (let i = 0; i < img.data.length; i += 4) { const v = Math.random() * 255; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255; }
+      g.putImageData(img, 0, 0);
+    }, 60);
+    setTimeout(() => { clearInterval(tv); hit(); }, 650); finish(2800);
+  }
+}
 
 /* ------------------------------------------------------------ the haunted room (canvas background) */
 

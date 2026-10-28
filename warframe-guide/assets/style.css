@@ -41,6 +41,7 @@ button { cursor: pointer; }
 h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 400; }
 p { margin: 0; }
 img { max-width: 100%; }
+[hidden] { display: none !important; }
 
 /* ---------- atmosphere layers ---------- */
 .backdrop { position: fixed; inset: 0; z-index: 0; background: var(--void) center 30% / cover no-repeat; }
@@ -357,12 +358,38 @@ td b { color: var(--bone); font-weight: 600; }
 /* ---------- scare ---------- */
 .scare {
   position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; text-align: center; padding: 24px;
-  background: radial-gradient(circle, rgba(120, 10, 8, .55), rgba(0, 0, 0, .96) 70%);
-  pointer-events: none; opacity: 0;
+  background: #000; pointer-events: none; opacity: 0; overflow: hidden;
 }
-.scare.go { animation: scare 1.5s ease forwards; }
-.scare p { font: 400 clamp(26px, 5vw, 54px)/1.1 var(--display); color: var(--bone); text-shadow: 3px 0 var(--blood), -3px 0 rgba(0, 160, 255, .35); max-width: 18ch; }
-@keyframes scare { 0% { opacity: 0; } 8% { opacity: 1; transform: scale(1.04); } 14% { opacity: .2; } 20% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
+.scare.show { opacity: 1; }
+.sc-face, .sc-static { position: absolute; inset: 0; opacity: 0; }
+.sc-face { background: #000 no-repeat; transform-origin: 50% 40%; filter: contrast(1.7) brightness(1.2) sepia(.5) saturate(2.4) hue-rotate(-18deg); }
+.sc-face .portrait, .sc-face svg { width: 100%; height: 100%; object-fit: cover; object-position: center 22%; transform: scaleY(1.12); filter: grayscale(1) contrast(2.2) brightness(.6); }
+.sc-static { width: 100%; height: 100%; image-rendering: pixelated; }
+.scare.static .sc-static { opacity: .9; }
+.scare.hit .sc-face { opacity: 1; animation: lunge 1.9s steps(18, end) forwards; }
+.scare.hit::after { content: ""; position: absolute; inset: 0; background: #c4121a; mix-blend-mode: multiply; animation: redcut 1.9s steps(1, end) forwards; }
+.scare p {
+  position: relative; z-index: 3; opacity: 0; max-width: 18ch;
+  font: 400 clamp(28px, 5.5vw, 62px)/1.05 var(--display); color: #fff; text-shadow: 4px 0 #f0141e, -4px 0 #10d0ff, 0 0 30px #000;
+}
+.scare.hit p { animation: shout 1.9s steps(1, end) forwards; }
+@keyframes lunge {
+  0% { transform: scale(.4); }
+  6% { transform: scale(1.55) translate(1.5%, .5%); }
+  12% { transform: scale(1.4) translate(-1.5%, 0); }
+  24% { transform: scale(1.7) translate(.6%, -.6%); }
+  100% { transform: scale(1.95) translate(-.4%, .4%); }
+}
+/* at most two hard red cuts, kept well under three flashes a second */
+@keyframes redcut { 0% { opacity: .95; } 12% { opacity: .15; } 40% { opacity: .7; } 52%, 100% { opacity: .25; } }
+@keyframes shout { 0%, 18% { opacity: 0; } 19% { opacity: 1; transform: translateX(-6px) skewX(-6deg); } 23% { transform: translateX(5px); } 27%, 100% { opacity: 1; transform: none; } }
+body.quake .shell, body.quake .radio { animation: quake .55s steps(10, end); }
+@keyframes quake {
+  0% { transform: translate(14px, -9px) rotate(.8deg); } 20% { transform: translate(-16px, 7px) rotate(-1deg); }
+  40% { transform: translate(10px, 10px); } 60% { transform: translate(-8px, -6px) rotate(.5deg); } 80% { transform: translate(4px, 3px); } 100% { transform: none; }
+}
+.vol { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; padding: 4px 10px; font-size: 13px; color: var(--fog); }
+.vol input { accent-color: var(--blood); width: 100%; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {

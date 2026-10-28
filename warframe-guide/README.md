@@ -29,9 +29,18 @@ original fan writing. Portraits are official character art from each game, taken
 
 **Atmosphere**: official key art behind the page (Albrecht's Laboratories) and in the full-width home-page hero
 (Whispers in the Walls), both graded to the site's blood-red palette, with drifting dust, fog, film grain and flicker.
-On the first visit of a session the lights stutter and come back on while the title burns in. Optional
-ambient sound generated in the browser, and rare jump-scare moments when cycling hints (can be turned off,
-and "Test a scare" shows one on demand). Motion is reduced when the device asks for it.
+On the first visit of a session the lights stutter and come back on while the title burns in.
+Motion is reduced when the device asks for it.
+
+**Music** (sidebar or top bar, with a volume slider): an original horror score generated live in the browser in
+D harmonic minor: slow detuned pad chords, a lonely music-box melody that sometimes winds down, heartbeats, Silent
+Hill-style radio static, distant metal hits, wind and a sub drone, all through a large reverb and a limiter.
+
+**Jump scares** (rare when cycling hints, on by default, "Test a scare" in the sidebar): one of three at random:
+the statue's glowing eyes lunging at the screen, TV static that cuts to a corrupted portrait of the speaker, or a
+blackout where the music drops away before the hit. Each has screen shake, a red cut, split-colour text, phone
+vibration where supported and a loud sting (sub boom, distorted dissonant cluster, metal screech). The sting plays
+even with the music off. Red cuts stay under three flashes a second.
 
 ## Files
 

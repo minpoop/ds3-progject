@@ -49,7 +49,8 @@
     <nav class="chapters" id="chapters" aria-label="Guide chapters"></nav>
     <div class="controls">
       <span class="label">Atmosphere</span>
-      <button class="toggle" type="button" data-toggle="ambience" aria-pressed="false">Ambient sound <b>OFF</b></button>
+      <button class="toggle" type="button" data-toggle="ambience" aria-pressed="false">Music <b>OFF</b></button>
+      <label class="vol" hidden><span>Volume</span><input type="range" id="vol-side" min="0" max="100" step="1" aria-label="Music volume"></label>
       <button class="toggle" type="button" data-toggle="scares" aria-pressed="true">Rare scares <b>ON</b></button>
       <button class="toggle" type="button" data-toggle="test">Test a scare <b>!</b></button>
     </div>
@@ -59,7 +60,7 @@
     <div class="bar">
       <a class="logo" href="#home" aria-label="Tenno Field Manual home"><svg viewBox="0 0 300 118" role="img" aria-label="Tenno Field Manual"><use href="#logo"/></svg></a>
       <div class="mini">
-        <button class="toggle" type="button" data-toggle="ambience" aria-pressed="false" aria-label="Ambient sound">Sound <b>OFF</b></button>
+        <button class="toggle" type="button" data-toggle="ambience" aria-pressed="false" aria-label="Music">Music <b>OFF</b></button>
         <button class="toggle" type="button" data-toggle="scares" aria-pressed="true" aria-label="Rare scares">Scares <b>ON</b></button>
       </div>
     </div>
@@ -83,7 +84,7 @@
     </div>
   </div>
 </aside>
-<div class="scare" id="scare" aria-hidden="true"><p></p></div>
+<div class="scare" id="scare" aria-hidden="true"><div class="sc-face"></div><canvas class="sc-static" width="160" height="90"></canvas><p></p></div>
 <div class="power" aria-hidden="true"></div>
 
 <noscript><p style="position:relative;z-index:5;padding:24px;color:#ece2d2">This guide needs JavaScript for its chapters and search.</p></noscript>
