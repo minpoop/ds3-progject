@@ -182,8 +182,8 @@ details p { margin-top: 8px; }
 .facts { display: flex; flex-wrap: wrap; gap: 8px 22px; font: 13px var(--memo); color: var(--fog); }
 .facts b { color: var(--bone); font-weight: 400; font-size: 18px; margin-right: 4px; }
 .featured { padding: 20px; display: grid; gap: 12px; align-content: start; position: relative; overflow: hidden; }
-.featured .art { width: 100%; height: 190px; }
-.featured .art img { width: auto; height: auto; max-width: 170px; max-height: 170px; }
+.featured .art { width: 100%; height: 230px; }
+.featured .art img { width: 100%; height: 100%; object-fit: contain; }
 .cast { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
 .cast-card { padding: 0; overflow: hidden; display: grid; text-align: left; border-radius: var(--radius); }
 .cast-card svg, .cast-card .portrait { display: block; width: 100%; height: auto; aspect-ratio: 4 / 5; object-fit: cover; filter: saturate(.85) contrast(1.05); transition: filter .2s; }
@@ -242,6 +242,25 @@ th { font: 12px var(--memo); letter-spacing: .1em; text-transform: uppercase; co
 td b { color: var(--bone); font-weight: 600; }
 .empty { padding: 24px; text-align: center; color: var(--fog); font-family: var(--memo); }
 
+/* ---------- news ---------- */
+.news-strip { padding: 20px; display: grid; gap: 14px; }
+.news-mini { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.news-card { display: grid; grid-template-rows: auto 1fr; overflow: hidden; text-decoration: none; color: var(--bone); min-width: 0; }
+.news-card:hover { border-color: var(--rust); color: var(--bone); }
+.news-card:hover .news-img img { transform: scale(1.03); }
+.news-img { display: block; aspect-ratio: 16 / 9; overflow: hidden; background: radial-gradient(circle at 50% 40%, rgba(196, 53, 43, .25), var(--void) 75%); }
+.news-img img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .3s; }
+.news-img.none { display: grid; place-items: center; }
+.news-img.none span { font: 400 28px var(--display); color: var(--fog); opacity: .6; }
+.news-body { display: grid; gap: 8px; padding: 14px 16px 16px; align-content: start; }
+.news-body b { font: 400 19px/1.25 var(--display); }
+.news-card.mini .news-body b { font-size: 17px; }
+.news-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
+.notes { display: grid; gap: 10px; }
+.note-row { display: grid; gap: 4px; padding: 14px 18px; text-decoration: none; color: var(--bone); }
+.note-row:hover { border-color: var(--rust); color: var(--bone); }
+.note-row b { font: 400 20px/1.25 var(--display); }
+
 /* ---------- companion radio ---------- */
 .radio {
   position: fixed; z-index: 50;
@@ -272,7 +291,12 @@ td b { color: var(--bone); font-weight: 600; }
 .radio .hide:hover { color: var(--bone); }
 .radio.closed { width: auto; grid-template-columns: 56px; }
 .radio.closed .body { display: none; }
-.radio.closed .face { height: 70px; cursor: pointer; }
+.radio.closed .face { width: 64px; height: 80px; cursor: pointer; }
+.radio.closed .face::before {
+  content: "TIPS"; position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 2px 0 3px; text-align: center;
+  font: 10px var(--memo); letter-spacing: .14em; color: var(--lamp-ink); background: var(--accent, var(--lamp));
+}
+.radio.closed:hover { border-color: var(--lamp); }
 .radio.closed .hide { display: none; }
 .radio.talk .face svg, .radio.talk .face .portrait { animation: talk .35s ease 2; }
 @keyframes talk { 50% { transform: translateY(-2px); } }
@@ -313,6 +337,9 @@ td b { color: var(--bone); font-weight: 600; }
   main { padding-block: 22px 250px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
   .hero { grid-template-columns: minmax(0, 1fr); }
   .quick { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .news-mini { grid-template-columns: minmax(0, 1fr); }
+  .news-card.mini { grid-template-columns: 120px minmax(0, 1fr); grid-template-rows: auto; }
+  .news-card.mini .news-img { aspect-ratio: auto; height: 100%; min-height: 84px; }
   .tasks { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 560px) {

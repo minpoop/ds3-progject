@@ -16,7 +16,7 @@ def bundle():
     html = (ROOT / "index.html").read_text(encoding="utf-8")
     css = (ROOT / "assets" / "style.css").read_text(encoding="utf-8")
     html = html.replace('<link rel="stylesheet" href="assets/style.css">', "<style>\n" + css + "</style>")
-    for name in ["art", "data", "portraits", "companions", "app"]:
+    for name in ["art", "data", "news", "portraits", "companions", "app"]:
         js = (ROOT / "assets" / f"{name}.js").read_text(encoding="utf-8").replace("</script", "<\\/script")
         html = html.replace(f'<script src="assets/{name}.js"></script>', "<script>\n" + js + "</script>")
     assert 'src="assets/' not in html and 'href="assets/' not in html, "an asset file was not inlined"

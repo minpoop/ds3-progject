@@ -29,7 +29,7 @@ SPEC = {
     "leon": ("residentevil/images/7/7d/RE9_-_Leon_Render.png/revision/latest", 0.39, 0.03, 0.30, (61, 44, 27)),
     "torque": ("thesuffering/images/8/8a/Torgue%27s_Mugshoot.png/revision/latest", 0.27, 0.18, 0.70, (61, 29, 16)),
 }
-SIZE = (320, 400)
+SIZE = (640, 800)
 
 
 def bust(path, cx, top, bottom, glow):
@@ -44,11 +44,12 @@ def bust(path, cx, top, bottom, glow):
     for i in range(60, 0, -1):  # radial glow behind the figure, darkest at the edges
         t = i / 60
         colour = tuple(int(base + (c - base) * (1 - t)) for c, base in zip(glow, (8, 6, 5))) + (255,)
-        draw.ellipse((160 - 300 * t, 150 - 300 * t, 160 + 300 * t, 150 + 300 * t), fill=colour)
-    bg = bg.filter(ImageFilter.GaussianBlur(6))
+        cx, cy, r = SIZE[0] / 2, SIZE[1] * 0.375, SIZE[0] * 0.94 * t
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=colour)
+    bg = bg.filter(ImageFilter.GaussianBlur(12))
     bg.alpha_composite(crop)
     buf = io.BytesIO()
-    bg.convert("RGB").save(buf, "WEBP", quality=80, method=6)
+    bg.convert("RGB").save(buf, "WEBP", quality=86, method=6)
     return "data:image/webp;base64," + base64.b64encode(buf.getvalue()).decode()
 
 

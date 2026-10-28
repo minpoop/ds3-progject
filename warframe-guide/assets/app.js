@@ -1,14 +1,16 @@
-/* Tenno Field Manual - page logic. Needs art.js, data.js and companions.js loaded first. */
+/* Tenno Field Manual - page logic. Needs art.js, data.js, news.js, portraits.js and companions.js loaded first. */
 "use strict";
 
 const CHAPTERS = [
-  ["home", "Overview"], ["weapons", "Weapons"], ["warframes", "Warframes"], ["modding", "Modding"],
+  ["home", "Overview"], ["news", "News"], ["weapons", "Weapons"], ["warframes", "Warframes"], ["modding", "Modding"],
   ["systems", "Systems"], ["materials", "Materials"], ["currencies", "Currencies"], ["platinum", "Platinum"],
   ["steelpath", "Steel Path"], ["roadmap", "Roadmap"], ["tips", "Field Notes"],
 ];
 const LINE_KEY = { roadmap: "progression" };
 const ROLES = ["all", "tank", "support", "dps", "melee", "control", "defense", "loot", "stealth", "speed"];
 const SYSTEM_ART = { "Archon Shards": "Archon Shard", "Operator, Focus & Amps": "Intact Sentient Core", "Kuva Liches & Sisters": "Kuva", "Railjack & Archwing": "Corrupted Holokey", "Incarnon weapons": "Primary Arcane Adapter" };
+// Live in-game news: Digital Extremes' world-state feed, served as JSON (with CORS) by api.warframestat.us.
+const NEWS_FEED = "https://api.warframestat.us/pc/news?language=en";
 const FEATURED = ["Excalibur", "Revenant", "Rhino", "Saryn", "Wisp", "Kullervo", "Dante", "Nekros", "Mesa", "Frost", "Citrine", "Nezha"];
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -53,6 +55,11 @@ function viewHome() {
       <p class="muted small">${esc(f[3])}</p>
       <button class="btn" type="button" data-go="warframes" data-q="${esc(f[0])}">Open in Warframes</button>
     </article>
+  </section>
+  <section class="panel news-strip">
+    <div class="check-head"><div><div class="case">Latest from Digital Extremes</div><h3 class="sub">Warframe news</h3></div>
+      <button class="btn" type="button" data-go="news">All news & patch notes</button></div>
+    <div class="news-mini" id="home-news"></div>
   </section>
   <section class="head"><div class="case">The survivors</div><h3 class="sub">Pick who talks to you</h3>
     <p class="muted small">Tap a portrait to bring them on the radio in the corner. Each one has tips for every chapter.</p></section>
@@ -243,6 +250,59 @@ function viewRoadmap() {
   <div class="steps">${ROADMAP.map(([t, d, tip]) => `<div class="panel step"><div><h3>${t}</h3><p>${d}</p><p class="tip">${tip}</p></div></div>`).join("")}</div>`;
 }
 
+function viewNews() {
+  return `${head(caseNo("news"), "Warframe news", "Official news from Digital Extremes: the in-game news feed and the PC update notes, newest first. Every item links to the official post.")}
+  <div class="panel card news-bar"><p class="status" id="news-status"></p><button class="btn" type="button" id="news-refresh">Check for new posts</button></div>
+  <section class="head"><div class="case">In-game news</div><h3 class="sub">Events, streams and announcements</h3></section>
+  <div class="grid news-grid" id="news-items"></div>
+  <section class="head"><div class="case">Official forums</div><h3 class="sub">PC update notes</h3><p class="muted small">Updates and hotfixes from the official Warframe forums.</p></section>
+  <div class="notes" id="news-notes"></div>`;
+}
+
+function when(iso) {
+  const d = new Date(iso), days = Math.floor((Date.now() - d) / 864e5);
+  const ago = days <= 0 ? "today" : days === 1 ? "yesterday" : days < 30 ? `${days} days ago` : "";
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) + (ago ? ` · ${ago}` : "");
+}
+
+function newsCard(n, mini) {
+  const tag = { Update: "blood", "Prime Access": "lamp", Stream: "" }[n.kind] ?? "";
+  return `<a class="panel news-card${mini ? " mini" : ""}" href="${esc(n.link)}" target="_blank" rel="noopener">
+    ${n.img ? `<span class="news-img"><img src="${esc(n.img)}" alt="" loading="lazy" decoding="async"></span>` : `<span class="news-img none"><span>${esc(n.kind)}</span></span>`}
+    <span class="news-body"><span class="pills"><span class="chip ${tag}">${esc(n.kind)}</span><span class="wmr">${when(n.date)}</span></span><b>${esc(n.title)}</b></span></a>`;
+}
+
+function renderNews() {
+  const items = state.news.items;
+  $("#news-items").innerHTML = items.length ? items.map(n => newsCard(n)).join("") : `<div class="panel empty">No news posts right now.</div>`;
+  $("#home-news").innerHTML = items.slice(0, 3).map(n => newsCard(n, true)).join("");
+  $("#news-notes").innerHTML = NEWS.notes.map(n => `<a class="panel note-row" href="${esc(n.link)}" target="_blank" rel="noopener">
+    <span class="wmr">${when(n.date)}</span><b>${esc(n.title)}</b><span class="muted small">${esc(n.summary)}</span></a>`).join("");
+  const snap = new Date(NEWS.built).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+  $("#news-status").textContent = state.news.live
+    ? `Live: in-game news checked just now. Patch notes as of ${snap}.`
+    : state.news.checking ? "Checking for new posts…" : `Showing the snapshot from ${snap}. Live news loads when this page can reach the internet.`;
+}
+
+async function refreshNews() {
+  state.news.checking = true; renderNews();
+  try {
+    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(NEWS_FEED, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const feed = await res.json();
+    const items = feed.filter(n => n.date && !n.date.startsWith("1970") && !n.mobileOnly)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .map(n => ({ date: n.date, title: n.message.trim(), link: n.link,
+        kind: n.update ? "Update" : n.primeAccess ? "Prime Access" : n.stream ? "Stream" : "News",
+        img: n.imageLink && !n.imageLink.includes("news-placeholder") ? n.imageLink : null }));
+    if (items.length) state.news = { items, live: true };
+  } catch (e) { /* offline or blocked: keep the snapshot */ }
+  state.news.checking = false;
+  renderNews();
+}
+
 function viewTips() {
   return `${head(caseNo("tips"), "Field notes", "How to use this manual, where to double-check things, and the fine print.")}
   <div class="grid two">
@@ -254,7 +314,7 @@ function viewTips() {
   </div>`;
 }
 
-const VIEWS = { home: viewHome, weapons: viewWeapons, warframes: viewWarframes, modding: viewModding, systems: viewSystems, materials: viewMaterials, currencies: viewCurrencies, platinum: viewPlatinum, steelpath: viewSteelPath, roadmap: viewRoadmap, tips: viewTips };
+const VIEWS = { home: viewHome, news: viewNews, weapons: viewWeapons, warframes: viewWarframes, modding: viewModding, systems: viewSystems, materials: viewMaterials, currencies: viewCurrencies, platinum: viewPlatinum, steelpath: viewSteelPath, roadmap: viewRoadmap, tips: viewTips };
 
 /* ------------------------------------------------------------ state & navigation */
 
@@ -265,7 +325,8 @@ const state = {
   role: "all",
   tone: store.get("tone", "mixed"),
   who: store.get("who", 0),
-  open: store.get("radio", true),
+  open: store.get("radioOpen", false),
+  news: { items: NEWS.items, live: false },
   scares: store.get("scares", true),
   ambience: false,
   cursor: {},
@@ -388,7 +449,7 @@ function nextHint() {
 
 function setOpen(open) {
   state.open = open;
-  store.set("radio", open);
+  store.set("radioOpen", open);
   $("#radio").classList.toggle("closed", !open);
   $("#r-face").setAttribute("aria-label", open ? "" : "Open companion tips");
   $("#r-face").tabIndex = open ? -1 : 0;
@@ -554,6 +615,9 @@ document.addEventListener("DOMContentLoaded", () => {
   wire();
   renderWeapons();
   filterFrames();
+  renderNews();
+  refreshNews();
+  $("#news-refresh").addEventListener("click", refreshNews);
   paintRoom();
   const start = location.hash.slice(1);
   go(VIEWS[start] ? start : "home", false);

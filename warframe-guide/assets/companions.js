@@ -320,6 +320,32 @@ const LINES = {
       ["ESCAPE PLAN", "Write down the upgrade you need, what it costs and where to get it. Then move.", "s"],
     ],
   },
+  news: {
+    james: [
+      ["A LETTER ARRIVED", "Someone sent news from a place I thought I'd left behind. At least these letters link to patch notes.", "f"],
+      ["READ THE NOTES", "Hotfixes change drop tables and fix bugs. Skim them before you plan a long farm.", "s"],
+    ],
+    simon: [
+      ["PHONE NOTIFICATION", "Another hotfix. My phone buzzes more for Warframe than for actual people.", "f"],
+      ["EVENTS EXPIRE", "Limited events and Baro visits end. Check the dates so you don't miss the reward.", "s"],
+    ],
+    dante: [
+      ["NEW TOYS", "New update? New weapons? Sounds like a party. Read what dropped and go break it.", "f"],
+      ["DEVSTREAMS", "Devstreams show what's coming. Save your resources if your favourite thing is getting buffed.", "s"],
+    ],
+    vergil: [
+      ["INTELLIGENCE", "Knowledge of the next update is power. Plan your Forma accordingly.", "s"],
+      ["PATIENCE", "Do not invest in what the next patch will change. Read first.", "s"],
+    ],
+    leon: [
+      ["FIELD REPORT", "Always read the briefing. Known Issues lists save you from bugs you'd swear were your fault.", "s"],
+      ["HQ CHECKING IN", "Good to get updates from HQ that aren't telling me to go somewhere worse.", "f"],
+    ],
+    torque: [
+      ["WORD FROM OUTSIDE", "News from outside the walls. Read it. Things change fast out there.", "s"],
+      ["NEW SENTENCE", "Fresh update, fresh grind. Like getting another sentence, but with better loot.", "f"],
+    ],
+  },
   tips: {
     james: [
       ["THE DROP TABLE ISN'T HAUNTED", "The odds are just cruel. Verify the mission and try again.", "f"],
