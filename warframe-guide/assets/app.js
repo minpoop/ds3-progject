@@ -39,14 +39,38 @@ function viewHome() {
   const fname = FEATURED[day % FEATURED.length];
   const f = FRAMES.find(x => x[0] === fname);
   const weaponPicks = MR_PICKS.length * 6;
+  const hero = typeof KEYART !== "undefined" ? KEYART.hero : "";
   return `
-  <section class="hero">
-    <div class="panel hero-copy">
+  <section class="hero-art">
+    ${hero ? `<img class="hero-img" src="${hero}" alt="Warframe key art: Albrecht Entrati and a Warframe beneath a giant statue with glowing eyes">` : ""}
+    <div class="hero-text">
       <div class="case">Unofficial fan guide · Warframe, October 2026</div>
-      <h1 class="title">Build stronger.<br><em>Farm smarter.</em></h1>
-      <p class="lede">A field manual from your first Star Chart mission to Steel Path: the best weapons at every Mastery Rank, every Warframe and what it's good at, mods, farming routes, Platinum and endgame. Six survivors from other nightmares ride along with tips.</p>
-      <div class="facts"><span><b>${weaponPicks}</b>weapon picks</span><span><b>${FRAMES.length}</b>Warframes</span><span><b>${MATERIALS.length}</b>material routes</span><span><b>${SP_STEPS.length}</b>Steel Path steps</span></div>
+      <h1 class="title burn">Build stronger.<br><em>Farm smarter.</em></h1>
+      <p class="lede">A field manual from your first Star Chart mission to Steel Path: the best weapons at every Mastery Rank, every Warframe and what it's good at, mods, farming, Platinum and endgame. Six survivors from other nightmares ride along with tips.</p>
+      <div class="hero-actions"><button class="btn primary" type="button" data-go="weapons">Best weapons for my MR</button><button class="btn" type="button" data-go="news">Latest news</button></div>
+      <div class="facts"><span><b>${weaponPicks}</b>weapon picks</span><span><b>${FRAMES.length}</b>Warframes</span><span><b>${MATERIALS.length}</b>farm routes</span><span><b>${SP_STEPS.length}</b>Steel Path steps</span></div>
     </div>
+    ${hero ? `<span class="credit">Key art: Whispers in the Walls · Digital Extremes</span>` : ""}
+  </section>
+
+  <section class="news-mag">
+    <div class="mag-head"><div><div class="case">Latest from Digital Extremes</div><h3 class="sub">Warframe news</h3></div>
+      <button class="btn" type="button" data-go="news">All news & patch notes</button></div>
+    <div class="mag" id="home-news"></div>
+  </section>
+
+  <section class="lineup-wrap">
+    <div class="head"><div class="case">The survivors</div><h3 class="sub">Pick who talks to you</h3>
+      <p class="muted small">Six survivors from other nightmares. Tap one to put them on the radio in the corner; each has tips for every chapter.</p></div>
+    <div class="lineup">
+      <div class="ruler" aria-hidden="true">${["6'6", "6'0", "5'6", "5'0", "4'6", "4'0"].map((h, i) => `<span style="top:${(i + 1) * 48 - 7}px">${h}</span>`).join("")}</div>
+      <div class="cast">${COMPANIONS.map((c, i) => `
+        <button class="cast-card" type="button" data-cast="${c.id}" aria-pressed="false">${portrait(c.id, "cast")}
+          <span class="placard"><b>${esc(c.name)}</b><span>${esc(c.game)} · No. ${String(i + 1).padStart(3, "0")}</span></span></button>`).join("")}</div>
+    </div>
+  </section>
+
+  <div class="home-pair">
     <article class="panel featured">
       <div class="case">Frame of the day</div>
       ${art(f[0], "big")}
@@ -55,33 +79,24 @@ function viewHome() {
       <p class="muted small">${esc(f[3])}</p>
       <button class="btn" type="button" data-go="warframes" data-q="${esc(f[0])}">Open in Warframes</button>
     </article>
-  </section>
-  <section class="panel news-strip">
-    <div class="check-head"><div><div class="case">Latest from Digital Extremes</div><h3 class="sub">Warframe news</h3></div>
-      <button class="btn" type="button" data-go="news">All news & patch notes</button></div>
-    <div class="news-mini" id="home-news"></div>
-  </section>
-  <section class="head"><div class="case">The survivors</div><h3 class="sub">Pick who talks to you</h3>
-    <p class="muted small">Tap a portrait to bring them on the radio in the corner. Each one has tips for every chapter.</p></section>
-  <div class="cast">${COMPANIONS.map(c => `
-    <button class="panel cast-card" type="button" data-cast="${c.id}" aria-pressed="false">${portrait(c.id, "cast")}
-      <span class="who"><b>${esc(c.name)}</b><span>${esc(c.game)}</span></span></button>`).join("")}</div>
+    <section class="panel checklist">
+      <div class="check-head"><div><div class="case">Progress tracker</div><h3 class="sub">Your power checklist</h3></div><span class="memo muted" id="task-count"></span></div>
+      <div class="meter" role="progressbar" aria-label="Checklist progress" aria-valuemin="0" aria-valuemax="${CHECKLIST.length}"><i id="task-fill"></i></div>
+      <div class="tasks">${CHECKLIST.map(([k, t]) => `<label class="task"><input type="checkbox" id="task-${k}" data-task="${k}"><span>${esc(t)}</span></label>`).join("")}</div>
+      <p class="status">Saved in this browser only.</p>
+    </section>
+  </div>
+
   <section class="head"><div class="case">Where to go</div><h3 class="sub">Jump to a chapter</h3></section>
   <div class="quick">
-    ${[["weapons", "Arsenal", "Best weapons", "Two picks per slot for every MR 0-30, with why and how to get them."],
-       ["warframes", "Roster", "Every Warframe", `All ${FRAMES.length} frames: what each is good at, where to farm it.`],
-       ["modding", "Power", "Modding school", "Build skeletons, priority mods, damage types."],
-       ["materials", "Resources", "Find materials", "Best mission for each resource, plus alternatives."],
-       ["platinum", "Economy", "Earn Platinum", "Safe trading and what actually sells."],
-       ["steelpath", "Endgame", "Enter Steel Path", "From unlock to Arcanes and Incarnons."]]
-      .map(([id, c, t, d]) => `<button class="panel" type="button" data-go="${id}"><span class="case">${c}</span><b>${t}</b><span>${d}</span></button>`).join("")}
-  </div>
-  <section class="panel checklist">
-    <div class="check-head"><div><div class="case">Progress tracker</div><h3 class="sub">Your power checklist</h3></div><span class="memo muted" id="task-count"></span></div>
-    <div class="meter" role="progressbar" aria-label="Checklist progress" aria-valuemin="0" aria-valuemax="${CHECKLIST.length}"><i id="task-fill"></i></div>
-    <div class="tasks">${CHECKLIST.map(([k, t]) => `<label class="task"><input type="checkbox" id="task-${k}" data-task="${k}"><span>${esc(t)}</span></label>`).join("")}</div>
-    <p class="status">Saved in this browser only.</p>
-  </section>`;
+    ${[["weapons", "Arsenal", "Best weapons", "Two picks per slot for every MR 0-30, with why and how to get them.", "Phenmor"],
+       ["warframes", "Roster", "Every Warframe", `All ${FRAMES.length} frames: what each is good at, where to farm it.`, "Revenant"],
+       ["modding", "Power", "Modding school", "Build skeletons, priority mods, damage types.", "Serration"],
+       ["materials", "Resources", "Find materials", "Best mission for each resource, plus alternatives.", "Orokin Cell"],
+       ["platinum", "Economy", "Earn Platinum", "Safe trading and what actually sells.", "Orokin Ducats"],
+       ["steelpath", "Endgame", "Enter Steel Path", "From unlock to Arcanes and Incarnons.", "Steel Essence"]]
+      .map(([id, c, t, d, img]) => `<button class="panel" type="button" data-go="${id}">${art(img)}<span class="q-text"><span class="case">${c}</span><b>${t}</b><span>${d}</span></span></button>`).join("")}
+  </div>`;
 }
 
 function viewWeapons() {
@@ -265,9 +280,9 @@ function when(iso) {
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) + (ago ? ` · ${ago}` : "");
 }
 
-function newsCard(n, mini) {
+function newsCard(n, cls = "") {
   const tag = { Update: "blood", "Prime Access": "lamp", Stream: "" }[n.kind] ?? "";
-  return `<a class="panel news-card${mini ? " mini" : ""}" href="${esc(n.link)}" target="_blank" rel="noopener">
+  return `<a class="panel news-card ${cls}" href="${esc(n.link)}" target="_blank" rel="noopener">
     ${n.img ? `<span class="news-img"><img src="${esc(n.img)}" alt="" loading="lazy" decoding="async"></span>` : `<span class="news-img none"><span>${esc(n.kind)}</span></span>`}
     <span class="news-body"><span class="pills"><span class="chip ${tag}">${esc(n.kind)}</span><span class="wmr">${when(n.date)}</span></span><b>${esc(n.title)}</b></span></a>`;
 }
@@ -275,7 +290,9 @@ function newsCard(n, mini) {
 function renderNews() {
   const items = state.news.items;
   $("#news-items").innerHTML = items.length ? items.map(n => newsCard(n)).join("") : `<div class="panel empty">No news posts right now.</div>`;
-  $("#home-news").innerHTML = items.slice(0, 3).map(n => newsCard(n, true)).join("");
+  // The home page leads with the newest post that has art, then the next two newest.
+  const lead = items.find(n => n.img) || items[0];
+  $("#home-news").innerHTML = lead ? [newsCard(lead, "lead"), ...items.filter(n => n !== lead).slice(0, 2).map(n => newsCard(n, "mini"))].join("") : "";
   $("#news-notes").innerHTML = NEWS.notes.map(n => `<a class="panel note-row" href="${esc(n.link)}" target="_blank" rel="noopener">
     <span class="wmr">${when(n.date)}</span><b>${esc(n.title)}</b><span class="muted small">${esc(n.summary)}</span></a>`).join("");
   const snap = new Date(NEWS.built).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
@@ -310,7 +327,7 @@ function viewTips() {
     <article class="panel card"><h3>Check before you farm</h3><p>Drop tables, vendors, vaulted Primes and prices change with updates. Cross-check targeted farms here:</p>
       <p class="small"><a href="https://www.warframe.com/droptables" target="_blank" rel="noopener">Official drop tables</a> · <a href="https://wiki.warframe.com/w/Resources" target="_blank" rel="noopener">Wiki: resources</a> · <a href="https://warframe.market/" target="_blank" rel="noopener">warframe.market</a></p></article>
     <article class="panel card"><h3>The companions</h3><p>James, Simon, Dante, Vergil, Leon and Torque give original, fan-written tips. Use the radio's tone button to switch between funny, serious or mixed lines, and turn off scares in the sidebar if you'd rather not be startled.</p></article>
-    <article class="panel card"><h3>Fine print</h3><p>Unofficial fan guide, not affiliated with Digital Extremes or the companions' publishers. Item art comes from the community warframe-items image set. Companion portraits are official character art from each game, via its fan wiki.</p></article>
+    <article class="panel card"><h3>Fine print</h3><p>Unofficial fan guide, not affiliated with Digital Extremes or the companions' publishers. Item art comes from the community warframe-items image set. Background and hero art are official Digital Extremes key art (Albrecht's Laboratories; Whispers in the Walls) from the official wiki, colour-graded for this page. Companion portraits are official character art from each game, via its fan wiki.</p></article>
   </div>`;
 }
 
@@ -522,89 +539,40 @@ const Sound = (() => {
 /* ------------------------------------------------------------ the haunted room (canvas background) */
 
 function paintRoom() {
+  // The room itself is official key art (#backdrop); the canvas adds slow drifting dust in the light.
+  const back = $("#backdrop");
+  if (back && typeof KEYART !== "undefined") back.style.backgroundImage = `url(${KEYART.room})`;
   const cv = $("#room"), cx = cv.getContext("2d");
-  let W, H, base, dust = [], candles = [];
-  let seed = 7;
-  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  function build() {
+  let W, H, dust = [];
+  function size() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr;
     cx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    base = document.createElement("canvas"); base.width = W * dpr; base.height = H * dpr;
-    const b = base.getContext("2d"); b.setTransform(dpr, 0, 0, dpr, 0, 0); seed = 7;
-    // stone wall
-    b.fillStyle = "#120d0b"; b.fillRect(0, 0, W, H);
-    const bw = 74, bh = 34;
-    for (let y = 0; y < H; y += bh) for (let x = -((y / bh) % 2) * bw / 2; x < W; x += bw) {
-      const l = 14 + rnd() * 9; b.fillStyle = `rgb(${l + 6},${l},${l - 2})`; b.fillRect(x + 1, y + 1, bw - 2, bh - 2);
-      if (rnd() < 0.08) { b.fillStyle = "rgba(90,20,14,.22)"; b.fillRect(x + 4, y + 4, bw * rnd(), bh - 8); }
-    }
-    // gothic arches with red light behind
-    const n = Math.max(2, Math.round(W / 420)), aw = Math.min(190, W / (n * 1.8)), top = H * 0.16;
-    for (let i = 0; i < n; i++) {
-      const ax = (W / n) * (i + 0.5), ah = H * 0.52;
-      const glow = b.createRadialGradient(ax, top + ah * 0.55, 10, ax, top + ah * 0.55, ah * 0.75);
-      glow.addColorStop(0, "rgba(150,28,18,.55)"); glow.addColorStop(1, "rgba(150,28,18,0)");
-      b.fillStyle = glow; b.fillRect(ax - ah, top - 40, ah * 2, ah * 1.6);
-      b.beginPath(); b.moveTo(ax - aw / 2, top + ah); b.lineTo(ax - aw / 2, top + aw * 0.6);
-      b.quadraticCurveTo(ax - aw / 2, top, ax, top - aw * 0.25); b.quadraticCurveTo(ax + aw / 2, top, ax + aw / 2, top + aw * 0.6);
-      b.lineTo(ax + aw / 2, top + ah); b.closePath();
-      const win = b.createLinearGradient(0, top, 0, top + ah); win.addColorStop(0, "rgba(70,14,10,.9)"); win.addColorStop(1, "rgba(25,8,6,.95)");
-      b.fillStyle = win; b.fill(); b.lineWidth = 10; b.strokeStyle = "#1d1512"; b.stroke();
-      b.strokeStyle = "rgba(20,12,10,.95)"; b.lineWidth = 4;
-      for (let k = 1; k < 4; k++) { b.beginPath(); b.moveTo(ax - aw / 2, top + aw * 0.6 + k * ah / 4.2); b.lineTo(ax + aw / 2, top + aw * 0.6 + k * ah / 4.2); b.stroke(); }
-      b.beginPath(); b.moveTo(ax, top - aw * 0.25); b.lineTo(ax, top + ah); b.stroke();
-    }
-    // iron beams
-    b.fillStyle = "#0a0706"; b.fillRect(0, H * 0.05, W, 22); b.fillRect(0, H * 0.05 + 30, W, 6);
-    for (let x = 20; x < W; x += 60) { b.fillStyle = "#2a1d18"; b.beginPath(); b.arc(x, H * 0.05 + 11, 3, 0, 7); b.fill(); }
-    // chains
-    for (let i = 0; i < Math.max(3, W / 300); i++) {
-      const x = rnd() * W, len = H * (0.2 + rnd() * 0.45);
-      b.strokeStyle = "rgba(60,44,36,.9)"; b.lineWidth = 2.5;
-      for (let y = H * 0.05 + 30; y < H * 0.05 + 30 + len; y += 13) { b.beginPath(); b.ellipse(x, y, (y / 13) % 2 < 1 ? 4 : 1.6, 7, 0, 0, 7); b.stroke(); }
-      if (rnd() < 0.5) { b.strokeStyle = "rgba(80,56,44,.9)"; b.lineWidth = 3; b.beginPath(); b.arc(x, H * 0.05 + 38 + len, 10, 0.2, Math.PI * 1.6); b.stroke(); }
-    }
-    // tattered banners
-    for (let i = 0; i < Math.max(1, Math.floor(W / 700)); i++) {
-      const x = W * (0.25 + i * 0.5) + rnd() * 40, w = 70, h = H * 0.3, y = H * 0.05 + 36;
-      b.fillStyle = "rgba(92,18,14,.75)"; b.beginPath(); b.moveTo(x, y); b.lineTo(x + w, y); b.lineTo(x + w, y + h);
-      for (let k = 6; k >= 0; k--) b.lineTo(x + (w * k) / 6, y + h - (k % 2 ? 18 : 0) - rnd() * 14);
-      b.closePath(); b.fill();
-      b.strokeStyle = "rgba(226,172,76,.22)"; b.lineWidth = 2; b.beginPath(); b.moveTo(x + w / 2, y + 30); b.lineTo(x + w / 2 + 16, y + 58); b.lineTo(x + w / 2, y + 86); b.lineTo(x + w / 2 - 16, y + 58); b.closePath(); b.stroke();
-    }
-    // floor ledge + candles
-    b.fillStyle = "#0a0706"; b.fillRect(0, H * 0.86, W, H * 0.14);
-    b.fillStyle = "#1c1411"; b.fillRect(0, H * 0.86, W, 6);
-    candles = [];
-    for (let x = 30 + rnd() * 50; x < W; x += 90 + rnd() * 160) {
-      const h = 18 + rnd() * 34, y = H * 0.86;
-      b.fillStyle = "#cbbca0"; b.fillRect(x - 4, y - h, 8, h); b.fillStyle = "rgba(0,0,0,.25)"; b.fillRect(x + 1, y - h, 3, h);
-      candles.push([x, y - h - 6, rnd() * 6.28]);
-    }
-    dust = Array.from({ length: Math.round(W / 22) }, () => [rnd() * W, rnd() * H, 0.2 + rnd() * 0.6, rnd() * 6.28]);
+    dust = Array.from({ length: Math.round(W / 18) }, () => [Math.random() * W, Math.random() * H, 0.15 + Math.random() * 0.5, Math.random() * 6.28, 0.6 + Math.random() * 1.4]);
   }
   function frame(t) {
-    cx.drawImage(base, 0, 0, W, H);
-    for (const [x, y, p] of candles) {
-      const f = 1 + Math.sin(t / 180 + p) * 0.08 + Math.sin(t / 47 + p * 3) * 0.05;
-      const g = cx.createRadialGradient(x, y, 1, x, y, 70 * f);
-      g.addColorStop(0, "rgba(255,190,90,.55)"); g.addColorStop(0.25, "rgba(226,140,60,.18)"); g.addColorStop(1, "rgba(226,140,60,0)");
-      cx.fillStyle = g; cx.fillRect(x - 80, y - 80, 160, 160);
-      cx.fillStyle = "#ffd890"; cx.beginPath(); cx.ellipse(x, y, 2.4, 6 * f, 0, 0, 7); cx.fill();
-    }
-    cx.fillStyle = "rgba(220,200,180,.35)";
+    cx.clearRect(0, 0, W, H);
     for (const d of dust) {
-      d[1] -= d[2] * 0.25; d[0] += Math.sin(t / 2000 + d[3]) * 0.15;
-      if (d[1] < 0) d[1] = H;
-      cx.fillRect(d[0], d[1], 1.4, 1.4);
+      d[1] -= d[2] * 0.3; d[0] += Math.sin(t / 2400 + d[3]) * 0.2;
+      if (d[1] < -4) d[1] = H + 4;
+      cx.fillStyle = `rgba(236,214,190,${0.18 + 0.2 * Math.sin(t / 900 + d[3]) ** 2})`;
+      cx.beginPath(); cx.arc(d[0], d[1], d[4], 0, 7); cx.fill();
     }
   }
   let last = 0;
-  function loop(t) { if (t - last > 50) { frame(t); last = t; } requestAnimationFrame(loop); }
-  build(); frame(0);
-  addEventListener("resize", () => { build(); frame(performance.now()); });
+  function loop(t) { if (t - last > 40) { frame(t); last = t; } requestAnimationFrame(loop); }
+  size(); frame(0);
+  addEventListener("resize", () => { size(); frame(performance.now()); });
   if (motionOK) requestAnimationFrame(loop);
+}
+
+// Lights stutter and come back on, once per visit.
+function powerOn() {
+  let seen = false;
+  try { seen = sessionStorage.getItem("tenno_lit") === "1"; sessionStorage.setItem("tenno_lit", "1"); } catch (e) { /* no storage */ }
+  if (seen || !motionOK) return;
+  document.body.classList.add("power-on");
+  setTimeout(() => document.body.classList.remove("power-on"), 2600);
 }
 
 /* ------------------------------------------------------------ boot */
@@ -619,6 +587,7 @@ document.addEventListener("DOMContentLoaded", () => {
   refreshNews();
   $("#news-refresh").addEventListener("click", refreshNews);
   paintRoom();
+  powerOn();
   const start = location.hash.slice(1);
   go(VIEWS[start] ? start : "home", false);
 });

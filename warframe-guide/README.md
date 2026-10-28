@@ -11,7 +11,7 @@ and the News chapter shows its built-in snapshot.
 
 | Chapter | Contents |
 |---|---|
-| Overview | Frame of the day, latest official news, the six companions, quick links, a 10-step power checklist (saved in the browser) |
+| Overview | Key-art hero, magazine-style latest news, the six companions in a police lineup, frame of the day, quick links, a 10-step power checklist (saved in the browser) |
 | News | Official Digital Extremes news: the in-game news feed (refreshed live when online) and the PC update notes from the official forums |
 | Weapons | Two primary, secondary and melee picks for every Mastery Rank 0-30, with why each is good, how to get it, MR requirement, search |
 | Warframes | All 67 base Warframes with what they're good at, trade-offs, Steel Path use, where to farm, build direction, role filter |
@@ -27,7 +27,9 @@ give tips for whichever chapter is open. **Another hint** rotates to the next ch
 between funny, serious and mixed lines, and tapping a portrait on the Overview picks a speaker. All lines are
 original fan writing. Portraits are official character art from each game, taken from its fan wiki and cropped to busts.
 
-**Atmosphere**: a painted haunted room behind the page (canvas), fog, film grain and flicker, optional
+**Atmosphere**: official key art behind the page (Albrecht's Laboratories) and in the full-width home-page hero
+(Whispers in the Walls), both graded to the site's blood-red palette, with drifting dust, fog, film grain and flicker.
+On the first visit of a session the lights stutter and come back on while the title burns in. Optional
 ambient sound generated in the browser, and rare jump-scare moments when cycling hints (can be turned off,
 and "Test a scare" shows one on demand). Motion is reduced when the device asks for it.
 
@@ -39,6 +41,7 @@ and "Test a scare" shows one on demand). Motion is reduced when the device asks 
 - `assets/companions.js`: companion dialogue and portraits
 - `assets/app.js`: rendering, search, filters, checklist, companion radio, sound and background
 - `assets/art.js`: item pictures at full resolution, embedded as WebP (generated)
+- `assets/keyart.js`: graded official key art for the background and hero (generated)
 - `assets/news.js`: snapshot of official news and update notes, with images (generated)
 - `assets/portraits.js`: companion portraits at 640×800, embedded as WebP (generated)
 - `tenno-field-manual.html`: single-file build (generated)
@@ -49,6 +52,7 @@ and "Test a scare" shows one on demand). Motion is reduced when the device asks 
 cd warframe-guide
 python3 tools/build_art.py        # re-download item pictures after editing names in data.js (needs Pillow + curl)
 python3 tools/build_portraits.py  # re-download and crop the companion portraits
+python3 tools/build_keyart.py     # re-download and grade the background and hero key art
 python3 tools/build_news.py       # refresh the news snapshot (do this before re-publishing)
 python3 tools/bundle.py           # rebuild tenno-field-manual.html after any change
 ```
