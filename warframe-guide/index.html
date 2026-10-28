@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tenno Field Manual</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Unofficial horror-themed Warframe guide: best weapons for every Mastery Rank, every Warframe, modding, farming, Platinum and Steel Path, with tips from six survival-horror companions.">
+<meta name="theme-color" content="#0c0908">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700&family=IM+Fell+English+SC&family=Special+Elite&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<canvas id="room" aria-hidden="true"></canvas>
+<div class="fog" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <filter id="distress" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="4" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="1.6" result="d"/>
+      <feTurbulence type="fractalNoise" baseFrequency="2.2" numOctaves="1" seed="9" result="speck"/>
+      <feColorMatrix in="speck" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.1 1.75" result="mask"/>
+      <feComposite in="d" in2="mask" operator="in"/>
+    </filter>
+    <symbol id="logo" viewBox="0 0 300 118">
+      <g filter="url(#distress)">
+        <path d="M34 8 L58 42 L34 76 L10 42 Z" fill="none" stroke="#c4352b" stroke-width="3"/>
+        <path d="M34 20 L50 42 L34 64 L18 42 Z" fill="#c4352b"/>
+        <path d="M34 26 L34 58 M24 42 L44 42" stroke="#0c0908" stroke-width="3"/>
+        <path d="M31 76 q3 14 0 24 q-2 6 3 8 q5 -2 3 -8 q-3 -10 0 -24z" fill="#8f231c"/>
+        <text x="72" y="40" fill="#ece2d2" font-family="IM Fell English SC, Georgia, serif" font-size="40" letter-spacing="3">TENNO</text>
+        <text x="72" y="72" fill="#e2ac4c" font-family="Special Elite, Courier New, monospace" font-size="18.5" letter-spacing="5.5">FIELD MANUAL</text>
+        <path d="M72 84 H292" stroke="#9a4426" stroke-width="1.5"/>
+        <text x="72" y="104" fill="#a8998a" font-family="Special Elite, Courier New, monospace" font-size="11" letter-spacing="2.4">CASE FILES · MR 0–30</text>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="shell">
+  <aside class="sidebar" aria-label="Chapters">
+    <a class="logo" href="#home" aria-label="Tenno Field Manual home"><svg viewBox="0 0 300 118" role="img" aria-label="Tenno Field Manual"><use href="#logo"/></svg></a>
+    <nav class="chapters" id="chapters" aria-label="Guide chapters"></nav>
+    <div class="controls">
+      <span class="label">Atmosphere</span>
+      <button class="toggle" type="button" data-toggle="ambience" aria-pressed="false">Ambient sound <b>OFF</b></button>
+      <button class="toggle" type="button" data-toggle="scares" aria-pressed="true">Rare scares <b>ON</b></button>
+      <button class="toggle" type="button" data-toggle="test">Test a scare <b>!</b></button>
+    </div>
+  </aside>
+
+  <header class="topbar">
+    <div class="bar">
+      <a class="logo" href="#home" aria-label="Tenno Field Manual home"><svg viewBox="0 0 300 118" role="img" aria-label="Tenno Field Manual"><use href="#logo"/></svg></a>
+      <div class="mini">
+        <button class="toggle" type="button" data-toggle="ambience" aria-pressed="false" aria-label="Ambient sound">Sound <b>OFF</b></button>
+        <button class="toggle" type="button" data-toggle="scares" aria-pressed="true" aria-label="Rare scares">Scares <b>ON</b></button>
+      </div>
+    </div>
+    <nav class="strip" id="strip" aria-label="Guide chapters"></nav>
+  </header>
+
+  <main><div class="page" id="page"></div></main>
+</div>
+
+<aside class="radio" id="radio" aria-label="Companion tips">
+  <div class="face" id="r-face" role="button"></div>
+  <div class="body">
+    <button class="hide" id="r-hide" type="button" aria-label="Hide companion tips">×</button>
+    <div class="who"><b id="r-name"></b><span id="r-game"></span></div>
+    <div class="tag" id="r-tag"></div>
+    <p class="line" id="r-line" aria-live="polite"></p>
+    <div class="row">
+      <button class="btn primary" id="r-next" type="button">Another hint ↻</button>
+      <button class="btn" id="r-tone" type="button">Tone: Mixed</button>
+      <div class="dots" id="r-dots" role="group" aria-label="Choose companion"></div>
+    </div>
+  </div>
+</aside>
+<div class="scare" id="scare" aria-hidden="true"><p></p></div>
+
+<noscript><p style="position:relative;z-index:5;padding:24px;color:#ece2d2">This guide needs JavaScript for its chapters and search.</p></noscript>
+<script src="assets/art.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/companions.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
