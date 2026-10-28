@@ -23,7 +23,7 @@ to a phone and open it. Both work offline. Without a connection the fonts fall b
 **Companion radio** (bottom right): James Sunderland, Simon Henriksson, Dante, Vergil, Leon S. Kennedy and Torque
 give tips for whichever chapter is open. **Another hint** rotates to the next character, **Tone** switches
 between funny, serious and mixed lines, and tapping a portrait on the Overview picks a speaker. All lines are
-original fan writing and the portraits are drawn in SVG for this page.
+original fan writing. Portraits are official character art from each game, taken from its fan wiki and cropped to busts.
 
 **Atmosphere**: a painted haunted room behind the page (canvas), fog, film grain and flicker, optional
 ambient sound generated in the browser, and rare jump-scare moments when cycling hints (can be turned off,
@@ -37,14 +37,16 @@ and "Test a scare" shows one on demand). Motion is reduced when the device asks 
 - `assets/companions.js`: companion dialogue and portraits
 - `assets/app.js`: rendering, search, filters, checklist, companion radio, sound and background
 - `assets/art.js`: item pictures, embedded as small WebP images (generated)
+- `assets/portraits.js`: companion portraits, embedded as small WebP images (generated)
 - `tenno-field-manual.html`: single-file build (generated)
 
 ## Rebuilding
 
 ```sh
 cd warframe-guide
-python3 tools/build_art.py   # re-download item pictures after editing names in data.js (needs Pillow + curl)
-python3 tools/bundle.py      # rebuild tenno-field-manual.html after any change
+python3 tools/build_art.py        # re-download item pictures after editing names in data.js (needs Pillow + curl)
+python3 tools/build_portraits.py  # re-download and crop the companion portraits
+python3 tools/bundle.py           # rebuild tenno-field-manual.html after any change
 ```
 
 Mastery Rank requirements and item pictures come from the community

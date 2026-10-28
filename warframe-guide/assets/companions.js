@@ -1,6 +1,6 @@
 /* The six horror/action companions who give tips in the bottom-right corner.
    All dialogue is original fan writing (only short nods to each character's game),
-   and the portraits are hand-drawn SVG busts, not game art. */
+   Portraits are official character renders (assets/portraits.js); portraitSVG draws a fallback bust. */
 "use strict";
 
 const COMPANIONS = [
@@ -347,6 +347,13 @@ const LINES = {
     ],
   },
 };
+
+// Official portrait when assets/portraits.js has one, otherwise the drawn bust below.
+function portrait(id, uid) {
+  const c = COMPANIONS.find(x => x.id === id);
+  if (typeof PORTRAITS !== "undefined" && PORTRAITS[id]) return `<img class="portrait" src="${PORTRAITS[id]}" alt="${c.name} portrait" decoding="async">`;
+  return portraitSVG(id, uid);
+}
 
 // Hand-drawn bust portraits. `uid` keeps gradient ids unique when a portrait appears twice.
 function portraitSVG(id, uid) {

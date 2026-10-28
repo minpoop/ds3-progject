@@ -57,7 +57,7 @@ function viewHome() {
   <section class="head"><div class="case">The survivors</div><h3 class="sub">Pick who talks to you</h3>
     <p class="muted small">Tap a portrait to bring them on the radio in the corner. Each one has tips for every chapter.</p></section>
   <div class="cast">${COMPANIONS.map(c => `
-    <button class="panel cast-card" type="button" data-cast="${c.id}" aria-pressed="false">${portraitSVG(c.id, "cast")}
+    <button class="panel cast-card" type="button" data-cast="${c.id}" aria-pressed="false">${portrait(c.id, "cast")}
       <span class="who"><b>${esc(c.name)}</b><span>${esc(c.game)}</span></span></button>`).join("")}</div>
   <section class="head"><div class="case">Where to go</div><h3 class="sub">Jump to a chapter</h3></section>
   <div class="quick">
@@ -250,7 +250,7 @@ function viewTips() {
     <article class="panel card"><h3>Check before you farm</h3><p>Drop tables, vendors, vaulted Primes and prices change with updates. Cross-check targeted farms here:</p>
       <p class="small"><a href="https://www.warframe.com/droptables" target="_blank" rel="noopener">Official drop tables</a> · <a href="https://wiki.warframe.com/w/Resources" target="_blank" rel="noopener">Wiki: resources</a> · <a href="https://warframe.market/" target="_blank" rel="noopener">warframe.market</a></p></article>
     <article class="panel card"><h3>The companions</h3><p>James, Simon, Dante, Vergil, Leon and Torque give original, fan-written tips. Use the radio's tone button to switch between funny, serious or mixed lines, and turn off scares in the sidebar if you'd rather not be startled.</p></article>
-    <article class="panel card"><h3>Fine print</h3><p>Unofficial fan guide, not affiliated with Digital Extremes or the companions' publishers. Item art comes from the community warframe-items image set. Companion portraits are drawn for this page.</p></article>
+    <article class="panel card"><h3>Fine print</h3><p>Unofficial fan guide, not affiliated with Digital Extremes or the companions' publishers. Item art comes from the community warframe-items image set. Companion portraits are official character art from each game, via its fan wiki.</p></article>
   </div>`;
 }
 
@@ -369,7 +369,7 @@ function speak(who, advance) {
   const [tag, text] = pool[i];
   const r = $("#radio");
   r.style.setProperty("--accent", c.accent);
-  $("#r-face").innerHTML = portraitSVG(c.id, "radio");
+  $("#r-face").innerHTML = portrait(c.id, "radio");
   $("#r-name").textContent = c.name;
   $("#r-game").textContent = c.game;
   $("#r-tag").textContent = tag;

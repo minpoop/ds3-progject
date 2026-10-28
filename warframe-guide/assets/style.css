@@ -186,8 +186,8 @@ details p { margin-top: 8px; }
 .featured .art img { width: auto; height: auto; max-width: 170px; max-height: 170px; }
 .cast { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
 .cast-card { padding: 0; overflow: hidden; display: grid; text-align: left; border-radius: var(--radius); }
-.cast-card svg { display: block; width: 100%; height: auto; aspect-ratio: 4 / 5; filter: saturate(.85) contrast(1.05); transition: filter .2s, transform .2s; }
-.cast-card:hover svg { filter: saturate(1.1) contrast(1.1); }
+.cast-card svg, .cast-card .portrait { display: block; width: 100%; height: auto; aspect-ratio: 4 / 5; object-fit: cover; filter: saturate(.85) contrast(1.05); transition: filter .2s; }
+.cast-card:hover svg, .cast-card:hover .portrait { filter: saturate(1.1) contrast(1.1); }
 .cast-card[aria-pressed="true"] { border-color: var(--lamp); box-shadow: 0 0 0 1px var(--lamp), 0 10px 30px var(--shadow); }
 .cast-card .who { padding: 9px 10px 11px; display: grid; gap: 2px; }
 .cast-card .who b { font: 400 17px/1.15 var(--display); color: var(--bone); }
@@ -254,7 +254,8 @@ td b { color: var(--bone); font-weight: 600; }
   overflow: hidden; transition: border-color .3s;
 }
 .radio .face { position: relative; background: var(--void); }
-.radio .face svg { display: block; width: 100%; height: 100%; object-fit: cover; }
+.radio .face svg, .radio .face .portrait { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center top; }
+.radio .face .portrait { position: absolute; inset: 0; }
 .radio .face::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, .18) 0 1px, transparent 1px 3px); pointer-events: none; }
 .radio .body { padding: 12px 14px 12px; display: grid; gap: 7px; min-width: 0; }
 .radio .who { padding-right: 26px; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
@@ -273,7 +274,7 @@ td b { color: var(--bone); font-weight: 600; }
 .radio.closed .body { display: none; }
 .radio.closed .face { height: 70px; cursor: pointer; }
 .radio.closed .hide { display: none; }
-.radio.talk .face svg { animation: talk .35s ease 2; }
+.radio.talk .face svg, .radio.talk .face .portrait { animation: talk .35s ease 2; }
 @keyframes talk { 50% { transform: translateY(-2px); } }
 
 /* ---------- scare ---------- */
